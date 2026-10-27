@@ -4,6 +4,12 @@ Venus OS driver for the original Mopeka Check Standard / XL LPG sensor.
 
 Publishes com.victronenergy.tank.<service> with FluidType LPG.
 Configure it in config.ini, see config.ini.example.
+
+MAC address: either set `mac` in config.ini, or leave it empty and press the
+sensor's sync button once. The driver then pairs with the sensor that sent
+the sync press and stores its MAC in localsettings
+(/Settings/Devices/<service>/Mac), so it survives restarts. Sensors from
+neighbours at a campsite are ignored.
 """
 
 import collections
@@ -11,8 +17,8 @@ import logging
 import statistics
 
 import mopeka_std_parser
-from venus_service import (BleDriver, TankDevice, FLUID_LPG, interpolate,
-                           parse_table)
+from venus_service import (BleDriver, SettingsDevice, TankDevice, FLUID_LPG,
+                           interpolate, parse_table)
 
 log = logging.getLogger('mopeka_standard')
 
@@ -22,8 +28,17 @@ class MopekaStandardDriver(BleDriver):
 
     def __init__(self, section, config):
         super(MopekaStandardDriver, self).__init__(section, config)
+        uid = config.get('service', 'mopeka_standard')
+        self.paired = SettingsDevice(self.bus, {
+            'mac': ['/Settings/Devices/%s/Mac' % uid, '', 0, 0],
+        }, None, timeout=60)
         if not self.mac:
-            raise SystemExit('[%s] mac = ... is required for Mopeka sensors' % section)
+            self.mac = str(self.paired['mac'] or '').upper() or None
+            if self.mac:
+                log.info('Using paired sensor %s', self.mac)
+            else:
+                log.info('No MAC configured: press the sync button on the Mopeka to pair')
+        self._announced = set()
         self.propane_ratio = config.getfloat('propane_ratio', 1.0)
         self.empty_mm = config.getfloat('empty_mm', 38.0)
         self.full_mm = config.getfloat('full_mm', 254.0)
@@ -34,9 +49,9 @@ class MopekaStandardDriver(BleDriver):
         self._level = None
 
         self.tank = TankDevice(
-            self.bus, config.get('service', 'mopeka_standard'),
+            self.bus, uid,
             product_name='Mopeka Standard',
-            connection='Bluetooth LE %s' % self.mac,
+            connection='Bluetooth LE %s' % (self.mac or '(press sync to pair)'),
             fluid_type=config.getint('fluid_type', FLUID_LPG),
             capacity_l=config.getfloat('capacity_l', 0.0),
             default_instance=config.getint('device_instance', 20),
@@ -60,6 +75,15 @@ class MopekaStandardDriver(BleDriver):
         payload = manufacturer_data.get(mopeka_std_parser.MANUFACTURER_ID)
         r = mopeka_std_parser.parse(payload, self.propane_ratio)
         if r is None:
+            return
+        if self.mac is None:
+            if not r.sync_pressed:
+                if mac not in self._announced:
+                    self._announced.add(mac)
+                    log.info('Heard Mopeka %s (rssi %s) - press its sync button to pair', mac, rssi)
+                return
+            self._pair(mac)
+        elif mac != self.mac:
             return
         log.debug('%s rssi=%s %r', mac, rssi, r)
 
@@ -86,6 +110,16 @@ class MopekaStandardDriver(BleDriver):
                 '/Mopeka/BatteryPercent': r.battery_percent,
                 '/Mopeka/SyncPressed': int(r.sync_pressed),
             })
+
+
+    def _pair(self, mac):
+        self.mac = mac
+        try:
+            self.paired['mac'] = mac
+        except Exception as e:   # still works until the next restart
+            log.warning('Could not store the paired MAC: %s', e)
+        self.tank['/Mgmt/Connection'] = 'Bluetooth LE %s' % mac
+        log.info('Paired with Mopeka %s (stored in /Settings/Devices/%s/Mac)', mac, self.tank.uid)
 
 
 if __name__ == '__main__':

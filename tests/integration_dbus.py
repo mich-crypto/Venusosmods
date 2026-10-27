@@ -154,11 +154,24 @@ class Root(dbus.service.Object):
         return [{'path': i['path'], 'error': 0, 'value': i['default']} for i in items]
 
 
+class SettingsTree(dbus.service.FallbackObject):
+    """Answers SetValue on any /Settings/... path, like localsettings."""
+    stored = {}
+
+    @dbus.service.method('com.victronenergy.BusItem', in_signature='v', out_signature='i',
+                         rel_path_keyword='path')
+    def SetValue(self, value, path=None):
+        SettingsTree.stored['/Settings' + path] = value
+        return 0
+
+
 def advertise(devices):
     devices['mopeka'].PropertiesChanged(DEV, {
         'RSSI': dbus.Int16(-71),
         'ManufacturerData': dbus.Dictionary(
-            {dbus.UInt16(0x000D): dbus.Array(mopeka_packet([(19, 0), (9, 12)] + [(0, 0)] * 10),
+            # sync button "pressed" on the third advert -> the driver pairs
+            {dbus.UInt16(0x000D): dbus.Array(mopeka_packet([(19, 0), (9, 12)] + [(0, 0)] * 10,
+                                                           sync=advertise.seq == 2),
                                              signature='y')}, signature='qv'),
     }, [])
     advertise.seq += 1
@@ -189,14 +202,15 @@ def main():
     names = [dbus.service.BusName(n, bus) for n in ('org.bluez', 'com.victronenergy.settings')]
     fridge_dev = Fridge(bus)
     Root(bus, fridge_dev)
+    SettingsTree(bus, '/Settings')
     Adapter(bus, '/org/bluez/hci0')
     devices = {'mopeka': Device(bus, dev_path(MOPEKA_MAC)), 'esp': Device(bus, dev_path(ESP_MAC))}
 
     cfg = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'venus_it_config.ini')
     with open(cfg, 'w') as f:
-        f.write('[mopeka_standard]\nmac = %s\ncapacity_l = 27\n'
+        f.write('[mopeka_standard]\ncapacity_l = 27\n'
                 '[esp32_hydro]\ndevice_id = 1\ntemperature_service = yes\n'
-                '[fridge]\nmac = %s\npoll_interval = 10\n' % (MOPEKA_MAC.lower(), FRIDGE_MAC))
+                '[fridge]\nmac = %s\npoll_interval = 10\n' % FRIDGE_MAC)
 
     env = dict(os.environ, PYTHONPATH=velib)
     procs = [subprocess.Popen([sys.executable, os.path.join(DRIVERS, script),
@@ -259,6 +273,9 @@ def main():
     assert z2['/CustomName'] == 'Freezer'
     # poll mode: connected once, disconnected again so the phone app can connect
     assert fridge_dev.connects == 1 and fridge_dev.disconnects >= 1, fridge_dev.connects
+    # Mopeka paired via the sync button and stored the MAC in localsettings
+    assert SettingsTree.stored.get('/Settings/Devices/mopeka_standard/Mac') == MOPEKA_MAC, \
+        SettingsTree.stored
     assert codes == [0, 0, 0], codes
     print('INTEGRATION OK')
 

@@ -164,8 +164,11 @@ def check_config(path):
         mac = cfg.get('mac', '').strip().upper()
         if mac and not MAC_RE.match(mac):
             report('FAIL', '[%s] mac' % name, '%r is not AA:BB:CC:DD:EE:FF' % mac)
-        elif not mac and kind in ('mopeka', 'fridge'):
+        elif not mac and kind == 'fridge':
             report('FAIL', '[%s] mac' % name, 'required for this sensor')
+        elif not mac and kind == 'mopeka':
+            report('INFO', '[%s] mac' % name, 'empty: pairs with the first sensor whose '
+                   'sync button is pressed')
         elif mac in ('AA:BB:CC:DD:EE:FF', '11:22:33:44:55:77'):
             report('WARN', '[%s] mac' % name, 'still the example address')
         try:

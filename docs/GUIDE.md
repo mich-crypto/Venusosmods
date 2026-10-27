@@ -182,7 +182,8 @@ The first run creates `/data/shared_drivers/config.ini` and stops.
 python3 /data/shared_drivers/diagnostics/test_venus_compatibility.py --scan 30
 ```
 Press the Mopeka's sync button during the scan. The scan lists:
-* `PASS Mopeka Standard  AA:BB:...` → put that MAC in `[mopeka_standard]`
+* `PASS Mopeka Standard  AA:BB:...` → the gas sensor is received. You don't
+  need to note the MAC: the driver pairs with the sync button (Part 6)
 * `PASS ESP32 tank id 1  ...` → the water sensor is received (MAC optional)
 * `PASS Fridge candidate ...` → see Part 7
 
@@ -194,7 +195,7 @@ velib_python, Bluetooth, config). Fix any **FAIL** before continuing.
 ```sh
 nano /data/shared_drivers/config.ini
 ```
-(`Ctrl+O`, `Enter` saves, `Ctrl+X` quits.) Set the MACs, the bottle size and
+(`Ctrl+O`, `Enter` saves, `Ctrl+X` quits.) Set the fridge MAC, the bottle size and
 `propane_ratio` for the Mopeka, and names. Every option is explained in the
 file. Delete or ignore sections for sensors you don't have.
 
@@ -227,6 +228,21 @@ reports FAIL. It links the services into `/service` and adds them to
 ---
 
 ## Part 6 – Mopeka gas sensor
+
+**Pairing (no MAC needed):** leave `mac =` empty in config.ini. After
+enabling the service, press the **sync button** on the Mopeka once, with the
+bottle within Bluetooth range of the Pi. The log shows
+`Paired with Mopeka AA:BB:...`, and the tank appears. The MAC is stored in
+Venus OS settings, so it survives reboots and updates. Other Mopeka sensors
+nearby (e.g. at a campsite) are ignored.
+```sh
+tail -F /var/log/mopeka_standard/current | tai64nlocal    # watch it pair
+```
+To pair a different sensor later:
+```sh
+dbus -y com.victronenergy.settings /Settings/Devices/mopeka_standard/Mac SetValue ''
+svc -t /service/mopeka_standard          # then press sync on the new sensor
+```
 
 1. Put the sensor on the **centre** of the bottle's bottom, with plenty of
    coupling gel (or the supplied pad).

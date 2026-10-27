@@ -5,8 +5,9 @@
 # Common keys
 #   service          D-Bus name suffix -> com.victronenergy.tank.<service>
 #                    (letters, digits, underscore; must be unique)
-#   mac              BLE MAC address of the sensor (required for Mopeka,
-#                    optional for the ESP32). Find it with:  bluetoothctl scan le
+#   mac              BLE MAC address of the sensor. Required for the fridge,
+#                    optional for the ESP32, and optional for the Mopeka
+#                    (empty = pair with the sync button, see below).
 #   capacity_l       tank size in litres (ESP32 sends its own capacity)
 #   custom_name      name shown in the GUI (can also be changed in the GUI)
 #   device_instance  preferred VRM instance; localsettings picks a free one if
@@ -18,7 +19,13 @@
 
 [mopeka_standard]
 service = mopeka_standard
-mac = AA:BB:CC:DD:EE:FF
+# Leave empty and press the sync button on the sensor once: the driver pairs
+# with it and remembers the MAC (ignores the neighbours' sensors). To pair a
+# different sensor later, clear the stored MAC and restart:
+#   dbus -y com.victronenergy.settings /Settings/Devices/mopeka_standard/Mac SetValue ''
+#   svc -t /service/mopeka_standard
+# Or set it here to skip pairing (overrides the stored one).
+mac =
 custom_name = Gas bottle
 # 11 kg bottle ~ 27 L; 5 kg ~ 12 L. Only used for /Remaining.
 capacity_l = 27

@@ -291,9 +291,46 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(s['/Level'], level)
         self.assertIsNone(s['/Mopeka/DistanceMm'])
 
-    def test_mopeka_requires_mac(self):
-        with self.assertRaises(SystemExit):
-            MopekaStandardDriver('s', section('capacity_l = 27\n'))
+    def test_mopeka_pairs_on_sync_button(self):
+        d = MopekaStandardDriver('s', section('capacity_l = 27\n'))
+        s = d.tank.service
+        self.assertIsNone(d.mac)
+        normal = mopeka_packet(MopekaParserTests.PAIRS)
+        synced = mopeka_packet(MopekaParserTests.PAIRS, sync=True)
+
+        # a neighbour's sensor without sync press is ignored
+        d.handle_advertisement('11:11:11:11:11:11', {0x000D: normal}, -80)
+        self.assertIsNone(s['/Level'])
+        # our sensor with the sync button pressed pairs and publishes
+        d.handle_advertisement('AA:BB:CC:DD:EE:FF', {0x000D: synced}, -60)
+        self.assertEqual(d.mac, 'AA:BB:CC:DD:EE:FF')
+        self.assertEqual(d.paired['mac'], 'AA:BB:CC:DD:EE:FF')
+        self.assertEqual(s['/Mgmt/Connection'], 'Bluetooth LE AA:BB:CC:DD:EE:FF')
+        self.assertIsNotNone(s['/Level'])
+        # afterwards other sensors are ignored, even with sync pressed
+        level = s['/Level']
+        d.handle_advertisement('11:11:11:11:11:11', {0x000D: mopeka_packet(
+            [(5, 9)] + [(0, 0)] * 11, sync=True)}, -80)
+        self.assertEqual((d.mac, s['/Level']), ('AA:BB:CC:DD:EE:FF', level))
+
+    def test_mopeka_uses_stored_pairing(self):
+        orig = FakeSettings.__init__
+
+        def stored(self, bus, supported, cb, timeout=0):
+            orig(self, bus, supported, cb, timeout)
+            if 'mac' in self:
+                self['mac'] = 'aa:bb:cc:dd:ee:01'
+        FakeSettings.__init__ = stored
+        try:
+            d = MopekaStandardDriver('s', section(''))
+        finally:
+            FakeSettings.__init__ = orig
+        self.assertEqual(d.mac, 'AA:BB:CC:DD:EE:01')
+
+    def test_sync_bit_parsed(self):
+        r = mopeka_std_parser.parse(mopeka_packet(MopekaParserTests.PAIRS, sync=True))
+        self.assertTrue(r.sync_pressed)
+        self.assertEqual(r.temperature, 19)
 
     def test_hydro_driver_and_timeout(self):
         d = Esp32HydroDriver('s', section('device_id = 2\ntimeout = 60\n'))
