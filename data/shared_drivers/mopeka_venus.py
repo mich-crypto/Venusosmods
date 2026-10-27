@@ -11,17 +11,14 @@ import logging
 import statistics
 
 import mopeka_std_parser
-from venus_tank_base import (VenusTankBaseDriver, FLUID_LPG, interpolate,
-                             parse_table)
+from venus_service import (BleDriver, TankDevice, FLUID_LPG, interpolate,
+                           parse_table)
 
 log = logging.getLogger('mopeka_standard')
 
 
-class MopekaStandardDriver(VenusTankBaseDriver):
-    PRODUCT_NAME = 'Mopeka Standard'
-    FLUID_TYPE = FLUID_LPG
-    DEFAULT_SERVICE = 'mopeka_standard'
-    DEFAULT_TIMEOUT_S = 900   # the sensor slows down to ~1/min when idle
+class MopekaStandardDriver(BleDriver):
+    DEFAULT_SECTION = 'mopeka_standard'
 
     def __init__(self, section, config):
         super(MopekaStandardDriver, self).__init__(section, config)
@@ -36,11 +33,19 @@ class MopekaStandardDriver(VenusTankBaseDriver):
         self._distances = collections.deque(maxlen=config.getint('median_window', 5))
         self._level = None
 
-    def add_extra_paths(self, service):
-        service.add_path('/Mopeka/DistanceMm', None)
-        service.add_path('/Mopeka/EchoQuality', None)
-        service.add_path('/Mopeka/BatteryPercent', None)
-        service.add_path('/Mopeka/SyncPressed', None)
+        self.tank = TankDevice(
+            self.bus, config.get('service', 'mopeka_standard'),
+            product_name='Mopeka Standard',
+            connection='Bluetooth LE %s' % self.mac,
+            fluid_type=config.getint('fluid_type', FLUID_LPG),
+            capacity_l=config.getfloat('capacity_l', 0.0),
+            default_instance=config.getint('device_instance', 20),
+            custom_name=config.get('custom_name', ''),
+            # the sensor slows down to ~1 reading/min when idle
+            timeout_s=config.getint('timeout', 900),
+            extra_paths=('/Mopeka/DistanceMm', '/Mopeka/EchoQuality',
+                         '/Mopeka/BatteryPercent', '/Mopeka/SyncPressed'))
+        self.devices.append(self.tank)
 
     def distance_to_level(self, distance_mm):
         if self.level_table:
@@ -68,7 +73,7 @@ class MopekaStandardDriver(VenusTankBaseDriver):
             distance = None
             log.debug('poor read quality, keeping last level %s', self._level)
 
-        self.publish(
+        self.tank.publish(
             level=self._level,
             temperature=float(r.temperature),
             battery_voltage=r.battery_voltage,

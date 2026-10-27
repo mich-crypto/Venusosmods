@@ -9,7 +9,8 @@
 #                    optional for the ESP32). Find it with:  bluetoothctl scan le
 #   capacity_l       tank size in litres (ESP32 sends its own capacity)
 #   custom_name      name shown in the GUI (can also be changed in the GUI)
-#   device_instance  preferred VRM instance; localsettings picks a free one if taken
+#   device_instance  preferred VRM instance; localsettings picks a free one if
+#                    taken (instances are per device class: tank / temperature)
 #   timeout          seconds without data before the tank shows "disconnected"
 #   fluid_type       override, Venus OS enum: 1 fresh water, 2 waste water,
 #                    5 black water, 8 LPG ...
@@ -40,3 +41,29 @@ device_id = 1
 custom_name = Fresh water
 # mac is optional: filtering on device_id is enough, but setting it saves CPU
 #mac = 11:22:33:44:55:66
+# Publish the DS18B20 water temperature as its own temperature sensor
+# (com.victronenergy.temperature.esp32_hydro_temp). Victron documents the
+# tank /Temperature path only for Mopeka sensors, so the GUI may not show it
+# on this tank; a temperature service always shows up.
+temperature_service = yes
+temperature_name = Water temperature
+# battery, fridge, generic, room, outdoor, waterheater, freezer
+temperature_type = generic
+
+[fridge]
+# Compressor fridge with the "Alpicool" Bluetooth controller. Run
+#   python3 /data/shared_drivers/diagnostics/fridge_probe.py
+# first: it lists nearby fridges and checks that yours speaks this protocol.
+service = fridge
+mac = 11:22:33:44:55:77
+# Seconds between status reads. Each read connects for ~2 s; during that time
+# the phone app cannot connect (one connection at a time).
+poll_interval = 60
+# yes = stay connected between polls (faster, but the phone app is locked out)
+stay_connected = no
+# auto = freezer if the set point is below 0 C, else fridge
+zone1_type = auto
+zone1_name = Fridge
+# only used by dual-zone fridges
+zone2_type = auto
+zone2_name = Freezer

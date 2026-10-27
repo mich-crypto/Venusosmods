@@ -1,0 +1,5 @@
+#!/bin/sh
+# daemontools service for fridge - started by svscan via /service/fridge
+exec 2>&1
+cd /data/shared_drivers
+exec python3 /data/shared_drivers/fridge_venus.py --section fridge
