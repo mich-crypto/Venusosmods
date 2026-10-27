@@ -10,8 +10,11 @@ on Modbus-TCP/MQTT):
 | Self-built **ESP32-S3 hydrostatic** water sensor | `com.victronenergy.tank.esp32_hydro` (+ `.temperature.esp32_hydro_temp`) | fresh-water tank (+ water temperature) |
 | 12 V compressor **fridge** with the Alpicool Bluetooth controller (Hyckes: check first) | `com.victronenergy.temperature.fridge_zone1` / `_zone2` | fridge / freezer temperature |
 
-**→ Start with the [step-by-step guide](docs/GUIDE.md).**
+**→ Start with the [step-by-step guide](docs/GUIDE.md)**, also as a printable
+**[PDF](docs/Venus-OS-Mods-Guide.pdf)** (guide + wiring + calibration in one file).
 Also: [wiring](docs/wiring.md) · [tank calibration](docs/calibration.md)
+
+The PDF is generated from the Markdown files: `cd tools/pdf && npm install && npm run build`.
 
 ## Layout
 

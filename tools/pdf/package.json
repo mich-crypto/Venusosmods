@@ -1,0 +1,8 @@
+{
+  "name": "venusosmods-pdf",
+  "private": true,
+  "description": "Builds docs/Venus-OS-Mods-Guide.pdf from the Markdown docs",
+  "type": "module",
+  "scripts": { "build": "node build_pdf.mjs" },
+  "dependencies": { "marked": "12.0.2" }
+}
