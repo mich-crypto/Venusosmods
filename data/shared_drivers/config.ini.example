@@ -1,0 +1,42 @@
+# Copy to /data/shared_drivers/config.ini and edit.
+# One section per sensor. The section name is passed to the driver with
+# --section (see /data/etc/init.d/*/run).
+#
+# Common keys
+#   service          D-Bus name suffix -> com.victronenergy.tank.<service>
+#                    (letters, digits, underscore; must be unique)
+#   mac              BLE MAC address of the sensor (required for Mopeka,
+#                    optional for the ESP32). Find it with:  bluetoothctl scan le
+#   capacity_l       tank size in litres (ESP32 sends its own capacity)
+#   custom_name      name shown in the GUI (can also be changed in the GUI)
+#   device_instance  preferred VRM instance; localsettings picks a free one if taken
+#   timeout          seconds without data before the tank shows "disconnected"
+#   fluid_type       override, Venus OS enum: 1 fresh water, 2 waste water,
+#                    5 black water, 8 LPG ...
+#   adapter          Bluetooth adapter, default hci0
+
+[mopeka_standard]
+service = mopeka_standard
+mac = AA:BB:CC:DD:EE:FF
+custom_name = Gas bottle
+# 11 kg bottle ~ 27 L; 5 kg ~ 12 L. Only used for /Remaining.
+capacity_l = 27
+# 1.0 = pure propane (DE/NL/Scandinavia), ~0.3-0.4 for summer mixes in FR/ES/IT
+propane_ratio = 1.0
+# Distance the sensor measures (mm of liquid) at empty and at 100 %.
+# Watch /Mopeka/DistanceMm in dbus-spy with an empty and a freshly filled
+# bottle and put the numbers here. A full bottle is filled to ~80 % volume.
+empty_mm = 38
+full_mm = 254
+# Optional, for non-cylindrical bottles: distance_mm:percent pairs. Overrides
+# empty_mm/full_mm.
+#level_table = 20:0, 60:15, 120:45, 180:75, 240:100
+median_window = 5
+
+[esp32_hydro]
+service = esp32_hydro
+# Must match DEVICE_ID in the firmware
+device_id = 1
+custom_name = Fresh water
+# mac is optional: filtering on device_id is enough, but setting it saves CPU
+#mac = 11:22:33:44:55:66

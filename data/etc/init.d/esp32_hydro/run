@@ -1,0 +1,5 @@
+#!/bin/sh
+# daemontools service for esp32_hydro - started by svscan via /service/esp32_hydro
+exec 2>&1
+cd /data/shared_drivers
+exec python3 /data/shared_drivers/esp32_hydro_tank.py --section esp32_hydro

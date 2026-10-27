@@ -1,0 +1,5 @@
+#!/bin/sh
+# daemontools service for mopeka_standard - started by svscan via /service/mopeka_standard
+exec 2>&1
+cd /data/shared_drivers
+exec python3 /data/shared_drivers/mopeka_venus.py --section mopeka_standard

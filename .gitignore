@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+# real config lives on the Pi
+data/shared_drivers/config.ini
