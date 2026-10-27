@@ -8,8 +8,8 @@
 | Buck converter 12 V → 5 V, ≥1 A | MP1584 or LM2596 module, adjustable |
 | Fuse holder + 1 A fuse | at the 12 V tap |
 | Schottky diode 1N5819 / SS14 | lets USB and 12 V be connected together |
-| Hydrostatic level transmitter | 0.5–4.5 V or 4–20 mA output, range ≈ tank height (see below) |
-| Resistors | voltage version: 10 kΩ + 20 kΩ; 4–20 mA version: 120 Ω 0.1 %/1 % |
+| Hydrostatic level transmitter | 0–3.3 V, 0.5–4.5 V or 4–20 mA output (see below) |
+| Resistors | 0–3.3 V version: 100 kΩ; 0.5–4.5 V version: 10 kΩ + 20 kΩ; 4–20 mA version: 120 Ω 0.1 %/1 % |
 | 1 kΩ resistor + 100 nF capacitor | input filter/protection |
 | DS18B20 waterproof probe + 4.7 kΩ | optional water temperature |
 | IP65 junction box, cable glands, ferrules | |
@@ -36,6 +36,40 @@
 * Take 12 V from a circuit that is on when the Victron system is on (e.g.
   the 12 V distribution after the main switch), not from the starter battery.
   The ESP32 draws about 0.5 W.
+
+## Pressure sensor, option C: 0–3.3 V output (e.g. QDY30A 0–3.3 V)
+
+This is the firmware's default. The output can go straight to the ESP32,
+with no divider and no shunt resistor.
+
+```
+ sensor +V   ── ESP32 5V   (check the label: if it says 12-24 V, use the fused 12 V)
+ sensor GND  ── GND
+ sensor OUT  ──[1k]──┬──────┬── GPIO4
+                     │      │
+                  [100nF] [100k]
+                     │      │
+                    GND    GND
+```
+Firmware: `INPUT_CURRENT_LOOP 0`, `DIVIDER_RATIO 1.0f`,
+`SIGNAL_AT_ZERO 0.0f`, `SIGNAL_AT_FULL 3.3f`, `SENSOR_RANGE_MM 2000.0f`
+(for the 2 m version), `SIGNAL_FAULT_LOW -1.0f`, `SIGNAL_FAULT_HIGH 3.05f`.
+
+* **Find out the supply voltage and wire colours first.** Sellers ship this
+  sensor with different supply ratings, and the colour code is not
+  standard. Check the label on the cable or the user manual. Before
+  connecting the ESP32, power the sensor alone and measure OUT to GND with
+  a multimeter: about 0 V in air, and rising when you dip it into a bucket.
+* **Resolution:** the ESP32 reads up to about 3.1 V, i.e. about 1.88 m of
+  water with the 2 m sensor. A van tank of 30–50 cm uses a quarter of the
+  range: about 0.6 mm of water per mV, which the firmware's median filter
+  handles well. The datasheet's ±2 % F.S. zero drift (±40 mm) is long-term
+  drift: run `zero` on an empty tank once or twice a year.
+* **No broken-wire detection:** 0 V means "empty" and also "wire broken". The
+  100 kΩ pull-down makes a broken signal wire read as empty instead of random
+  values. Option B (4–20 mA) is the only one that can tell the two apart.
+* The 1 kΩ in series protects the pin if the sensor ever outputs more than
+  3.3 V (overpressure, or the 5 V wire touching the signal wire).
 
 ## Pressure sensor, option A: voltage output (0.5–4.5 V, 5 V supply)
 
@@ -98,7 +132,7 @@ protection diodes if something goes wrong.
 
 * **Range:** pick one just above the tank height, e.g. 0–1 m H₂O (0–10 kPa)
   for a 40 cm tank. A 0–5 m sensor would only use 8 % of its range, so you
-  lose resolution.
+  lose resolution. A 2 m sensor still works well (see option C).
 * **Vented (gauge) sensor:** the cable has a small vent tube. Keep its end
   open to air and dry: inside the junction box is fine, outside under the
   van is not. Don't seal it with the cable gland.

@@ -52,7 +52,8 @@ Follow [wiring.md](wiring.md). In short:
 1. Set the buck converter to **5.0 V** with a multimeter *before* connecting
    anything to it.
 2. Wire buck → diode → ESP32 `5V`, plus GND.
-3. Connect the pressure sensor (option A: voltage, or B: 4–20 mA) to GPIO4
+3. Connect the pressure sensor (option C: 0–3.3 V like the QDY30A, A: 0.5–4.5 V,
+   or B: 4–20 mA) to GPIO4
    through the resistors.
 4. Optional: DS18B20 to GPIO5 with the 4.7 kΩ pull-up to 3V3.
 5. Don't put the sensor in the tank yet; it's easier to test on the table.
@@ -81,8 +82,9 @@ converter still reads 5.0 V (about 4.7 V after the diode).
 1. Download this repository (GitHub: *Code → Download ZIP*) and unzip it.
 2. *File → Open* → `firmware/esp32_hydro_tank/esp32_hydro_tank.ino`.
 3. In the **CONFIGURATION** block at the top, set:
-   * `INPUT_CURRENT_LOOP` and the `SIGNAL_*` values for your sensor (the
-     values for both options are in [wiring.md](wiring.md))
+   * `INPUT_CURRENT_LOOP` and the `SIGNAL_*` values for your sensor. The
+     defaults are for the QDY30A 0–3.3 V, 2 m range (option C). The values
+     for the other options are in [wiring.md](wiring.md).
    * `SENSOR_RANGE_MM`: the sensor's full scale in mm of water. From the
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
    * `USE_DS18B20`: `1` with the probe, `0` without
@@ -124,7 +126,7 @@ Type 'help' for calibration commands.
 signal=0.512 height=3.0mm litres=0.4 level=0.5% temp=19.6 activity=0.4
 ```
 * `signal` should be close to `SIGNAL_AT_ZERO` with the sensor in air
-  (0.5 V or 4 mA).
+  (0 V for the QDY30A 0–3.3 V, 0.5 V or 4 mA for the other types).
 * Dip the sensor into a bucket: `height` should rise by roughly the depth.
 * `FAULT` = signal outside the fault limits: check wiring and the
   `SIGNAL_*` settings.

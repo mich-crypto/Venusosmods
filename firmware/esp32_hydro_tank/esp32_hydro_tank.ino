@@ -43,20 +43,26 @@
 //                        120 R gives 0.48 V .. 2.4 V, headroom for fault
 //                        currents. Signal unit = mA (then use 4.0 / 20.0
 //                        below, fault limits ~3.0 / 22.0).
-//  INPUT_CURRENT_LOOP 0: voltage output transmitter (0.5-4.5 V, 0-5 V ...)
-//                        through a divider R1 (top) / R2 (bottom).
-//                        DIVIDER_RATIO = (R1 + R2) / R2. Signal unit = V.
-//                        Keep the pin below ~3.1 V: 4.5 V with 10k/20k = 3.0 V.
+//  INPUT_CURRENT_LOOP 0: voltage output transmitter, optionally through a
+//                        divider R1 (top) / R2 (bottom).
+//                        DIVIDER_RATIO = (R1 + R2) / R2, 1.0 = no divider.
+//                        Signal unit = V. Keep the pin below ~3.1 V.
+//
+// Presets (docs/wiring.md):
+//  A  0.5-4.5 V:  LOOP 0, DIVIDER 1.5,  ZERO 0.5, FULL 4.5,  FAULT 0.2 / 4.9
+//  B  4-20 mA:    LOOP 1, SHUNT 120,    ZERO 4.0, FULL 20.0, FAULT 3.0 / 22.0
+//  C  0-3.3 V:    LOOP 0, DIVIDER 1.0,  ZERO 0.0, FULL 3.3,  FAULT -1 (off) / 3.05
+// Defaults below: preset C for the QDY30A 0-3.3 V, 2 m range.
 #define INPUT_CURRENT_LOOP   0
 #define SHUNT_OHMS           120.0f
-#define DIVIDER_RATIO        1.5f
+#define DIVIDER_RATIO        1.0f
 
 // ---- Transmitter datasheet values (V or mA, see above)
-#define SIGNAL_AT_ZERO       0.5f   // output at 0 pressure
-#define SIGNAL_AT_FULL       4.5f   // output at full scale
-#define SENSOR_RANGE_MM      1000.0f// full scale in mm of water (1 m H2O = 9.81 kPa)
-#define SIGNAL_FAULT_LOW     0.2f   // below this: open wire / dead sensor
-#define SIGNAL_FAULT_HIGH    4.9f   // above this: short / overpressure
+#define SIGNAL_AT_ZERO       0.0f   // output at 0 pressure
+#define SIGNAL_AT_FULL       3.3f   // output at full scale
+#define SENSOR_RANGE_MM      2000.0f// full scale in mm of water (2 m H2O; 1 m H2O = 9.81 kPa)
+#define SIGNAL_FAULT_LOW     -1.0f  // below this: open wire / dead sensor (-1 = can't tell, see C)
+#define SIGNAL_FAULT_HIGH    3.05f  // above this: short / overpressure (ADC tops out ~3.1 V)
 
 // ---- Default zero offset (mm added to the measured height). Normally you
 //      set it with the "zero" serial command on an empty tank instead.
