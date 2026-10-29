@@ -277,6 +277,12 @@ svc -t /service/mopeka_standard          # then press sync on the new sensor
    southern Europe). This corrects the speed of sound in the liquid.
 5. `capacity_l`: liquid volume, e.g. 11 kg ≈ 27 L, 5 kg ≈ 12 L.
 6. `svc -t /service/mopeka_standard` restarts the driver after changes.
+7. The sensor's temperature is also published as its own temperature sensor,
+   `com.victronenergy.temperature.mopeka_standard_temp` ("Gas bottle
+   temperature", type outdoor), so it shows up with the other environment
+   sensors in the *Device list* and on VRM. Turn it off with
+   `temperature_service = no`, or change the type with `temperature_type`
+   (battery, fridge, generic, room, outdoor, waterheater, freezer).
 
 ---
 

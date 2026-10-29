@@ -2,7 +2,9 @@
 """
 Venus OS driver for the original Mopeka Check Standard / XL LPG sensor.
 
-Publishes com.victronenergy.tank.<service> with FluidType LPG.
+Publishes com.victronenergy.tank.<service> with FluidType LPG, and (temperature_service = yes,
+the default) the sensor's temperature as com.victronenergy.temperature.<service>_temp, so it
+shows up with the environment sensors.
 Configure it in config.ini, see config.ini.example.
 
 MAC address: either set `mac` in config.ini, or leave it empty and press the
@@ -16,8 +18,8 @@ import collections
 import logging
 
 import mopeka_std_parser
-from venus_service import (BleDriver, SettingsDevice, TankDevice, FLUID_LPG,
-                           interpolate, parse_table)
+from venus_service import (BleDriver, SettingsDevice, TankDevice, TemperatureDevice, FLUID_LPG,
+                           TEMPERATURE_TYPES, interpolate, parse_table)
 
 log = logging.getLogger('mopeka_standard')
 
@@ -72,6 +74,17 @@ class MopekaStandardDriver(BleDriver):
                          '/Mopeka/BatteryPercent', '/Mopeka/SyncPressed'))
         self.devices.append(self.tank)
 
+        self.temp = None
+        if config.getboolean('temperature_service', True):
+            self.temp = TemperatureDevice(
+                self.bus, uid + '_temp', product_name='Mopeka Temperature',
+                connection='Bluetooth LE %s' % (self.mac or '(press sync to pair)'),
+                temperature_type=TEMPERATURE_TYPES[config.get('temperature_type', 'outdoor')],
+                default_instance=config.getint('temperature_instance', 22),
+                custom_name=config.get('temperature_name', 'Gas bottle temperature'),
+                timeout_s=config.getint('timeout', 900))
+            self.devices.append(self.temp)
+
     def distance_to_level(self, distance_mm):
         if self.level_table:
             return interpolate(self.level_table, distance_mm)
@@ -123,6 +136,8 @@ class MopekaStandardDriver(BleDriver):
                 '/Mopeka/BatteryPercent': r.battery_percent,
                 '/Mopeka/SyncPressed': int(r.sync_pressed),
             })
+        if self.temp is not None:
+            self.temp.publish(float(r.temperature))
 
 
     def _pair(self, mac):
@@ -132,6 +147,8 @@ class MopekaStandardDriver(BleDriver):
         except Exception as e:   # still works until the next restart
             log.warning('Could not store the paired MAC: %s', e)
         self.tank['/Mgmt/Connection'] = 'Bluetooth LE %s' % mac
+        if self.temp is not None:
+            self.temp['/Mgmt/Connection'] = 'Bluetooth LE %s' % mac
         log.info('Paired with Mopeka %s (stored in /Settings/Devices/%s/Mac)', mac, self.tank.uid)
 
 

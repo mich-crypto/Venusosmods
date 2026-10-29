@@ -240,12 +240,25 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(s['/Temperature'], 19.0)
         self.assertEqual(s['/Rssi'], -70)
 
+        # the temperature is also its own environment sensor
+        t = d.temp.service
+        self.assertEqual(t.name, 'com.victronenergy.temperature.mopeka_standard_temp')
+        self.assertEqual((t['/Temperature'], t['/TemperatureType'], t['/Connected']),
+                         (19.0, venus_service.TEMP_OUTDOOR, 1))
+        self.assertEqual(t['/CustomName'], 'Gas bottle temperature')
+
         # A poor read keeps the previous level
         bad = mopeka_packet([(0, 0)] * 12)
         level = s['/Level']
         d.handle_advertisement('AA:BB:CC:DD:EE:FF', {0x000D: bad}, -70)
         self.assertEqual(s['/Level'], level)
         self.assertIsNone(s['/Mopeka/DistanceMm'])
+
+    def test_mopeka_temperature_service_can_be_off(self):
+        d = MopekaStandardDriver('s', section('mac = aa:bb:cc:dd:ee:ff\ntemperature_service = no\n'))
+        self.assertIsNone(d.temp)
+        d.handle_advertisement('AA:BB:CC:DD:EE:FF', {0x000D: mopeka_packet(MopekaParserTests.PAIRS)}, -70)
+        self.assertEqual(d.tank.service['/Temperature'], 19.0)
 
     def test_mopeka_level_curve(self):
         d = MopekaStandardDriver('s', section(

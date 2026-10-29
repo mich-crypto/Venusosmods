@@ -168,6 +168,13 @@ SCHEMA = {
               advanced=True),
             F('level_table', 'text', 'Distance table', 'distance_mm:percent pairs. Overrides '
               'empty/full and the curve.', advanced=True),
+            F('temperature_service', 'bool', 'Publish temperature',
+              'The sensor\'s temperature as its own temperature sensor (environment).', options=YES_NO),
+            F('temperature_name', 'text', 'Temperature name', ''),
+            F('temperature_type', 'select', 'Temperature type', 'outdoor suits a gas locker.',
+              options=TEMP_TYPES),
+            F('temperature_instance', 'int', 'Temperature VRM instance', '', min=0, max=999,
+              advanced=True),
             F('median_window', 'int', 'Smoothing', 'Median over this many readings.',
               min=1, max=31, advanced=True),
             F('timeout', 'int', 'Disconnected after', 'Seconds without a reading.', unit='s',

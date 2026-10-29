@@ -377,6 +377,8 @@ def main():
             result['mopeka'] = values('com.victronenergy.tank.mopeka_standard', (
                 '/Level', '/Remaining', '/FluidType', '/Temperature', '/Connected', '/Rssi',
                 '/DeviceInstance', '/ProductName', '/Mopeka/DistanceMm'))
+            result['mopeka_temp'] = values('com.victronenergy.temperature.mopeka_standard_temp', (
+                '/Temperature', '/TemperatureType', '/Connected', '/CustomName'))
             result['esp'] = values('com.victronenergy.tank.esp32_hydro', (
                 '/Level', '/Remaining', '/Capacity', '/FluidType', '/Status', '/Hydro/HeightMm'))
             result['esp_temp'] = values('com.victronenergy.temperature.esp32_hydro_temp', (
@@ -499,6 +501,8 @@ def main():
           'sessions now=%d' % (fridge_dev.connects, fridge_dev.busy_rejects,
                                fridge_dev.disconnects, adapter.stops, len(adapter.sessions)))
 
+    mt = result.get('mopeka_temp')
+    assert mt and mt['/Temperature'] == 19.0 and mt['/Connected'] == 1 and mt['/TemperatureType'] == 4, mt
     m, e, t, z1, z2 = (result.get(k) for k in ('mopeka', 'esp', 'esp_temp', 'zone1', 'zone2'))
     assert m and e and t and z1 and z2, result
     assert m['/Connected'] == 1 and m['/FluidType'] == 8 and m['/Rssi'] == -71

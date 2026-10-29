@@ -45,6 +45,12 @@ full_mm = 254
 # empty_mm/full_mm and level_curve.
 #level_table = 20:0, 60:15, 120:45, 180:75, 240:100
 median_window = 5
+# The sensor's temperature as its own temperature sensor
+# (com.victronenergy.temperature.mopeka_standard_temp, shown with the environment sensors).
+temperature_service = yes
+temperature_name = Gas bottle temperature
+# battery, fridge, generic, room, outdoor, waterheater, freezer
+temperature_type = outdoor
 
 [esp32_hydro]
 service = esp32_hydro
