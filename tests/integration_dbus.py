@@ -10,9 +10,16 @@ Needs dbus-python + PyGObject, dbus-run-session and a velib_python checkout:
   VELIB=/tmp/velib_python dbus-run-session -- python3 tests/integration_dbus.py
 """
 
+import http.client
 import os
+import shutil
+import socket
+import stat
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 
 import dbus
 import dbus.service
@@ -206,6 +213,24 @@ class SettingsTree(dbus.service.FallbackObject):
         return 0
 
 
+class Platform(dbus.service.Object):
+    """com.victronenergy.platform /Device/Reboot, which the settings page calls."""
+    rebooted = None
+
+    @dbus.service.method('com.victronenergy.BusItem', in_signature='v', out_signature='i')
+    def SetValue(self, value):
+        Platform.rebooted = int(value)
+        return 0
+
+
+def free_port():
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 def advertise(devices):
     devices['mopeka'].PropertiesChanged(DEV, {
         'RSSI': dbus.Int16(-71),
@@ -232,6 +257,54 @@ def get(bus, service, path):
     return bus.call_blocking(service, path, 'com.victronenergy.BusItem', 'GetValue', '', [])
 
 
+def check_web_results(web):
+    res = web['results']
+    assert 'exception' not in res, res
+    st, page = res['page']
+    assert st == 200 and b'<title>Venus settings' in page, (st, page[:80])
+    st, state = res['state']
+    assert st == 200 and state['password_set'] and not state['authed'] and state['serialbattery'], state
+    services = set(d['service'] for d in state['devices'])
+    assert {'com.victronenergy.tank.mopeka_standard', 'com.victronenergy.tank.esp32_hydro',
+            'com.victronenergy.temperature.esp32_hydro_temp',
+            'com.victronenergy.temperature.fridge_zone1'} <= services, services
+    mop = [d for d in state['devices'] if d['service'].endswith('mopeka_standard')][0]
+    assert mop['values']['/Mopeka/DistanceMm'] and mop['values']['/Capacity'] == 0.027, mop['values']
+    zone = [d for d in state['devices'] if d['service'].endswith('fridge_zone1')][0]
+    assert zone['values']['/Fridge/SupplyVoltage'] == 12.8
+    names = dict((s['name'], s) for s in state['services'])
+    assert names['fridge']['state'] == 'up' and names['fridge']['seconds'] == 12, names
+    st, locked = res['locked']
+    assert st == 401 and locked['locked'], (st, locked)
+    st, cfg = res['config']
+    assert st == 200 and sorted(s['section'] for s in cfg['sections']) == [
+        'esp32_hydro', 'fridge', 'mopeka_standard', 'web'], cfg
+    assert 'pw-XYZ-123' not in str(cfg), 'password leaked'
+    assert res['no_csrf'][0] == 403, res['no_csrf']
+    st, saved = res['save']
+    assert st == 200 and saved['restarted'], res['save']
+    assert res['bad'][0] == 400 and 'capacity_l' in res['bad'][1]['errors'], res['bad']
+    with open(os.path.join(web['dir'], 'config.ini')) as f:
+        text = f.read()
+    assert 'capacity_l = 24' in text and '[fridge]' in text, text
+    with open(web['calls']) as f:
+        calls = f.read()
+    assert 'svc -t %s' % os.path.join(web['dir'], 'service', 'mopeka_standard') in calls, calls
+    assert res['sb_get'][0] == 200 and res['sb_get'][1]['installed'], res['sb_get']
+    assert res['sb_save'][0] == 200 and res['sb_save'][1]['restarted'], res['sb_save']
+    with open(os.path.join(web['dir'], 'sb', 'config.ini')) as f:
+        assert f.read() == '[DEFAULT]\nMAX_BATTERY_CHARGE_CURRENT = 40\n'
+    for _ in range(40):
+        if os.path.exists(os.path.join(web['dir'], 'sb_restarted')):
+            break
+        time.sleep(0.05)
+    assert os.path.exists(os.path.join(web['dir'], 'sb_restarted')), 'restart.sh did not run'
+    st, log = res['log']
+    assert st == 200 and log['lines'][0].endswith('INFO fridge poll ok'), res['log']
+    assert res['pair'][0] == 200 and SettingsTree.stored['/Settings/Devices/mopeka_standard/Mac'] == '', res['pair']
+    assert res['reboot'][0] == 200 and Platform.rebooted == 1, res['reboot']
+
+
 def main():
     velib = os.environ.get('VELIB')
     if not velib:
@@ -240,18 +313,42 @@ def main():
 
     DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
-    names = [dbus.service.BusName(n, bus) for n in ('org.bluez', 'com.victronenergy.settings')]
+    names = [dbus.service.BusName(n, bus) for n in ('org.bluez', 'com.victronenergy.settings',
+                                                    'com.victronenergy.platform')]
+    Platform(bus, '/Device/Reboot')
     fridge_dev = Fridge(bus)
     Root(bus, fridge_dev)
     SettingsTree(bus, '/Settings')
     adapter = Adapter(bus, '/org/bluez/hci0')
     devices = {'mopeka': Device(bus, dev_path(MOPEKA_MAC)), 'esp': Device(bus, dev_path(ESP_MAC))}
 
-    cfg = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'venus_it_config.ini')
+    W = tempfile.mkdtemp(prefix='venus_web_', dir=os.environ.get('TMPDIR', '/tmp'))
+    web = {'dir': W, 'port': int(os.environ.get('WEB_PORT') or free_port()), 'password': 'pw-XYZ-123'}
+    cfg = os.path.join(W, 'config.ini')
     with open(cfg, 'w') as f:
         f.write('[mopeka_standard]\ncapacity_l = 27\n'
                 '[esp32_hydro]\ndevice_id = 1\ntemperature_service = yes\n'
-                '[fridge]\nmac = %s\npoll_interval = 10\n' % FRIDGE_MAC)
+                '[fridge]\nmac = %s\npoll_interval = 10\n'
+                '[web]\npassword = %s\nopen_firewall = no\n' % (FRIDGE_MAC, web['password']))
+    # folders the page looks at: services, logs, dbus-serialbattery, fake svc/svstat
+    shutil.copytree(os.path.join(DRIVERS, '..', 'etc', 'init.d'), os.path.join(W, 'init.d'))
+    for d in ('service', 'log/fridge', 'sb', 'bin'):
+        os.makedirs(os.path.join(W, d))
+    for name in ('fridge', 'mopeka_standard', 'esp32_hydro', 'web_ui'):
+        os.symlink(os.path.join(W, 'init.d', name), os.path.join(W, 'service', name))
+    web['calls'] = os.path.join(W, 'calls.log')
+    for name, body in (('svc', 'echo "svc $@" >> %s' % web['calls']),
+                       ('svstat', 'for a in "$@"; do echo "$a: up (pid 99) 12 seconds"; done')):
+        path = os.path.join(W, 'bin', name)
+        with open(path, 'w') as f:
+            f.write('#!/bin/sh\n%s\n' % body)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+    shutil.copy(os.path.join(HERE, 'data', 'serialbattery_config.default.ini'),
+                os.path.join(W, 'sb', 'config.default.ini'))
+    with open(os.path.join(W, 'sb', 'restart.sh'), 'w') as f:
+        f.write('echo restarted > %s\n' % os.path.join(W, 'sb_restarted'))
+    with open(os.path.join(W, 'log', 'fridge', 'current'), 'w') as f:
+        f.write('@40000000%08x%08x INFO fridge poll ok\n' % (int(time.time()) + 10, 0))
 
     env = dict(os.environ, PYTHONPATH=velib)
     procs = [subprocess.Popen([sys.executable, os.path.join(DRIVERS, script),
@@ -259,6 +356,12 @@ def main():
              for script, section in (('mopeka_venus.py', 'mopeka_standard'),
                                      ('esp32_hydro_tank.py', 'esp32_hydro'),
                                      ('fridge_venus.py', 'fridge'))]
+    procs.append(subprocess.Popen(
+        [sys.executable, os.path.join(DRIVERS, 'web_ui.py'), '--config', cfg, '--port', str(web['port']),
+         '--bind', '127.0.0.1', '--no-firewall', '--init-dir', os.path.join(W, 'init.d'),
+         '--service-dir', os.path.join(W, 'service'), '--log-dir', os.path.join(W, 'log'),
+         '--rc-local', os.path.join(W, 'rc.local'), '--serialbattery-dir', os.path.join(W, 'sb')],
+        env=dict(env, PATH=os.path.join(W, 'bin') + os.pathsep + env['PATH'])))
 
     GLib.timeout_add(500, advertise, devices)
     loop = GLib.MainLoop()
@@ -295,7 +398,59 @@ def main():
         loop.quit()
         return False
 
+    def web_worker():
+        import base64
+        auth = {'Authorization': 'Basic ' + base64.b64encode(('x:' + web['password']).encode()).decode()}
+        csrf = {'X-Requested-With': 'venussettings'}
+        out = web['results'] = {}
+
+        def http_call(name, method, path, form=None, headers=None):
+            conn = http.client.HTTPConnection('127.0.0.1', web['port'], timeout=20)
+            body = None
+            h = dict(headers or {})
+            if form is not None:
+                body = '&'.join('%s=%s' % (k, v) for k, v in form.items())
+                h['Content-Type'] = 'application/x-www-form-urlencoded'
+            conn.request(method, path, body, h)
+            r = conn.getresponse()
+            data = r.read()
+            conn.close()
+            try:
+                import json
+                parsed = json.loads(data.decode())
+            except ValueError:
+                parsed = data
+            out[name] = (r.status, parsed)
+
+        try:
+            for _ in range(50):                      # the page needs a moment to start
+                try:
+                    socket.create_connection(('127.0.0.1', web['port']), 1).close()
+                    break
+                except OSError:
+                    time.sleep(0.2)
+            http_call('page', 'GET', '/')
+            http_call('state', 'GET', '/api/state')
+            http_call('locked', 'GET', '/api/driver_config')
+            http_call('config', 'GET', '/api/driver_config', headers=auth)
+            http_call('no_csrf', 'POST', '/api/driver_config', {'section': 'mopeka_standard'}, auth)
+            http_call('save', 'POST', '/api/driver_config',
+                      {'section': 'mopeka_standard', 'f.capacity_l': '24', 'restart': '1'}, dict(auth, **csrf))
+            http_call('bad', 'POST', '/api/driver_config',
+                      {'section': 'mopeka_standard', 'f.capacity_l': 'x'}, dict(auth, **csrf))
+            http_call('sb_get', 'GET', '/api/serialbattery', headers=auth)
+            http_call('sb_save', 'POST', '/api/serialbattery',
+                      {'s.MAX_BATTERY_CHARGE_CURRENT': '40', 'restart': '1'}, dict(auth, **csrf))
+            http_call('log', 'GET', '/api/log?service=fridge', headers=auth)
+            http_call('pair', 'POST', '/api/pair_reset', {'section': 'mopeka_standard'}, dict(auth, **csrf))
+            http_call('reboot', 'POST', '/api/reboot', {}, dict(auth, **csrf))
+        except Exception as e:                       # noqa: BLE001 - reported by the main thread
+            out['exception'] = repr(e)
+
     def check_control():
+        result['paired_mac'] = SettingsTree.stored.get('/Settings/Devices/mopeka_standard/Mac')
+        threading.Thread(target=web_worker, daemon=True).start()
+        GLib.timeout_add(200, wait_for_web)
         try:
             result['control'] = {
                 'freezer_target': get(bus, 'com.victronenergy.temperature.fridge_zone2',
@@ -311,9 +466,21 @@ def main():
             }
         except dbus.exceptions.DBusException as e:
             result['error'] = str(e)
-        loop.quit()
         return False
 
+    def wait_for_web():
+        res = web.get('results', {})
+        if 'reboot' in res or 'exception' in res or time.time() > web['deadline']:
+            keep = int(os.environ.get('KEEP_UI') or 0)
+            if keep:
+                print('UI at http://127.0.0.1:%d/  password %s' % (web['port'], web['password']), flush=True)
+                GLib.timeout_add_seconds(keep, loop.quit)
+            else:
+                loop.quit()
+            return False
+        return True
+
+    web['deadline'] = time.time() + 120
     GLib.timeout_add_seconds(9, check)
     loop.run()
 
@@ -357,9 +524,9 @@ def main():
     assert fridge.CMD_SET_RIGHT in sent and fridge.CMD_SET_OTHERS in sent, sent
 
     # Mopeka paired via the sync button and stored the MAC in localsettings
-    assert SettingsTree.stored.get('/Settings/Devices/mopeka_standard/Mac') == MOPEKA_MAC, \
-        SettingsTree.stored
-    assert codes == [0, 0, 0], codes
+    assert result['paired_mac'] == MOPEKA_MAC, result['paired_mac']
+    check_web_results(web)
+    assert codes == [0, 0, 0, 0], codes
     print('INTEGRATION OK')
 
 

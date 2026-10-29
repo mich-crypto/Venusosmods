@@ -81,3 +81,13 @@ zone1_name = Fridge
 # only used by dual-zone fridges
 zone2_type = auto
 zone2_name = Freezer
+
+[web]
+# The settings page (service web_ui): http://<pi-ip>:8088
+# Change fridge, gas, water and battery (dbus-serialbattery) settings in the browser.
+# Without a password the page is read-only. install.sh web_ui sets a random one.
+password =
+port = 8088
+bind = 0.0.0.0
+# Open the port in the Pi's firewall for the local network (not the internet)
+open_firewall = yes

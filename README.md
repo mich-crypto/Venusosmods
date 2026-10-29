@@ -12,6 +12,8 @@ on Modbus-TCP/MQTT):
 
 **→ Start with the [step-by-step guide](docs/GUIDE.md)**, also as a printable
 **[PDF](docs/Venus-OS-Mods-Guide.pdf)** (guide + wiring + calibration in one file).
+
+**Settings page:** after installing, `install.sh web_ui` gives you a browser page on the Pi (`http://<pi-ip>:8088`) to see everything live and change the fridge, gas, water and dbus-serialbattery (JK BMS etc.) settings without editing files. See Part 8 of the guide.
 Also: [wiring](docs/wiring.md) · [tank calibration](docs/calibration.md) · [filling chart of the wheel-arch tank](docs/tank-filling-chart.md)
 
 The PDF is generated from the Markdown files: `cd tools/pdf && npm install && npm run build`.
@@ -30,6 +32,8 @@ data/                              -> copied to /data on the Pi
     mopeka_venus.py                driver: Mopeka  -> tank
     esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature)
     fridge_venus.py                driver: fridge  -> temperature per zone
+    web_ui.py + web/index.html     settings page on port 8088 (drivers + dbus-serialbattery)
+    config_tools.py                config.ini parsing, validation and safe writing for the page
     diagnostics/
       test_venus_compatibility.py  read-only pre-flight check, PASS/WARN/FAIL, optional BLE scan
       fridge_probe.py              does my fridge speak the supported protocol?

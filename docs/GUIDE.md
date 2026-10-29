@@ -13,7 +13,8 @@ check, so you know it works before moving on.
 | 5 | Install the drivers on Venus OS | 20 min |
 | 6 | Mopeka gas sensor | 10 min |
 | 7 | Fridge | 10 min |
-| 8 | Updates, troubleshooting, removal | – |
+| 8 | Settings page in the browser | 5 min |
+| 9 | Updates, troubleshooting, removal | – |
 
 You need: the Raspberry Pi running Venus OS on the same network (Wi-Fi or
 LAN) as a laptop, a USB-C **data** cable (some cables only charge), and
@@ -331,7 +332,57 @@ automatically.
 
 ---
 
-## Part 8 – Updates, troubleshooting, removal
+## Part 8 – Settings page in the browser
+
+Instead of editing `config.ini` in nano, you get a web page on the Pi. It
+shows the water tank, gas bottle and fridge live, and it changes the settings
+of the fridge, gas, water and the battery driver
+([dbus-serialbattery](https://github.com/mr-manuel/venus-os_dbus-serialbattery),
+for example the JK BMS) with proper fields, units and explanations. It is
+made for a phone or iPad.
+
+**Turn it on** (Termius is fine):
+```sh
+sh /data/shared_drivers/update.sh
+sh /data/shared_drivers/install.sh web_ui
+```
+The installer prints a random **password** and the address, for example
+`http://192.168.1.50:8088`. The password is also in `config.ini` under `[web]`
+if you forget it. Open the address in Safari and add it to the home screen.
+
+**What is on the page**
+* **Overview** – live values and the state of every driver (running, restarts,
+  last log line). Anyone on your network can look; nobody can change anything
+  without the password.
+* **Fridge, Gas, Water** – one form per sensor. Bottle presets fill in volume
+  and shape, *Use as empty* / *Use as full* copy the current sensor reading, a
+  blank field means "use the default". Press *Save*, or *Save & restart driver*
+  to apply it at once.
+* **Battery** – every setting of dbus-serialbattery in groups, with search,
+  switches, the default value, a *Reset to default* link and the original
+  explanation under *About this setting*. Only the settings you change are
+  written to its `config.ini`; the file with the defaults is never touched.
+  Changes to Bluetooth BMS, the USB Bluetooth option or the CAN port need a
+  reboot of the Pi (the page offers a *Reboot now* button).
+* **Files & logs** – the raw config files as a fallback, and the log of every
+  service.
+
+Each save keeps the previous file as `config.ini.bak` next to it.
+
+**Safety**
+* The page listens on the local network only: the installer opens port 8088
+  in the Pi's firewall for 192.168.x.x, 10.x.x.x, 172.16–31.x.x and Tailscale
+  addresses, not for the internet. Don't forward the port on your router.
+* From outside the van, use Tailscale or an SSH tunnel
+  (`ssh -L 8088:localhost:8088 root@<pi>`, then open `http://localhost:8088`).
+* Change the port, switch the firewall rule off (`open_firewall = no`) or
+  bind to the Pi itself (`bind = 127.0.0.1`) in the `[web]` section.
+* Page not reachable? `tail -F /var/log/web_ui/current | tai64nlocal` and
+  `python3 /data/shared_drivers/diagnostics/test_venus_compatibility.py`.
+
+---
+
+## Part 9 – Updates, troubleshooting, removal
 
 ### Updating the drivers
 On the Pi (from Termius too):

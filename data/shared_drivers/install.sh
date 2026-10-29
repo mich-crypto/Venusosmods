@@ -3,7 +3,7 @@
 #
 # Run ON THE GX/RASPBERRY PI after copying this repo's data/ folder to /data:
 #   scp -r data/shared_drivers data/etc root@venus.local:/data/
-#   ssh root@venus.local sh /data/shared_drivers/install.sh mopeka_standard esp32_hydro fridge
+#   ssh root@venus.local sh /data/shared_drivers/install.sh mopeka_standard esp32_hydro fridge web_ui
 #
 # Arguments: the services to enable (folders in /data/etc/init.d).
 #   --force   enable even if the pre-flight diagnostics report a FAIL
@@ -45,6 +45,16 @@ if ! python3 "$DRIVERS/diagnostics/test_venus_compatibility.py"; then
 fi
 echo
 
+# The settings page needs a password before it can change anything
+for name in "$@"; do
+    if [ "$name" = web_ui ] && ! grep -q '^\[web\]' "$DRIVERS/config.ini"; then
+        PW=$(tr -dc 'a-km-np-zA-HJ-NP-Z2-9' < /dev/urandom | head -c 10)
+        printf '\n[web]\npassword = %s\nport = 8088\nopen_firewall = yes\n' "$PW" >> "$DRIVERS/config.ini"
+        echo "Settings page password: $PW   (saved in config.ini, section [web])"
+        NEWPW=1
+    fi
+done
+
 [ -f "$RCLOCAL" ] || printf '#!/bin/sh\n' > "$RCLOCAL"
 chmod +x "$RCLOCAL"
 
@@ -64,6 +74,12 @@ for name in "$@"; do
         echo "Enabled $name (svscan starts it within ~5 s)"
     fi
 done
+
+if [ "$NEWPW" = 1 ] || grep -q web_ui "$RCLOCAL"; then
+    IP=$(ip -4 addr show 2>/dev/null | sed -n 's/.*inet \(192\.168\.[0-9.]*\|10\.[0-9.]*\).*/\1/p' | head -n 1)
+    echo
+    echo "Settings page: http://${IP:-<pi-ip>}:8088"
+fi
 
 echo
 echo "Logs:   tail -F /var/log/<name>/current | tai64nlocal"

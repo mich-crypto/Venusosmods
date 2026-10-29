@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:,">
+<title>Venus settings</title>
+<style>
+:root {
+  --bg:#f4f5f7; --card:#fff; --ink:#1b2430; --muted:#5f6b7a; --line:#dde1e7; --soft:#eef1f5;
+  --accent:#0a6ebd; --accent-ink:#fff; --ok:#1c8a4c; --warn:#a96a00; --bad:#c0392b;
+  --ok-bg:#e3f4ea; --warn-bg:#fdf1d9; --bad-bg:#fbe4e1; --code:#eef1f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#12161c; --card:#1b222b; --ink:#e8ecf1; --muted:#9aa6b4; --line:#2c3643; --soft:#232c37;
+    --accent:#4aa3ea; --accent-ink:#0b1117; --ok:#4cc27f; --warn:#e5a93d; --bad:#f0746a;
+    --ok-bg:#16301f; --warn-bg:#35290f; --bad-bg:#3a1c19; --code:#232c37; }
+}
+* { box-sizing:border-box; }
+html { font-size:16px; -webkit-text-size-adjust:100%; }
+body { margin:0; background:var(--bg); color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.4; }
+header { background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+.bar { max-width:1100px; margin:0 auto; padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.bar h1 { font-size:1.15rem; margin:0; }
+.bar .sub { color:var(--muted); font-size:.85rem; }
+.spacer { flex:1; }
+nav { max-width:1100px; margin:0 auto; padding:0 12px; display:flex; gap:4px; overflow-x:auto; }
+nav button { background:none; border:0; border-bottom:3px solid transparent; padding:10px 14px; font-size:1rem;
+  color:var(--muted); cursor:pointer; white-space:nowrap; }
+nav button[aria-selected=true] { color:var(--accent); border-color:var(--accent); font-weight:600; }
+main { max-width:1100px; margin:0 auto; padding:16px; padding-bottom:110px; }
+h2 { font-size:1.05rem; margin:22px 0 10px; }
+h2:first-child { margin-top:0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+.grid .card { margin:0; }
+.card h3 { font-size:.95rem; margin:0 0 4px; display:flex; align-items:center; gap:8px; }
+.big { font-size:2rem; font-weight:700; line-height:1.15; }
+.big small { font-size:1rem; font-weight:500; color:var(--muted); }
+.muted { color:var(--muted); font-size:.88rem; overflow-wrap:anywhere; }
+.chip { display:inline-block; font-size:.75rem; font-weight:600; padding:2px 9px; border-radius:99px; background:var(--soft); color:var(--muted); }
+.chip.ok { background:var(--ok-bg); color:var(--ok); } .chip.warn { background:var(--warn-bg); color:var(--warn); }
+.chip.bad { background:var(--bad-bg); color:var(--bad); }
+.bar-level { height:8px; background:var(--soft); border-radius:99px; overflow:hidden; margin:8px 0 6px; }
+.bar-level > i { display:block; height:100%; background:var(--accent); border-radius:99px; }
+button, select, input, textarea { font:inherit; color:inherit; }
+.btn { background:var(--soft); border:1px solid var(--line); border-radius:10px; padding:9px 14px; cursor:pointer; min-height:42px; }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+.btn.danger { color:var(--bad); }
+.btn.small { padding:5px 10px; min-height:34px; font-size:.9rem; }
+.btn:disabled { opacity:.45; cursor:not-allowed; }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+table { width:100%; border-collapse:collapse; }
+td, th { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line); font-size:.95rem; }
+th { color:var(--muted); font-weight:600; font-size:.8rem; }
+.field { margin:0 0 14px; }
+.field > label, .field > .lbl { display:block; font-weight:600; margin-bottom:4px; }
+.field .help { color:var(--muted); font-size:.85rem; margin-top:3px; }
+.field .err { color:var(--bad); font-size:.85rem; margin-top:3px; }
+input[type=text], input[type=number], input[type=password], input[type=search], select, textarea {
+  width:100%; max-width:520px; padding:9px 11px; min-height:42px; border:1px solid var(--line);
+  border-radius:10px; background:var(--card); }
+input.changed, select.changed, textarea.changed { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+input.bad, select.bad { border-color:var(--bad); }
+.with-unit { display:flex; gap:8px; align-items:center; max-width:520px; }
+.with-unit input { max-width:none; } .unit { color:var(--muted); min-width:24px; }
+textarea { max-width:100%; box-sizing:border-box; min-height:300px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85rem; }
+details.adv { margin:6px 0 0; } details.adv > summary { cursor:pointer; color:var(--muted); padding:6px 0; }
+.switch { display:inline-flex; align-items:center; gap:10px; cursor:pointer; }
+.switch input { width:46px; height:26px; appearance:none; -webkit-appearance:none; background:var(--line);
+  border-radius:99px; position:relative; transition:.15s; margin:0; cursor:pointer; flex:none; }
+.switch input::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%;
+  background:#fff; transition:.15s; }
+.switch input:checked { background:var(--ok); } .switch input:checked::after { left:23px; }
+.switch input:disabled { opacity:.5; }
+.entry { padding:12px 0; border-bottom:1px solid var(--line); }
+.entry:last-child { border-bottom:0; }
+.entry .top { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin-bottom:6px; }
+.entry .name { font-weight:600; } .entry code { font-size:.75rem; color:var(--muted); background:var(--code);
+  padding:1px 6px; border-radius:6px; }
+.entry pre { white-space:pre-wrap; background:var(--code); border-radius:10px; padding:10px 12px; font-size:.82rem;
+  margin:8px 0 0; font-family:ui-monospace,Menlo,Consolas,monospace; overflow-x:auto; }
+.entry.modified .name::after { content:" \25CF"; color:var(--accent); }
+.entry .meta { color:var(--muted); font-size:.82rem; margin-top:5px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.link { background:none; border:0; color:var(--accent); cursor:pointer; padding:0; font-size:inherit; }
+details.group { background:var(--card); border:1px solid var(--line); border-radius:14px; margin-bottom:10px; }
+details.group > summary { cursor:pointer; padding:14px 16px; font-weight:600; list-style:none; display:flex; gap:8px; align-items:center; }
+details.group > summary::-webkit-details-marker { display:none; }
+details.group > summary::before { content:"\25B8"; color:var(--muted); transition:.15s; }
+details.group[open] > summary::before { transform:rotate(90deg); }
+details.group > .body { padding:0 16px 8px; }
+.savebar { position:fixed; left:0; right:0; bottom:0; background:var(--card); border-top:1px solid var(--line);
+  padding:10px 16px; z-index:6; }
+.savebar .in { max-width:1100px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.banner { border-radius:12px; padding:12px 14px; margin:0 0 14px; background:var(--soft); }
+.banner.warn { background:var(--warn-bg); color:var(--warn); } .banner.ok { background:var(--ok-bg); color:var(--ok); }
+.banner.bad { background:var(--bad-bg); color:var(--bad); }
+#toast { position:fixed; left:50%; bottom:80px; transform:translateX(-50%); z-index:20; max-width:90vw;
+  background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:12px; opacity:0; pointer-events:none;
+  transition:opacity .2s; font-size:.95rem; }
+#toast.show { opacity:1; } #toast.bad { background:var(--bad); color:#fff; }
+dialog { border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--ink);
+  max-width:min(900px,94vw); width:100%; padding:16px; }
+dialog::backdrop { background:rgba(0,0,0,.45); }
+dialog pre { background:var(--code); border-radius:10px; padding:10px; max-height:60vh; overflow:auto; font-size:.8rem;
+  white-space:pre-wrap; word-break:break-word; }
+.cells { display:flex; align-items:flex-end; gap:3px; height:44px; margin-top:8px; }
+.cells i { flex:1; background:var(--accent); border-radius:3px 3px 0 0; min-height:3px; }
+@media (max-width:600px) { .big { font-size:1.7rem; } main { padding:12px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>Venus settings</h1>
+    <span class="sub" id="hostline"></span>
+    <span class="spacer"></span>
+    <span id="lockchip"></span>
+  </div>
+  <nav id="tabs" role="tablist"></nav>
+</header>
+<main id="main"></main>
+<div class="savebar" id="savebar" hidden><div class="in" id="saveinner"></div></div>
+<div id="toast"></div>
+<dialog id="dlg"></dialog>
+
+<script>
+'use strict';
+// ---------------------------------------------------------------- helpers
+const S = { tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
+const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
+              ['battery', 'Battery'], ['files', 'Files & logs']];
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'value') el.value = v;
+    else if (['checked', 'disabled', 'selected', 'open', 'hidden'].includes(k)) el[k] = !!v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+const $ = (s, el) => (el || document).querySelector(s);
+const clear = el => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+
+function toast(msg, bad) {
+  const t = $('#toast');
+  t.textContent = msg; t.className = 'show' + (bad ? ' bad' : '');
+  clearTimeout(toast.t); toast.t = setTimeout(() => { t.className = ''; }, bad ? 6000 : 3000);
+}
+
+async function api(path, form) {
+  const opts = { headers: { 'X-Requested-With': 'venussettings' } };
+  if (form) {
+    opts.method = 'POST';
+    opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    opts.body = new URLSearchParams(form).toString();
+  }
+  let r, data = {};
+  try { r = await fetch(path, opts); } catch (e) { return { status: 0, ok: false, data: { error: 'No connection to the Pi' } }; }
+  try { data = await r.json(); } catch (e) { /* not json */ }
+  if (r.status === 401) S.locked = true;
+  return { status: r.status, ok: r.ok && data.ok !== false, data };
+}
+
+const num = (v, d) => (v === null || v === undefined || isNaN(v)) ? '–' : Number(v).toFixed(d === undefined ? 1 : d);
+const val = (dev, path) => dev && dev.values ? dev.values[path] : undefined;
+const canEdit = () => !!(S.state && S.state.authed);
+
+function ago(sec) {
+  if (sec === null || sec === undefined) return '';
+  if (sec < 90) return sec + ' s';
+  if (sec < 5400) return Math.round(sec / 60) + ' min';
+  if (sec < 172800) return Math.round(sec / 3600) + ' h';
+  return Math.round(sec / 86400) + ' days';
+}
+
+// ------------------------------------------------------------- shell, tabs
+function renderTabs() {
+  const nav = clear($('#tabs'));
+  for (const [id, label] of TABS) {
+    nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label));
+  }
+}
+
+function renderLock() {
+  const st = S.state, box = clear($('#lockchip'));
+  if (!st) return;
+  if (!st.password_set) {
+    box.append(h('span', { class: 'chip warn', title: 'Set a password in config.ini ([web] password) to be able to change settings' }, 'Read-only'));
+  } else if (st.authed) {
+    box.append(h('span', { class: 'chip ok' }, 'Unlocked'));
+  } else {
+    box.append(h('a', { class: 'btn primary small', href: '/unlock' }, 'Unlock to edit'));
+  }
+  $('#hostline').textContent = [st.host, st.venus && 'Venus OS ' + st.venus].filter(Boolean).join(' · ');
+}
+
+async function selectTab(id) {
+  S.tab = id;
+  stopLogs();
+  hideSaveBar();
+  renderTabs();
+  await renderTab();
+}
+
+function lockedNotice() {
+  const st = S.state;
+  return h('div', { class: 'banner warn' },
+    st && !st.password_set
+      ? 'No password is set, so this page is read-only. Set one with: nano /data/shared_drivers/config.ini  ([web] password = ...) and restart the page.'
+      : ['Unlock the page to change settings. ', h('a', { href: '/unlock' }, 'Unlock')]);
+}
+
+async function renderTab() {
+  hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
+  const main = clear($('#main'));
+  const f = { overview: tabOverview, fridge: () => tabDriver('fridge'), gas: () => tabDriver('mopeka'),
+              water: () => tabDriver('esp32'), battery: tabBattery, files: tabFiles }[S.tab];
+  await f(main);
+}
+
+// ---------------------------------------------------------------- overview
+function statusChip(dev) {
+  const c = val(dev, '/Connected');
+  return h('span', { class: 'chip ' + (c === 1 ? 'ok' : 'bad') }, c === 1 ? 'connected' : 'not connected');
+}
+
+function levelBar(pct) {
+  return h('div', { class: 'bar-level' }, h('i', { style: 'width:' + Math.max(0, Math.min(100, pct || 0)) + '%' }));
+}
+
+function deviceCard(d) {
+  const v = d.values, name = v['/CustomName'] || v['/ProductName'] || d.service;
+  if (d.kind === 'tank') {
+    const gas = '/Mopeka/DistanceMm' in v;
+    const rem = v['/Remaining'] === null || v['/Remaining'] === undefined ? '' : num(v['/Remaining'] * 1000, 1) + ' L of ' + num(v['/Capacity'] * 1000, 0) + ' L';
+    return h('div', { class: 'card' },
+      h('h3', {}, name, ' ', statusChip(d)),
+      h('div', { class: 'big' }, num(v['/Level'], 0), h('small', {}, ' %')), levelBar(v['/Level']),
+      h('div', { class: 'muted' }, rem),
+      gas ? h('div', { class: 'muted' }, 'Sensor reads ' + num(v['/Mopeka/DistanceMm'], 0) + ' mm · ' + num(v['/Temperature'], 0) + ' °C · battery ' + num(v['/BatteryVoltage'], 2) + ' V · ' + (v['/Rssi'] || '–') + ' dBm')
+          : h('div', { class: 'muted' }, 'Water height ' + num(v['/Hydro/HeightMm'], 0) + ' mm' +
+              (v['/Hydro/Filling'] ? ' · filling' : '') + (v['/Hydro/Draining'] ? ' · draining' : '') + (v['/Hydro/Sloshing'] ? ' · sloshing' : '')));
+  }
+  if (d.kind === 'temperature') {
+    const fridge = '/Fridge/PoweredOn' in v;
+    return h('div', { class: 'card' },
+      h('h3', {}, name, ' ', statusChip(d)),
+      h('div', { class: 'big' }, num(v['/Temperature'], 1), h('small', {}, ' °C')),
+      fridge ? h('div', { class: 'muted' }, 'Set to ' + num(v['/Fridge/TargetTemperature'], 0) + ' °C · ' + (v['/Fridge/PoweredOn'] ? 'on' : 'off') +
+              (v['/Fridge/EcoMode'] ? ' · eco' : '') + ' · supply ' + num(v['/Fridge/SupplyVoltage'], 1) + ' V') : null);
+  }
+  return null;
+}
+
+function batteryCard(d) {
+  const v = d.values;
+  return h('div', { class: 'card' },
+    h('h3', {}, v['/CustomName'] || v['/ProductName'] || d.service, ' ', statusChip(d)),
+    h('div', { class: 'big' }, num(v['/Soc'], 0), h('small', {}, ' %')), levelBar(v['/Soc']),
+    h('div', { class: 'muted' }, num(v['/Dc/0/Voltage'], 2) + ' V · ' + num(v['/Dc/0/Current'], 1) + ' A · ' +
+      num(v['/Dc/0/Power'], 0) + ' W · ' + num(v['/Dc/0/Temperature'], 1) + ' °C'));
+}
+
+async function tabOverview(main) {
+  const st = S.state;
+  const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard));
+  main.append(h('h2', {}, 'Now'));
+  main.append(cards.length ? h('div', { class: 'grid' }, cards) :
+    h('div', { class: 'banner' }, 'No device is reporting yet. Enable the drivers below and give them a minute.'));
+  main.append(h('h2', {}, 'Drivers'));
+  const rows = (st.services || []).map(s => {
+    const chip = s.state === 'up' ? h('span', { class: 'chip ok' }, 'running ' + ago(s.seconds))
+      : s.enabled ? h('span', { class: 'chip bad' }, 'stopped') : h('span', { class: 'chip' }, 'off');
+    return h('tr', {},
+      h('td', {}, s.name), h('td', {}, chip),
+      h('td', {}, h('div', { class: 'row' },
+        h('button', { class: 'btn small', onclick: () => showLog(s.name) }, 'Log'),
+        s.enabled ? h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => svcRestart(s.name) }, 'Restart') : null,
+        s.name !== 'web_ui' ? h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => svcToggle(s) }, s.enabled ? 'Turn off' : 'Turn on') : null)));
+  });
+  main.append(h('div', { class: 'card' }, h('table', {}, h('tr', {}, h('th', {}, 'Driver'), h('th', {}, 'Status'), h('th', {}, '')), rows)));
+  if (st.serialbattery) {
+    main.append(h('div', { class: 'card row' }, h('div', {}, h('b', {}, 'dbus-serialbattery'), h('div', { class: 'muted' }, 'Battery driver (JK BMS etc.), settings on the Battery tab')),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn small', onclick: () => showLog('dbus-serialbattery') }, 'Log'),
+      h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => confirmThen('Restart dbus-serialbattery?', () => post('/api/restart', { target: 'serialbattery' })) }, 'Restart')));
+  }
+  if (!canEdit()) main.append(lockedNotice());
+  main.append(h('h2', {}, 'System'));
+  main.append(h('div', { class: 'card row' }, h('div', {}, h('b', {}, 'Restart Venus OS'), h('div', { class: 'muted' }, 'Reboots the Raspberry Pi. Needed after changing Bluetooth settings of dbus-serialbattery.')),
+    h('span', { class: 'spacer' }),
+    h('button', { class: 'btn danger', disabled: !canEdit(), onclick: () => confirmThen('Reboot the Pi now? The page will be unavailable for about a minute.', () => post('/api/reboot', {})) }, 'Reboot')));
+}
+
+async function post(path, form, quiet) {
+  const r = await api(path, form);
+  if (!quiet) toast(r.data.message || r.data.error || (r.ok ? 'Done' : 'Failed'), !r.ok);
+  if (r.status === 401) { renderLock(); }
+  return r;
+}
+
+function confirmThen(text, fn) { if (window.confirm(text)) return fn(); }
+
+async function svcRestart(name) { await post('/api/restart', { target: name }); await refreshState(); }
+async function svcToggle(s) {
+  if (s.enabled && !window.confirm('Turn off ' + s.name + '? Its device disappears from Venus OS.')) return;
+  await post('/api/service', { name: s.name, action: s.enabled ? 'disable' : 'enable' });
+  await refreshState();
+}
+
+// -------------------------------------------------------------------- logs
+function stopLogs() { clearInterval(S.logTimer); S.logTimer = null; }
+async function showLog(name) {
+  const dlg = $('#dlg'), pre = h('pre', {}, 'loading…');
+  const load = async () => {
+    const r = await api('/api/log?service=' + encodeURIComponent(name));
+    pre.textContent = r.ok ? (r.data.lines.join('\n') || '(empty)') : (r.data.error || 'could not read the log');
+    pre.scrollTop = pre.scrollHeight;
+  };
+  clear(dlg).append(h('div', { class: 'row' }, h('b', {}, 'Log: ' + name), h('span', { class: 'spacer' }),
+    h('button', { class: 'btn small', onclick: load }, 'Refresh'),
+    h('button', { class: 'btn small', onclick: () => dlg.close() }, 'Close')), pre);
+  dlg.showModal();
+  await load();
+}
+
+// ------------------------------------------------------------ driver forms
+function liveDevice(kind) {
+  const test = { mopeka: d => d.kind === 'tank' && '/Mopeka/DistanceMm' in d.values,
+                 esp32: d => (d.kind === 'tank' && '/Hydro/HeightMm' in d.values),
+                 fridge: d => d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values }[kind];
+  return (S.state.devices || []).filter(test);
+}
+
+function control(f, value, secretSet, onchange) {
+  const ro = !!f.readonly || !canEdit();
+  let el;
+  if (f.type === 'bool' || f.type === 'select') {
+    const opts = (f.options || []);
+    el = h('select', { disabled: ro }, h('option', { value: '' }, '(default)'),
+      opts.map(o => h('option', { value: o[0] }, o[1])));
+    el.value = value || '';
+    if (value && el.value !== value) el.append(h('option', { value, selected: true }, value)), el.value = value;
+  } else if (f.type === 'int' || f.type === 'float') {
+    el = h('input', { type: 'number', inputmode: 'decimal', step: f.type === 'int' ? 1 : (f.step || 'any'),
+      min: f.min, max: f.max, value: value, disabled: ro });
+  } else if (f.type === 'secret') {
+    el = h('input', { type: 'password', autocomplete: 'new-password', value: '', disabled: ro,
+      placeholder: secretSet ? '(unchanged)' : '' });
+  } else {
+    el = h('input', { type: 'text', value: value, disabled: ro, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+  }
+  el.addEventListener('input', onchange);
+  el.addEventListener('change', onchange);
+  return el;
+}
+
+function fieldRow(form, f, section) {
+  const orig = section.values[f.key] || '';
+  const err = h('div', { class: 'err' });
+  const input = control(f, orig, (section.secret_set || {})[f.key], () => {
+    input.classList.toggle('changed', input.value !== orig);
+    input.classList.remove('bad'); clear(err);
+    updateFormBar();
+  });
+  const chips = f.presets ? h('div', { class: 'row', style: 'margin-top:6px' }, f.presets.map(p =>
+    h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => { input.value = p; input.dispatchEvent(new Event('input')); } },
+      p >= 60 && f.key === 'poll_interval' ? (p / 60) + ' min' : p))) : null;
+  const box = h('div', { class: 'field' }, h('label', {}, f.label),
+    f.unit ? h('div', { class: 'with-unit' }, input, h('span', { class: 'unit' }, f.unit)) : input,
+    chips, f.help ? h('div', { class: 'help' }, f.help) : null, err);
+  form.fields[f.key] = { input, orig, err, def: f };
+  return box;
+}
+
+function formFor(section) {
+  const form = { section, fields: {} };
+  const normal = section.fields.filter(f => !f.advanced), adv = section.fields.filter(f => f.advanced);
+  const card = h('div', { class: 'card' }, h('h3', {}, section.title, ' ', h('span', { class: 'muted' }, '[' + section.section + ']')));
+  form.card = card;
+  return { form, card, normal, adv };
+}
+
+function formChanges(form) {
+  const out = {};
+  for (const [k, f] of Object.entries(form.fields)) {
+    if (f.def.readonly) continue;
+    const v = f.input.value.trim();
+    if (f.def.type === 'secret') { if (v !== '') out[k] = v; continue; }
+    if (v !== f.orig) out[k] = v;
+  }
+  return out;
+}
+
+function updateFormBar() {
+  const forms = Object.values(S.forms);
+  const n = forms.reduce((a, fm) => a + Object.keys(formChanges(fm)).length, 0);
+  if (!canEdit() || !n) { hideSaveBar(); return; }
+  showSaveBar('forms', n, saveForms);
+}
+
+// The bar is built once per kind and only its counter changes afterwards: rebuilding it on every
+// input would swap the button between mouse-down and mouse-up (a blur fires "change" first), and
+// the tap on Save would be lost.
+let barKind = null;
+function showSaveBar(kind, count, onSave) {
+  $('#savebar').hidden = false;
+  if (barKind !== kind) {
+    barKind = kind;
+    clear($('#saveinner')).append(h('span', { id: 'savecount' }), h('span', { class: 'spacer' }),
+      h('button', { class: 'btn', onclick: () => renderTab() }, 'Discard'),
+      h('button', { class: 'btn', onclick: () => onSave(false) }, 'Save'),
+      h('button', { class: 'btn primary', onclick: () => onSave(true) }, 'Save & restart driver'));
+  }
+  $('#savecount').textContent = count + ' unsaved change' + (count > 1 ? 's' : '');
+}
+function hideSaveBar() { $('#savebar').hidden = true; barKind = null; }
+
+async function saveForms(restart) {
+  let allOk = true, lastMessage = '';
+  for (const form of Object.values(S.forms)) {
+    const changes = formChanges(form);
+    if (!Object.keys(changes).length) continue;
+    const body = { section: form.section.section, restart: restart ? '1' : '0' };
+    for (const [k, v] of Object.entries(changes)) body['f.' + k] = v;
+    const r = await api('/api/driver_config', body);
+    if (!r.ok) {
+      allOk = false;
+      for (const [k, msg] of Object.entries(r.data.errors || {})) {
+        const f = form.fields[k];
+        if (f) { f.input.classList.add('bad'); clear(f.err).append(msg); }
+      }
+      toast(r.data.error || 'Not saved', true);
+    } else lastMessage = r.data.message;
+  }
+  if (allOk) {
+    toast(lastMessage || 'Saved');
+    if (S.tab === 'water' || S.tab === 'gas' || S.tab === 'fridge') {
+      const d = await api('/api/driver_config'); if (d.ok) S.driver = d.data;
+      await refreshState(); await renderTab();
+    }
+  }
+}
+
+async function loadDriver() {
+  const r = await api('/api/driver_config');
+  if (r.ok) S.driver = r.data;
+  return r;
+}
+
+async function tabDriver(kind) {
+  const main = $('#main');
+  S.forms = {};
+  const live = liveDevice(kind);
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  const r = await loadDriver();
+  if (!r.ok) { main.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read config.ini')); return; }
+  const sections = S.driver.sections.filter(s => s.kind === kind);
+  if (!canEdit()) main.append(lockedNotice());
+  if (!sections.length) {
+    main.append(h('div', { class: 'banner' }, 'No [' + ({ fridge: 'fridge', mopeka: 'mopeka_standard', esp32: 'esp32_hydro' }[kind]) + '] section in config.ini yet. Add it on the Files & logs tab (see config.ini.example for a template).'));
+    return;
+  }
+  for (const section of sections) {
+    const { form, card, normal, adv } = formFor(section);
+    S.forms[section.section] = form;
+    // live panel with calibration helpers
+    const dev = live.find(d => (d.service.split('.').pop() === (section.values.service || section.section))) || live[0];
+    if (dev) card.append(livePanel(kind, dev, form));
+    if (kind === 'mopeka' && section.presets.length) card.append(presetPicker(form, section));
+    normal.forEach(f => card.append(fieldRow(form, f, section)));
+    if (adv.length) card.append(h('details', { class: 'adv' }, h('summary', {}, 'Advanced'), adv.map(f => fieldRow(form, f, section))));
+    if (kind === 'mopeka') card.append(h('div', { class: 'row' }, h('button', { class: 'btn small', disabled: !canEdit(), onclick: () =>
+      confirmThen('Forget the paired sensor? Then press the sync button on the sensor you want to use.', () => post('/api/pair_reset', { section: section.section })) }, 'Pair another sensor')));
+    if (kind === 'esp32') card.append(h('div', { class: 'muted' }, 'The height-to-litres table of the tank lives in the ESP32 itself (see docs/calibration.md); it is not part of this file.'));
+    main.append(card);
+  }
+}
+
+function livePanel(kind, dev, form) {
+  const v = dev.values, box = h('div', { class: 'banner' });
+  if (kind === 'mopeka') {
+    const dist = v['/Mopeka/DistanceMm'];
+    box.append(h('div', {}, h('b', {}, 'Now: '), num(v['/Level'], 0) + ' % · sensor reads ' + num(dist, 0) + ' mm · echo quality ' + (v['/Mopeka/EchoQuality'] ?? '–')),
+      h('div', { class: 'muted' }, 'Calibrate: with an empty bottle press "Use as empty", right after a refill press "Use as full", then save.'),
+      h('div', { class: 'row', style: 'margin-top:8px' },
+        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => setField(form, 'empty_mm', Math.round(dist)) }, 'Use as empty (' + num(dist, 0) + ' mm)'),
+        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => setField(form, 'full_mm', Math.round(dist)) }, 'Use as full (' + num(dist, 0) + ' mm)')));
+  } else if (kind === 'fridge') {
+    box.append(h('b', {}, 'Now: '), num(v['/Temperature'], 1) + ' °C · set to ' + num(v['/Fridge/TargetTemperature'], 0) + ' °C · supply ' + num(v['/Fridge/SupplyVoltage'], 1) + ' V');
+  } else {
+    box.append(h('b', {}, 'Now: '), num(v['/Level'], 0) + ' % · ' + num(v['/Remaining'] * 1000, 1) + ' L · height ' + num(v['/Hydro/HeightMm'], 0) + ' mm');
+  }
+  return box;
+}
+
+function setField(form, key, value) {
+  const f = form.fields[key]; if (!f) return;
+  f.input.value = value; f.input.dispatchEvent(new Event('input'));
+}
+
+function presetPicker(form, section) {
+  const sel = h('select', {}, h('option', { value: '' }, 'Choose a bottle…'),
+    section.presets.map((p, i) => h('option', { value: i }, p.label)));
+  sel.addEventListener('change', () => {
+    if (sel.value === '') return;
+    for (const [k, v] of Object.entries(section.presets[+sel.value].values)) setField(form, k, v);
+    toast('Preset applied. Set "Reading when full" after the next refill, then save.');
+  });
+  return h('div', { class: 'field' }, h('label', {}, 'Bottle type'), sel, h('div', { class: 'help' }, 'Fills in volume and shape. You still calibrate empty/full once.'));
+}
+
+// -------------------------------------------------- dbus-serialbattery tab
+const BMS_TYPES = ['Jkbms_Ble', 'Kilovault_Ble', 'LiTime_Ble', 'LltJbd_Ble', 'Xdzn_Ble'];
+
+function sbEffective(e) { return e.value === null || e.value === undefined ? e.default : e.value; }
+
+function sbControl(e, ro, onchange) {
+  const v = sbEffective(e);
+  let el, get = () => el.value, set = x => { el.value = x; };
+  if (e.special === 'bms_list') return bmsList(e, v, ro, onchange);
+  if (e.type === 'bool') {
+    el = h('input', { type: 'checkbox', checked: v === 'True', disabled: ro });
+    get = () => el.checked ? 'True' : 'False';
+    set = x => { el.checked = x === 'True'; };
+    const wrap = h('label', { class: 'switch' }, el, h('span', {}, ''));
+    el.addEventListener('change', () => { wrap.lastChild.textContent = el.checked ? 'On' : 'Off'; onchange(); });
+    wrap.lastChild.textContent = el.checked ? 'On' : 'Off';
+    return { node: wrap, get, set };
+  }
+  if (e.type === 'select') {
+    el = h('select', { disabled: ro }, (e.options || []).map(o => h('option', { value: o }, o))); el.value = v;
+  } else if (e.type === 'int' || e.type === 'float') {
+    el = h('input', { type: 'number', step: e.type === 'int' ? 1 : 'any', inputmode: 'decimal', value: v, disabled: ro });
+  } else if (e.secret) {
+    el = h('input', { type: 'password', autocomplete: 'new-password', value: '', disabled: ro, placeholder: e.has_value ? '(unchanged)' : '' });
+  } else {
+    el = h('input', { type: 'text', value: v, disabled: ro, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+  }
+  el.addEventListener('input', onchange); el.addEventListener('change', onchange);
+  return { node: el, get, set };
+}
+
+function bmsList(e, v, ro, onchange) {
+  const box = h('div', {}), rows = h('div', {});
+  const parse = text => text.split(',').map(s => s.trim()).filter(Boolean).map(s => { const p = s.split(/\s+/); return [p[0] || BMS_TYPES[0], p[1] || '']; });
+  const addRow = (type, mac) => {
+    const sel = h('select', { disabled: ro, style: 'max-width:200px' }, (BMS_TYPES.includes(type) ? BMS_TYPES : BMS_TYPES.concat([type])).map(t => h('option', { value: t }, t)));
+    sel.value = type;
+    const inp = h('input', { type: 'text', value: mac, disabled: ro, placeholder: 'AA:BB:CC:DD:EE:FF', style: 'max-width:220px', autocapitalize: 'characters', spellcheck: 'false' });
+    const row = h('div', { class: 'row', style: 'margin-bottom:6px' }, sel, inp,
+      h('button', { type: 'button', class: 'btn small', disabled: ro, onclick: () => { row.remove(); onchange(); } }, 'Remove'));
+    sel.addEventListener('change', onchange); inp.addEventListener('input', onchange);
+    rows.append(row);
+  };
+  parse(v).forEach(([t, m]) => addRow(t, m));
+  box.append(rows, h('button', { type: 'button', class: 'btn small', disabled: ro, onclick: () => { addRow(BMS_TYPES[0], ''); onchange(); } }, 'Add a BMS'));
+  const get = () => Array.from(rows.children).map(r => r.querySelector('select').value + ' ' + r.querySelector('input').value.trim()).filter(s => s.split(' ')[1]).join(', ');
+  const set = x => { clear(rows); parse(x).forEach(([t, m]) => addRow(t, m)); };
+  return { node: box, get, set };
+}
+
+function sameSb(e, a, b) {
+  a = (a || '').trim(); b = (b || '').trim();
+  if (e.type === 'int' || e.type === 'float') return a !== '' && b !== '' ? Number(a) === Number(b) : a === b;
+  if (e.type === 'numlist') return a.split(',').map(x => x.trim()).join(',') === b.split(',').map(x => x.trim()).join(',');
+  if (e.type === 'bool') return a.toLowerCase() === b.toLowerCase();
+  return a === b;
+}
+
+function sbChanges() {
+  const out = {};
+  for (const [k, c] of Object.entries(S.sbCtl)) {
+    const now = c.get();
+    if (c.entry.secret) { if (now !== '') out[k] = now; continue; }
+    if (!sameSb(c.entry, now, c.orig)) out[k] = now;
+  }
+  return out;
+}
+
+function updateSbBar() {
+  const n = Object.keys(sbChanges()).length;
+  for (const c of Object.values(S.sbCtl)) {
+    const changed = c.entry.secret ? c.get() !== '' : !sameSb(c.entry, c.get(), c.orig);
+    c.row.classList.toggle('modified', changed || (c.entry.value !== null && c.entry.value !== undefined));
+    c.reset.hidden = sameSb(c.entry, c.get(), c.entry.default) || c.entry.secret;
+    c.row.dataset.changed = changed ? '1' : '';
+  }
+  if (!canEdit() || !n) { hideSaveBar(); return; }
+  showSaveBar('sb', n, saveSb);
+}
+
+async function saveSb(restart) {
+  const body = { restart: restart ? '1' : '0' };
+  for (const [k, v] of Object.entries(sbChanges())) body['s.' + k] = v;
+  const r = await api('/api/serialbattery', body);
+  if (!r.ok) {
+    for (const [k, msg] of Object.entries(r.data.errors || {})) {
+      const c = S.sbCtl[k]; if (c) { c.err.textContent = msg; c.row.scrollIntoView({ block: 'center' }); }
+    }
+    toast(r.data.error || 'Not saved', true); return;
+  }
+  toast(r.data.message || 'Saved');
+  await renderTab();
+  if (r.data.reboot_needed) {
+    $('#main').prepend(h('div', { class: 'banner warn row' }, 'Saved. Bluetooth/CAN settings only apply after a reboot of the Pi.',
+      h('span', { class: 'spacer' }), h('button', { class: 'btn danger small', onclick: () => confirmThen('Reboot the Pi now?', () => post('/api/reboot', {})) }, 'Reboot now')));
+  }
+}
+
+function sbEntry(e, ro) {
+  const err = h('div', { class: 'err' });
+  const row = h('div', { class: 'entry', 'data-key': e.key });
+  const ctl = sbControl(e, ro, () => { err.textContent = ''; updateSbBar(); });
+  const reset = h('button', { type: 'button', class: 'link', hidden: true, onclick: () => { ctl.set(e.default); updateSbBar(); } }, 'Reset to default');
+  const help = e.help ? h('pre', { hidden: true }, e.help) : null;
+  const more = e.help ? h('button', { type: 'button', class: 'link', onclick: () => { help.hidden = !help.hidden; more.textContent = help.hidden ? 'About this setting' : 'Hide'; } }, 'About this setting') : null;
+  row.append(h('div', { class: 'top' }, h('span', { class: 'name' }, e.label), h('code', {}, e.key)), ctl.node,
+    h('div', { class: 'meta' }, h('span', {}, 'Default: ' + (e.secret ? '–' : (e.default === '' ? '(empty)' : e.default))), reset, more), help, err);
+  S.sbCtl[e.key] = { entry: e, get: ctl.get, set: ctl.set, orig: sbEffective(e), row, reset, err };
+  return row;
+}
+
+async function tabBattery(main) {
+  S.sbCtl = {};
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  const r = await api('/api/serialbattery');
+  if (!r.ok) { main.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read the settings')); return; }
+  S.sb = r.data;
+  if (!r.data.installed) {
+    main.append(h('div', { class: 'banner' }, 'dbus-serialbattery was not found in /data/apps/dbus-serialbattery. Install it first (see mr-manuel/venus-os_dbus-serialbattery).'));
+    return;
+  }
+  const ro = !canEdit();
+  if (ro) main.append(lockedNotice());
+  const view = r.data.view, byKey = {};
+  view.groups.forEach(g => g.entries.forEach(e => { byKey[e.key] = e; }));
+  const search = h('input', { type: 'search', placeholder: 'Search settings…', style: 'max-width:340px' });
+  const onlyMod = h('input', { type: 'checkbox' });
+  main.append(h('div', { class: 'row', style: 'margin-bottom:12px' }, search,
+    h('label', { class: 'row muted' }, onlyMod, ' only changed'),
+    h('span', { class: 'spacer' }), h('span', { class: 'muted' }, r.data.dir + '/config.ini')));
+  const groups = [];
+  const addGroup = (title, entries, open) => {
+    const body = h('div', { class: 'body' }, entries.map(e => sbEntry(e, ro)));
+    const det = h('details', { class: 'group', open }, h('summary', {}, title, ' ', h('span', { class: 'muted' }, '(' + entries.length + ')')), body);
+    groups.push({ det, entries });
+    main.append(det);
+  };
+  addGroup('Most used settings', view.essentials.map(k => byKey[k]), true);
+  const essential = new Set(view.essentials);
+  view.groups.forEach(g => {
+    const rest = g.entries.filter(e => !essential.has(e.key));
+    if (rest.length) addGroup(g.title, rest, false);
+  });
+  const filter = () => {
+    const q = search.value.trim().toLowerCase();
+    groups.forEach(g => {
+      let shown = 0;
+      g.entries.forEach(e => {
+        const c = S.sbCtl[e.key], text = (e.key + ' ' + e.label + ' ' + e.help).toLowerCase();
+        const mod = c.row.classList.contains('modified');
+        const ok = (!q || text.includes(q)) && (!onlyMod.checked || mod);
+        c.row.hidden = !ok; if (ok) shown++;
+      });
+      g.det.hidden = !shown;
+      if (q && shown) g.det.open = true;
+    });
+  };
+  search.addEventListener('input', filter); onlyMod.addEventListener('change', filter);
+  if (Object.keys(view.unknown || {}).length) {
+    main.append(h('div', { class: 'banner' }, 'Settings in config.ini this page does not know (kept as they are): ' + Object.keys(view.unknown).join(', ')));
+  }
+  updateSbBar();
+}
+
+// ------------------------------------------------------------ files & logs
+async function rawEditor(which, title) {
+  const r = await api('/api/raw?file=' + which);
+  const card = h('div', { class: 'card' }, h('h3', {}, title));
+  if (!r.ok) { card.append(h('div', { class: 'muted' }, r.data.error || 'not available')); return card; }
+  const ta = h('textarea', { spellcheck: 'false', disabled: !canEdit() }, r.data.text);
+  const errs = h('div', { class: 'err' });
+  ta.value = r.data.text;
+  ta.addEventListener('input', () => ta.classList.toggle('changed', ta.value !== r.data.text));
+  card.append(h('div', { class: 'muted' }, r.data.path + ' (the previous version is kept as .bak)'), ta, errs,
+    h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn primary', disabled: !canEdit(), onclick: async () => {
+      const w = await api('/api/raw', { file: which, text: ta.value });
+      clear(errs);
+      if (!w.ok) { errs.append(w.data.error || 'Not saved', ...Object.entries(w.data.errors || {}).map(([k, m]) => h('div', {}, k + ': ' + m))); toast('Not saved', true); }
+      else { toast('Saved. Restart the driver to apply it.'); r.data.text = ta.value; ta.classList.remove('changed'); }
+    } }, 'Save file')));
+  return card;
+}
+
+async function tabFiles(main) {
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  main.append(h('div', { class: 'banner' }, 'For experts: the raw files. A file is checked before it is saved; a wrong value is refused.'));
+  main.append(await rawEditor('driver', 'Drivers: config.ini'));
+  if (S.state.serialbattery) main.append(await rawEditor('serialbattery', 'dbus-serialbattery: config.ini'));
+  main.append(h('h2', {}, 'Logs'));
+  main.append(h('div', { class: 'row' }, (S.state.services || []).map(s => h('button', { class: 'btn small', onclick: () => showLog(s.name) }, s.name)),
+    S.state.serialbattery ? h('button', { class: 'btn small', onclick: () => showLog('dbus-serialbattery') }, 'dbus-serialbattery') : null));
+}
+
+// ------------------------------------------------------------------- boot
+async function refreshState() {
+  const r = await api('/api/state');
+  if (r.ok) { S.state = r.data; renderLock(); }
+  return r;
+}
+
+async function boot() {
+  renderTabs();
+  const r = await refreshState();
+  if (!r.ok) { $('#main').append(h('div', { class: 'banner bad' }, r.data.error || 'The Pi does not answer')); return; }
+  await renderTab();
+  setInterval(async () => {
+    if (document.hidden) return;
+    await refreshState();
+    if (S.tab === 'overview' && !$('#dlg').open) { const main = clear($('#main')); await tabOverview(main); }
+  }, 5000);
+}
+boot();
+</script>
+</body>
+</html>

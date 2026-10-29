@@ -6,76 +6,16 @@ D-Bus, GLib and velib_python are replaced by small fakes, so this runs on any PC
 import configparser
 import os
 import sys
-import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, '..', 'data', 'shared_drivers'))
 
+import fakes  # noqa: E402  (must come first: replaces dbus, gi, vedbus in sys.modules)
+from fakes import FakeBus, FakeService, FakeSettings  # noqa: E402
 
-# ------------------------------------------------------------------ fakes
-
-class FakeService(dict):
-    def __init__(self, name, bus=None, register=None):
-        super().__init__()
-        self.name = name
-        self.registered = register is not False
-        self._dbusname = None
-        self.paths_at_register = None
-
-    def add_mandatory_paths(self, **kw):
-        self['/DeviceInstance'] = kw['deviceinstance']
-        self['/ProductName'] = kw['productname']
-        self['/Connected'] = kw['connected']
-
-    def add_path(self, path, value, **kw):
-        assert not self.registered, 'path %s added after register()' % path
-        self[path] = value
-
-    def register(self):
-        self.registered = True
-        self.paths_at_register = set(self)
-
-
-class FakeSettings(dict):
-    def __init__(self, bus, supported, callback, timeout=0):
-        super().__init__({k: v[1] for k, v in supported.items()})
-
-
-class FakeBus(object):
-    def add_signal_receiver(self, *a, **kw):
-        return types.SimpleNamespace(remove=lambda: None)
-
-
-def _install_fakes():
-    clock = {'us': 0}
-    glib = types.SimpleNamespace(
-        get_monotonic_time=lambda: clock['us'],
-        timeout_add_seconds=lambda *a: 1,
-        timeout_add=lambda *a: 1,
-        source_remove=lambda *a: None,
-        MainLoop=None)
-    dbus = types.ModuleType('dbus')
-    dbus.SystemBus = lambda **kw: FakeBus()
-    dbus.exceptions = types.SimpleNamespace(DBusException=Exception)
-    mainloop = types.ModuleType('dbus.mainloop')
-    mainloop_glib = types.ModuleType('dbus.mainloop.glib')
-    mainloop_glib.DBusGMainLoop = lambda **kw: None
-    gi = types.ModuleType('gi')
-    gi_repo = types.ModuleType('gi.repository')
-    gi_repo.GLib = glib
-    vedbus = types.ModuleType('vedbus')
-    vedbus.VeDbusService = FakeService
-    settingsdevice = types.ModuleType('settingsdevice')
-    settingsdevice.SettingsDevice = FakeSettings
-    sys.modules.update({
-        'dbus': dbus, 'dbus.mainloop': mainloop, 'dbus.mainloop.glib': mainloop_glib,
-        'gi': gi, 'gi.repository': gi_repo,
-        'vedbus': vedbus, 'settingsdevice': settingsdevice})
-    return clock
-
-
-CLOCK = _install_fakes()
+CLOCK = fakes.CLOCK
 
 import alpicool_protocol as fridge  # noqa: E402
 import esp32_hydro_protocol as proto  # noqa: E402
@@ -477,6 +417,9 @@ class VenusPythonTests(unittest.TestCase):
         'argparse', 'collections', 'configparser', 'functools', 'glob', 'inspect',
         'logging', 'math', 'os', 're', 'signal', 'struct', 'subprocess', 'sys', 'time',
         'dbus', 'gi',
+        # not verified on a Venus OS image, but every Victron Python service (MQTT, Modbus,
+        # VRM logger) needs it; the diagnostics check that it imports before web_ui is enabled
+        'socket',
     }
 
     def test_only_available_modules(self):
@@ -488,7 +431,9 @@ class VenusPythonTests(unittest.TestCase):
         diag = os.path.join(drivers, 'diagnostics')
         files += [os.path.join(diag, f) for f in os.listdir(diag) if f.endswith('.py')]
         for path in files:
-            for node in ast.walk(ast.parse(open(path).read())):
+            with open(path) as f:
+                tree = ast.parse(f.read())
+            for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     names = [a.name for a in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.level == 0:

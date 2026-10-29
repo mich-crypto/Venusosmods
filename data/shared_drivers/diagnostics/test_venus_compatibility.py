@@ -61,7 +61,7 @@ def check_venus():
 
 def check_imports():
     ok = True
-    for mod in ('dbus', 'dbus.mainloop.glib', 'gi.repository.GLib'):
+    for mod in ('dbus', 'dbus.mainloop.glib', 'gi.repository.GLib', 'socket'):
         try:
             __import__(mod)
             report('PASS', 'import ' + mod)
@@ -130,7 +130,7 @@ def check_bluetooth(bus, names):
 
 def driver_of(section, cfg):
     kind = cfg.get('driver', '') or section
-    for prefix in ('mopeka', 'esp32', 'fridge'):
+    for prefix in ('mopeka', 'esp32', 'fridge', 'web'):
         if kind.startswith(prefix):
             return prefix
     return None
@@ -157,7 +157,21 @@ def check_config(path):
         kind = driver_of(name, cfg)
         if kind is None:
             report('WARN', '[%s]' % name, 'unknown driver - name the section mopeka_*, '
-                   'esp32_* or fridge_*, or add driver = ...')
+                   'esp32_*, fridge_* or web, or add driver = ...')
+            continue
+        if kind == 'web':
+            try:
+                port = cfg.getint('port', 8088)
+                if not 1024 <= port <= 65535:
+                    report('FAIL', '[%s] port' % name, '%d: use 1024-65535' % port)
+                cfg.getboolean('open_firewall', True)
+            except ValueError as e:
+                report('FAIL', '[%s]' % name, 'bad value: %s' % e)
+                continue
+            if not cfg.get('password', '').strip():
+                report('WARN', '[%s] password' % name, 'empty: the settings page is read-only '
+                       '(install.sh web_ui sets one)')
+            report('PASS', '[%s]' % name, 'settings page, port %s' % cfg.get('port', 8088))
             continue
         service = cfg.get('service', name)
         if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', service):

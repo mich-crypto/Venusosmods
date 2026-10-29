@@ -1,0 +1,5 @@
+#!/bin/sh
+# daemontools service for web_ui - started by svscan via /service/web_ui
+exec 2>&1
+cd /data/shared_drivers
+exec python3 /data/shared_drivers/web_ui.py --section web
