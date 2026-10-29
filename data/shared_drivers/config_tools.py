@@ -220,6 +220,12 @@ SCHEMA = {
             F('zone1_type', 'select', 'Zone 1 type', 'auto = freezer if the set point is below 0 C.',
               options=[['auto', 'Automatic']] + TEMP_TYPES),
             F('zone2_name', 'text', 'Zone 2 name', 'Dual-zone fridges only.'),
+            F('zone1_min', 'float', 'Zone 1 lowest set point', 'Empty = what the fridge reports (else -20).',
+              unit='°C', min=-40, max=40, advanced=True),
+            F('zone1_max', 'float', 'Zone 1 highest set point', 'Empty = what the fridge reports (else 20).',
+              unit='°C', min=-40, max=40, advanced=True),
+            F('zone2_min', 'float', 'Zone 2 lowest set point', '', unit='°C', min=-40, max=40, advanced=True),
+            F('zone2_max', 'float', 'Zone 2 highest set point', '', unit='°C', min=-40, max=40, advanced=True),
             F('zone2_type', 'select', 'Zone 2 type', '', options=[['auto', 'Automatic']] + TEMP_TYPES),
             F('stay_connected', 'bool', 'Stay connected', 'Faster updates, but the phone app cannot '
               'connect.', options=YES_NO, advanced=True),

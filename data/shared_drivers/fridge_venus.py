@@ -53,6 +53,7 @@ class FridgeDriver(BleDriver):
         self._failures = 0
         self.control = config.getboolean('control', True)
         self.control_group = config.get('control_group', 'Fridge')
+        self._logged_ranges = set()
         self.switch = None       # SwitchDevice with the controls, made after the first status
         self._status = None      # last FridgeStatus, needed to build commands
         self._want = {}          # pending changes: powered_on, eco_mode, 0/1 = set point C
@@ -139,10 +140,25 @@ class FridgeDriver(BleDriver):
         if self._status is None or zone >= len(self._status.zones):
             return False
         z = self._status.zones[zone]
-        t = float(value)
-        if z.min is not None and z.max is not None:
-            t = max(z.min, min(z.max, t))
+        lo, hi = self._range(zone, z)
+        t = max(lo, min(hi, float(value)))
         return self._request(zone, int(round(t)))
+
+    DEFAULT_RANGE = (-20.0, 20.0)     # what the Alpicool-type dual-zone fridges list in their manuals
+
+    def _range(self, i, zone):
+        """Set point range of a zone: zoneN_min / zoneN_max from config.ini, else what the fridge
+        reports, else -20...20 C (also used when the fridge reports something that makes no sense)."""
+        lo = self.cfg.getfloat('zone%d_min' % (i + 1), fallback=None)
+        hi = self.cfg.getfloat('zone%d_max' % (i + 1), fallback=None)
+        lo = zone.min if lo is None else lo
+        hi = zone.max if hi is None else hi
+        if lo is None or hi is None or lo >= hi:
+            lo, hi = self.DEFAULT_RANGE
+        if (i, lo, hi) not in self._logged_ranges:
+            self._logged_ranges.add((i, lo, hi))
+            log.info('Zone %d set point range %g...%g C (fridge reports %s...%s)', i + 1, lo, hi, zone.min, zone.max)
+        return lo, hi
 
     def _request(self, key, value):
         """A control changed in the GUI: queue it and contact the fridge now."""
@@ -267,8 +283,9 @@ class FridgeDriver(BleDriver):
         if i not in self._want:
             dev[so % (ch, 'Dimming')] = zone.target
         dev[so % (ch, 'Measurement')] = zone.current
-        dev[so % (ch, 'Settings/DimmingMin')] = zone.min
-        dev[so % (ch, 'Settings/DimmingMax')] = zone.max
+        lo, hi = self._range(i, zone)
+        dev[so % (ch, 'Settings/DimmingMin')] = lo
+        dev[so % (ch, 'Settings/DimmingMax')] = hi
         dev[so % (ch, 'Status')] = 0x09 if st.powered_on else 0x00
 
     def shutdown(self):
