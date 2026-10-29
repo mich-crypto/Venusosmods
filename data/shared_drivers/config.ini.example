@@ -83,16 +83,10 @@ stay_connected = no
 control = yes
 # auto = freezer if the set point is below 0 C, else fridge
 zone1_type = auto
-zone1_name = Fridge
 # only used by dual-zone fridges
 zone2_type = auto
-zone2_name = Freezer
-# Set point range of the sliders. Default (from the manual): fridge 0...8 C, freezer -20...-12 C,
-# a single-compartment fridge -20...20 C. Override here if your model differs:
-#zone1_min = 0
-#zone1_max = 10
-#zone2_min = -20
-#zone2_max = 10
+# Names (Fridge / Freezer) and set point ranges (fridge 0...8 C, freezer -20...-12 C, single -20...20 C)
+# are fixed in the driver.
 
 [web]
 # The settings page (service web_ui): http://<pi-ip>:8088

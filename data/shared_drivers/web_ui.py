@@ -703,10 +703,9 @@ class App(object):
             if f.get('device_id', '').isdigit():
                 values['device_id'] = f['device_id']
         else:
-            values['zone1_name'], values['zone2_name'] = 'Fridge', 'Freezer'
             values['control'] = 'yes'
             values['poll_interval'] = {'fast': '60', 'normal': '300', 'slow': '900'}.get(f.get('speed', 'normal'), '300')
-            if section in parsed:                         # re-adding keeps the names and speed the user chose
+            if section in parsed:                         # re-adding keeps the speed the user chose
                 values = {'mac': values['mac']}
         clean, errors = ct.validate_section(ckind, values)
         if errors:

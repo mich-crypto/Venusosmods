@@ -277,12 +277,12 @@ class DriverConfigTests(AppTestCase):
     def test_save_changes_only_what_was_sent(self):
         before = self.config_text()
         r = self.post('/api/driver_config', {'section': 'fridge', 'f.poll_interval': '300',
-                                             'f.zone1_name': 'Cold box', 'f.service': 'hack',
+                                             'f.service': 'hack',
                                              'f.control': 'No'})
         self.assertEqual(r.status, 200, r.body)
         vals = ct.parse_ini(self.config_text())['fridge']
-        self.assertEqual((vals['poll_interval'], vals['zone1_name'], vals['control']),
-                         ('300', 'Cold box', 'no'))
+        self.assertEqual((vals['poll_interval'], vals['control']),
+                         ('300', 'no'))
         self.assertEqual(vals['service'], 'fridge')                # read-only field untouched
         self.assertEqual(ct.parse_ini(self.config_text())['mopeka_standard'],
                          ct.parse_ini(before)['mopeka_standard'])
@@ -622,13 +622,14 @@ class SetupGuideTests(AppTestCase):
         self.assertEqual(self.post('/api/device_add', {'kind': 'toaster', 'mac': 'AA:BB:CC:DD:EE:01'}).status, 400)
         self.assertEqual(self.post('/api/device_add', {'kind': 'fridge', 'mac': 'ED:67:39:CB:69:6C', 'speed': 'slow'}).status, 200)
         fr = ct.parse_ini(self.config_text())['fridge']
-        self.assertEqual((fr['poll_interval'], fr['control'], fr['zone2_name']), ('900', 'yes', 'Freezer'))
+        self.assertEqual((fr['poll_interval'], fr['control']), ('900', 'yes'))
+        self.assertNotIn('zone2_name', fr)
         with open(self.config, 'a') as f:
             pass
-        self.post('/api/driver_config', {'section': 'fridge', 'f.zone2_name': 'Deep freeze'})
+        self.post('/api/driver_config', {'section': 'fridge', 'f.poll_interval': '900'})
         self.post('/api/device_add', {'kind': 'fridge', 'mac': 'ED:67:39:CB:69:99', 'speed': 'fast'})     # replacing the fridge
         fr = ct.parse_ini(self.config_text())['fridge']
-        self.assertEqual((fr['mac'], fr['zone2_name'], fr['poll_interval']), ('ED:67:39:CB:69:99', 'Deep freeze', '900'))
+        self.assertEqual((fr['mac'], fr['poll_interval']), ('ED:67:39:CB:69:99', '900'))
         r = self.post('/api/device_add', {'kind': 'water', 'device_id': '3', 'name': 'Fresh water'})
         self.assertEqual(r.status, 200, r.body)
         self.assertEqual(ct.parse_ini(self.config_text())['esp32_hydro']['device_id'], '3')

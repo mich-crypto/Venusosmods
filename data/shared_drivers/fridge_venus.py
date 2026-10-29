@@ -47,7 +47,7 @@ class FridgeDriver(BleDriver):
         persistent = config.getboolean('stay_connected', False)
         self.uid = config.get('service', 'fridge')
         self.zone_types = [config.get('zone1_type', 'auto'), config.get('zone2_type', 'auto')]
-        self.zone_names = [config.get('zone1_name', 'Fridge'), config.get('zone2_name', 'Freezer')]
+        self.zone_names = ['Fridge', 'Freezer']              # fixed: the names are not a setting
         self.timeout = config.getint('timeout', max(300, 4 * self.poll_s))
         self.zones = []
         self._assembler = proto.FrameAssembler()
@@ -152,8 +152,7 @@ class FridgeDriver(BleDriver):
     RANGES = {'fridge': (0.0, 8.0), 'freezer': (-20.0, -12.0), 'single': (-20.0, 20.0)}
 
     def _range(self, i, zone):
-        """Set point range of a zone: zoneN_min / zoneN_max from config.ini, else the manual's range
-        for that kind of compartment. What the fridge itself reports is only logged: it has been
+        """Set point range of a zone: the manual's range for that kind of compartment, not a setting. What the fridge itself reports is only logged: it has been
         seen to disagree with the manual."""
         kind = self.zone_types[i] if i < len(self.zone_types) else 'auto'
         if self._status is not None and len(self._status.zones) < 2:
@@ -162,10 +161,6 @@ class FridgeDriver(BleDriver):
             target = zone.target
             kind = 'freezer' if (target < 0 if target is not None else i > 0) else 'fridge'
         lo, hi = self.RANGES[kind]
-        lo = self.cfg.getfloat('zone%d_min' % (i + 1), fallback=lo)
-        hi = self.cfg.getfloat('zone%d_max' % (i + 1), fallback=hi)
-        if lo >= hi:
-            lo, hi = self.RANGES[kind]
         if (i, lo, hi) not in self._logged_ranges:
             self._logged_ranges.add((i, lo, hi))
             log.info('Zone %d (%s) set point range %g...%g C (the fridge itself reports %s...%s)',

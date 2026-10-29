@@ -389,17 +389,17 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(z1['/Fridge/EcoMode'], 1)
 
     def test_fridge_setpoint_range(self):
-        d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\nzone2_min = -18\nzone2_max = -10\n'))
+        d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\nzone2_min = -18\nzone2_max = -10\n'))  # old keys in config.ini are ignored now
         for part in fridge.chunks(dual_zone_status()):
             d._on_notify(part)
         sw = d.switch.service
         self.assertEqual((sw['/SwitchableOutput/setpoint/Settings/DimmingMin'],
                           sw['/SwitchableOutput/setpoint/Settings/DimmingMax']), (0.0, 8.0))   # from the fridge
         self.assertEqual((sw['/SwitchableOutput/setpoint2/Settings/DimmingMin'],
-                          sw['/SwitchableOutput/setpoint2/Settings/DimmingMax']), (-18.0, -10.0))  # config wins
+                          sw['/SwitchableOutput/setpoint2/Settings/DimmingMax']), (-20.0, -12.0))  # fixed, whatever config.ini says
         # no config: the manual's ranges, whatever the fridge reports
         self.assertEqual(d._range(0, fridge.Zone(3.0, 4.0, 9.0, 2.0)), (0.0, 8.0))
-        self.assertEqual(d._range(1, fridge.Zone(-18.0, -17.0, -30.0, -5.0)), (-18.0, -10.0))   # config wins
+        self.assertEqual(d._range(1, fridge.Zone(-18.0, -17.0, -30.0, -5.0)), (-20.0, -12.0))   # fixed, config.ini is ignored
         d2 = FridgeDriver('s', section('mac = 11:22:33:44:55:66\n'))
         for part in fridge.chunks(dual_zone_status()):
             d2._on_notify(part)

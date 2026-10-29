@@ -362,11 +362,11 @@ automatically.
   "Fridge" card with *Fridge power*, *Fridge eco mode* and a set point
   control per zone. A change is sent right away: the Pi connects, sends the
   command, reads the status back, and the control shows what the fridge
-  actually accepted. Set points stay within the range the fridge itself
-  reports (e.g. 0…8 °C for the fridge, −20…−12 °C for the freezer).
+  actually accepted. Set points stay within the fixed range of the
+  manual (0…8 °C for the fridge, −20…−12 °C for the freezer).
 * Set point ranges follow the manual of the dual-zone fridge: fridge 0…8 °C, freezer
-  −20…−12 °C (a single-compartment model: −20…20 °C). If yours differs, set
-  `zone1_min`, `zone1_max`, `zone2_min`, `zone2_max` in `[fridge]`.
+  −20…−12 °C (a single-compartment model: −20…20 °C). The ranges and the names
+  (Fridge, Freezer) are fixed in the driver and not settings.
 * The controls are their own device, `com.victronenergy.switch.fridge_controls`
   (the pane only lists switch devices). It appears after the first successful
   read of the fridge, so give it a minute. It needs a Venus OS version that

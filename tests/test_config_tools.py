@@ -100,9 +100,8 @@ class DriverSchemaTests(unittest.TestCase):
             'control': 'TRUE', 'poll_interval': '300', 'zone1_type': 'freezer'})
         self.assertEqual((clean, errors), ({'control': 'yes', 'poll_interval': '300',
                                             'zone1_type': 'freezer'}, {}))
-        _, errors = ct.validate_section('fridge', {'zone1_type': 'ufo', 'poll_interval': '5',
-                                                   'zone1_name': 'a\nb', 'zone2_name': '50%'})
-        self.assertEqual(sorted(errors), ['poll_interval', 'zone1_name', 'zone1_type', 'zone2_name'])
+        _, errors = ct.validate_section('fridge', {'zone1_type': 'ufo', 'poll_interval': '5'})
+        self.assertEqual(sorted(errors), ['poll_interval', 'zone1_type'])
         clean, errors = ct.validate_section('web', {'port': '80'})
         self.assertIn('port', errors)                                  # below 1024
 
