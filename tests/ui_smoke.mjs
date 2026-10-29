@@ -62,6 +62,8 @@ await page.getByText('Calibrate: with an empty bottle').waitFor();
 await shot(page, '03-gas');
 const capacity = page.locator('.field', { hasText: 'Usable gas volume' }).locator('input');
 check((await capacity.inputValue()) !== '', 'gas form shows a saved volume');
+check((await page.locator('.field', { hasText: 'Temperature type' }).locator('select').inputValue()) === 'outdoor', 'gas form offers the temperature as outdoor sensor by default');
+check((await page.locator('.field', { hasText: 'Publish temperature' }).locator('select').inputValue()) === 'yes', 'temperature service shown as on by default');
 await page.getByRole('button', { name: /Use as full/ }).click();
 const full = page.locator('.field', { hasText: 'Reading when full' }).locator('input');
 check((await full.inputValue()) === '233', '"Use as full" copies the live reading (233 mm)');
@@ -105,6 +107,7 @@ await page.waitForTimeout(8000);                                  // let the Pi 
 await page.getByRole('button', { name: '1 hour' }).click();
 await page.getByText('Cell 7 is the lowest cell').waitFor();
 check(true, 'findings name the weak cell');
+await page.locator('.chart path[stroke]').nth(9).waitFor();           // charts draw once they have a width
 check((await page.locator('.chart path[stroke]').count()) >= 10, 'graphs are drawn');
 await page.locator('.chart .legend button', { hasText: 'Cell 7' }).first().click();
 check((await page.locator('.chart .legend button.off').count()) >= 1, 'legend hides a cell line');

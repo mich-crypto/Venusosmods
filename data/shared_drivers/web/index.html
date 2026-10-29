@@ -393,7 +393,8 @@ function control(f, value, secretSet, onchange) {
 }
 
 function fieldRow(form, f, section) {
-  const orig = section.values[f.key] || '';
+  // a key missing from config.ini shows the value the driver uses then, so the form tells the truth
+  const orig = section.values[f.key] || f.default || '';
   const err = h('div', { class: 'err' });
   const input = control(f, orig, (section.secret_set || {})[f.key], () => {
     input.classList.toggle('changed', input.value !== orig);
