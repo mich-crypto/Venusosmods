@@ -385,10 +385,10 @@ def main():
             result['zone2'] = values('com.victronenergy.temperature.fridge_zone2', (
                 '/Temperature', '/TemperatureType', '/CustomName'))
             # what the GUI's switch pane does: freezer to -15 C, power off
-            bus.call_blocking('com.victronenergy.temperature.fridge_zone2',
-                              '/SwitchableOutput/setpoint/Dimming', 'com.victronenergy.BusItem',
+            bus.call_blocking('com.victronenergy.switch.fridge_controls',
+                              '/SwitchableOutput/setpoint2/Dimming', 'com.victronenergy.BusItem',
                               'SetValue', 'v', [dbus.Double(-15.0, variant_level=1)])
-            bus.call_blocking('com.victronenergy.temperature.fridge_zone1',
+            bus.call_blocking('com.victronenergy.switch.fridge_controls',
                               '/SwitchableOutput/power/State', 'com.victronenergy.BusItem',
                               'SetValue', 'v', [dbus.Int32(0, variant_level=1)])
             GLib.timeout_add_seconds(7, check_control)
@@ -457,12 +457,12 @@ def main():
                                       '/Fridge/TargetTemperature'),
                 'powered': get(bus, 'com.victronenergy.temperature.fridge_zone1',
                                '/Fridge/PoweredOn'),
-                'power_switch': get(bus, 'com.victronenergy.temperature.fridge_zone1',
+                'power_switch': get(bus, 'com.victronenergy.switch.fridge_controls',
                                     '/SwitchableOutput/power/State'),
-                'freezer_range': (get(bus, 'com.victronenergy.temperature.fridge_zone2',
-                                      '/SwitchableOutput/setpoint/DimmingMin'),
-                                  get(bus, 'com.victronenergy.temperature.fridge_zone2',
-                                      '/SwitchableOutput/setpoint/DimmingMax')),
+                'freezer_range': (get(bus, 'com.victronenergy.switch.fridge_controls',
+                                      '/SwitchableOutput/setpoint2/DimmingMin'),
+                                  get(bus, 'com.victronenergy.switch.fridge_controls',
+                                      '/SwitchableOutput/setpoint2/DimmingMax')),
             }
         except dbus.exceptions.DBusException as e:
             result['error'] = str(e)

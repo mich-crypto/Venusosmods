@@ -359,17 +359,21 @@ class DriverTests(unittest.TestCase):
 
     def test_fridge_controls(self):
         d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\n'))
-        z1 = d.zones[0].service
-        self.assertEqual(z1['/SwitchableOutput/power/Settings/Type'], 1)      # toggle
-        self.assertEqual(z1['/SwitchableOutput/setpoint/Settings/Type'], 3)   # temp setpoint
-        self.assertIn('/SwitchableOutput/eco/State', z1.paths_at_register)
+        self.assertIsNone(d.switch)                           # made once the zones are known
         self.assertFalse(d._request('powered_on', False))     # nothing read yet
 
         for part in fridge.chunks(dual_zone_status()):
             d._on_notify(part)
-        z2 = d.zones[1].service
-        self.assertEqual((z2['/SwitchableOutput/setpoint/Dimming'],
-                          z2['/SwitchableOutput/setpoint/Measurement']), (-18.0, -17.0))
+        # the GUI's switch pane only lists com.victronenergy.switch services
+        sw = d.switch.service
+        self.assertEqual(sw.name, 'com.victronenergy.switch.fridge_controls')
+        self.assertEqual(sw['/SwitchableOutput/power/Settings/Type'], 1)      # toggle
+        self.assertEqual(sw['/SwitchableOutput/setpoint/Settings/Type'], 3)   # temp setpoint
+        self.assertEqual(sw['/SwitchableOutput/setpoint2/Name'], 'Freezer set point')
+        self.assertIn('/SwitchableOutput/eco/State', sw.paths_at_register)
+        self.assertNotIn('/SwitchableOutput/power/State', d.zones[0].service.paths_at_register)
+        self.assertEqual((sw['/SwitchableOutput/setpoint2/Dimming'],
+                          sw['/SwitchableOutput/setpoint2/Measurement']), (-18.0, -17.0))
 
         sent = []
         d.gatt.exchange = lambda chunks, cb: sent.append(b''.join(chunks))

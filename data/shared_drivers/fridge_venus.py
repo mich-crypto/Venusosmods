@@ -9,9 +9,9 @@ answer and disconnects again. Each zone becomes a
 com.victronenergy.temperature service of type fridge or freezer, so it shows
 up with the other environment sensors in the GUI and on VRM.
 
-Control (control = yes, the default): the zone services also carry Venus OS
-"switchable outputs", which the GUI shows on its switch pane: power and eco
-mode as toggles, and a temperature set point per zone. A change connects to
+Control (control = yes, the default): a com.victronenergy.switch service with
+Venus OS "switchable outputs", which the GUI shows on its switch pane: power
+and eco mode as toggles, and a temperature set point per zone. A change connects to
 the fridge right away, sends the command and reads the status back.
 
 The fridge accepts only one Bluetooth connection at a time. Between polls the
@@ -24,7 +24,7 @@ import logging
 import alpicool_protocol as proto
 from ble_gatt import GattClient
 from gi.repository import GLib
-from venus_service import (BleDriver, TemperatureDevice, TEMP_FREEZER,
+from venus_service import (BleDriver, SwitchDevice, TemperatureDevice, TEMP_FREEZER,
                            TEMP_FRIDGE, TEMPERATURE_TYPES)
 
 log = logging.getLogger('fridge')
@@ -53,6 +53,7 @@ class FridgeDriver(BleDriver):
         self._failures = 0
         self.control = config.getboolean('control', True)
         self.control_group = config.get('control_group', 'Fridge')
+        self.switch = None       # SwitchDevice with the controls, made after the first status
         self._status = None      # last FridgeStatus, needed to build commands
         self._want = {}          # pending changes: powered_on, eco_mode, 0/1 = set point C
         self._send_tries = 0
@@ -76,8 +77,7 @@ class FridgeDriver(BleDriver):
                 default_instance=self.cfg.getint('device_instance', 20) + n,
                 custom_name=self.zone_names[n],
                 timeout_s=self.timeout,
-                extra_paths=EXTRA_PATHS,
-                setup=(lambda svc, n=n: self._add_controls(svc, n)) if self.control else None)
+                extra_paths=EXTRA_PATHS)
             self.zones.append(dev)
             self.devices.append(dev)
         return self.zones[i]
@@ -107,15 +107,32 @@ class FridgeDriver(BleDriver):
             svc.add_path(so('StepSize'), 1)
             svc.add_path(so('Measurement'), None)
 
-    def _add_controls(self, svc, zone):
-        name = self.zone_names[zone]
-        if zone == 0:
-            self._add_channel(svc, 'power', 'Fridge power', self.TYPE_TOGGLE, 'State',
-                              lambda p, v: self._request('powered_on', bool(int(v))))
-            self._add_channel(svc, 'eco', 'Fridge eco mode', self.TYPE_TOGGLE, 'State',
-                              lambda p, v: self._request('eco_mode', bool(int(v))))
-        self._add_channel(svc, 'setpoint', '%s set point' % name, self.TYPE_SETPOINT, 'Dimming',
-                          lambda p, v, z=zone: self._request_setpoint(z, v))
+    @staticmethod
+    def channel(zone):
+        return 'setpoint' if zone == 0 else 'setpoint%d' % (zone + 1)
+
+    def _add_controls(self, svc, zones):
+        self._add_channel(svc, 'power', 'Fridge power', self.TYPE_TOGGLE, 'State',
+                          lambda p, v: self._request('powered_on', bool(int(v))))
+        self._add_channel(svc, 'eco', 'Fridge eco mode', self.TYPE_TOGGLE, 'State',
+                          lambda p, v: self._request('eco_mode', bool(int(v))))
+        for zone in range(zones):
+            self._add_channel(svc, self.channel(zone), '%s set point' % self.zone_names[zone],
+                              self.TYPE_SETPOINT, 'Dimming',
+                              lambda p, v, z=zone: self._request_setpoint(z, v))
+
+    def _ensure_switch(self, zones):
+        """The switch pane lists outputs of com.victronenergy.switch services only. Paths must
+        exist before a service registers, so it is made once the number of zones is known."""
+        if self.switch is None:
+            self.switch = SwitchDevice(
+                self.bus, '%s_controls' % self.uid, product_name='Compressor fridge controls',
+                connection='Bluetooth LE %s' % self.mac,
+                default_instance=self.cfg.getint('device_instance', 20),
+                custom_name=self.control_group, timeout_s=self.timeout,
+                setup=lambda svc: self._add_controls(svc, zones))
+            self.devices.append(self.switch)
+        return self.switch
 
     def _request_setpoint(self, zone, value):
         if self._status is None or zone >= len(self._status.zones):
@@ -229,25 +246,29 @@ class FridgeDriver(BleDriver):
                 '/Fridge/BatteryPercent': st.battery_percent,
                 '/Fridge/RunningStatus': st.running_status,
             })
-            if self.control:
-                self._publish_controls(dev, i, zone, st)
+        if self.control and st.zones:
+            sw = self._ensure_switch(len(st.zones))
+            for i, zone in enumerate(st.zones):
+                self._publish_controls(sw, i, zone, st)
+            sw.publish()
 
     def _publish_controls(self, dev, i, zone, st):
         so = self.SO
+        ch = self.channel(i)
         # A change from the GUI that is still waiting to be sent wins over
         # the fridge's (older) value, so the control doesn't jump back.
         if i == 0:
-            for ch, key, on in (('power', 'powered_on', st.powered_on),
-                                ('eco', 'eco_mode', st.eco_mode)):
+            for toggle, key, on in (('power', 'powered_on', st.powered_on),
+                                    ('eco', 'eco_mode', st.eco_mode)):
                 if key not in self._want:
-                    dev[so % (ch, 'State')] = int(on)
-                dev[so % (ch, 'Status')] = 0x09 if on else 0x00
+                    dev[so % (toggle, 'State')] = int(on)
+                dev[so % (toggle, 'Status')] = 0x09 if on else 0x00
         if i not in self._want:
-            dev[so % ('setpoint', 'Dimming')] = zone.target
-        dev[so % ('setpoint', 'Measurement')] = zone.current
-        dev[so % ('setpoint', 'DimmingMin')] = zone.min
-        dev[so % ('setpoint', 'DimmingMax')] = zone.max
-        dev[so % ('setpoint', 'Status')] = 0x09 if st.powered_on else 0x00
+            dev[so % (ch, 'Dimming')] = zone.target
+        dev[so % (ch, 'Measurement')] = zone.current
+        dev[so % (ch, 'DimmingMin')] = zone.min
+        dev[so % (ch, 'DimmingMax')] = zone.max
+        dev[so % (ch, 'Status')] = 0x09 if st.powered_on else 0x00
 
     def shutdown(self):
         self.gatt.close()

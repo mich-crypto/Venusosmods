@@ -327,6 +327,11 @@ automatically.
   command, reads the status back, and the control shows what the fridge
   actually accepted. Set points stay within the range the fridge itself
   reports (e.g. 0…8 °C for the fridge, −20…−12 °C for the freezer).
+* The controls are their own device, `com.victronenergy.switch.fridge_controls`
+  (the pane only lists switch devices). It appears after the first successful
+  read of the fridge, so give it a minute. It needs a Venus OS version that
+  has the switch pane (v3.5x or newer with the new GUI). If the icon is
+  missing, check the *Device list* for "Compressor fridge controls".
 * Don't want controls in Venus OS? Set `control = no` in the `[fridge]`
   section.
 

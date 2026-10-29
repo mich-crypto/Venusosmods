@@ -270,6 +270,18 @@ class TemperatureDevice(VenusDevice):
         self.service['/Temperature'] = None
 
 
+class SwitchDevice(VenusDevice):
+    """com.victronenergy.switch.* - its /SwitchableOutput/* paths fill the GUI's switch pane."""
+    DEVICE_CLASS = 'switch'
+    MODULE_CONNECTED = 0x100
+
+    def add_paths(self, s):
+        s.add_path('/State', self.MODULE_CONNECTED)
+
+    def publish(self):
+        self.mark_seen()
+
+
 # ---------------------------------------------------------------- helpers
 
 def parse_table(text):
