@@ -2299,7 +2299,11 @@ async function boot() {
   setInterval(async () => {
     if (document.hidden) return;
     await refreshState();
-    if (S.tab === 'overview' && !$('#dlg').open) { const main = clear($('#main')); await tabOverview(main); }
+    if (S.tab === 'overview' && !$('#dlg').open) {         // build off-screen and swap, so the page never goes blank
+      const next = h('div');
+      await tabOverview(next);
+      if (S.tab === 'overview' && !$('#dlg').open) $('#main').replaceChildren(...next.childNodes);
+    }
   }, 5000);
 }
 boot();
