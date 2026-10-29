@@ -15,6 +15,8 @@ Coexistence:
 """
 
 import logging
+import os
+import time
 
 import dbus
 from gi.repository import GLib
@@ -26,6 +28,37 @@ ADAPTER_IFACE = 'org.bluez.Adapter1'
 DEVICE_IFACE = 'org.bluez.Device1'
 PROPS_IFACE = 'org.freedesktop.DBus.Properties'
 OM_IFACE = 'org.freedesktop.DBus.ObjectManager'
+
+
+# Cross-process pause: a driver that is about to open a GATT connection writes
+# an expiry time here, and every scanner (in all our driver processes) stops
+# its discovery until the file is gone or expired. The Raspberry Pi's
+# built-in controller rejects connections ("Busy",
+# le-connection-abort-by-local) while any process keeps it scanning.
+PAUSE_FILE = '/tmp/venusosmods-ble-pause'
+
+
+def request_global_pause(seconds):
+    try:
+        with open(PAUSE_FILE, 'w') as f:
+            f.write('%.1f' % (time.time() + seconds))
+    except OSError as e:
+        log.warning('Could not write %s: %s', PAUSE_FILE, e)
+
+
+def clear_global_pause():
+    try:
+        os.remove(PAUSE_FILE)
+    except OSError:
+        pass
+
+
+def global_pause_active():
+    try:
+        with open(PAUSE_FILE) as f:
+            return float(f.read().strip() or 0) > time.time()
+    except (OSError, ValueError):
+        return False
 
 
 def _mac_from_path(path):
@@ -59,7 +92,8 @@ class BlueZScanner(object):
         self._mac_filter = set(m.upper() for m in mac_filter) if mac_filter else None
         self._adapter_path = None
         self._rssi = {}
-        self._paused = False
+        self._paused = False         # paused by our own GATT client
+        self._ext_paused = False     # paused because another process connects
 
     def start(self):
         self._bus.add_signal_receiver(
@@ -73,6 +107,7 @@ class BlueZScanner(object):
         self._ensure_discovery(force=True)
         # Re-arm discovery if bluetoothd restarts or the adapter is power-cycled
         GLib.timeout_add_seconds(self.WATCHDOG_S, self._watchdog)
+        GLib.timeout_add(1000, self._check_global_pause)
 
     # ---------------------------------------------------------------- discovery
 
@@ -118,17 +153,11 @@ class BlueZScanner(object):
             self._adapter_path = None
 
     def _watchdog(self):
-        if not self._paused:
+        if not (self._paused or self._ext_paused):
             self._ensure_discovery()
         return True
 
-    def pause(self):
-        """
-        Stop our discovery session while a GATT connection is being made. The
-        Raspberry Pi's built-in controller often aborts LE connections
-        (le-connection-abort-by-local) while it is also scanning.
-        """
-        self._paused = True
+    def _stop_discovery(self):
         if self._adapter_path is None:
             return
         try:
@@ -137,9 +166,33 @@ class BlueZScanner(object):
         except dbus.exceptions.DBusException:
             pass   # not running, or not ours
 
+    def _check_global_pause(self):
+        if self._paused:
+            return True   # our own connection, handled by pause()/resume()
+        active = global_pause_active()
+        if active and not self._ext_paused:
+            log.debug('another driver is connecting: pausing discovery')
+            self._ext_paused = True
+            self._stop_discovery()
+        elif not active and self._ext_paused:
+            self._ext_paused = False
+            self._ensure_discovery(force=True)
+        return True
+
+    def pause(self, seconds=60):
+        """
+        Stop scanning in this and all other driver processes while a GATT
+        connection is being made (see PAUSE_FILE). `seconds` is a safety
+        expiry in case this process dies before resume().
+        """
+        self._paused = True
+        request_global_pause(seconds)
+        self._stop_discovery()
+
     def resume(self):
         if self._paused:
             self._paused = False
+            clear_global_pause()
             self._ensure_discovery(force=True)
 
     # ------------------------------------------------------------------ signals

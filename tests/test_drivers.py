@@ -255,6 +255,18 @@ class FridgeProtocolTests(unittest.TestCase):
         self.assertEqual(st.zones[0].current, 5.0)
         self.assertEqual(st.zones[1].current, -15.0)
 
+    def test_captured_hyckes_dual_zone(self):
+        # The owner's Hyckes fridge, two notifications as received on the Pi
+        asm = fridge.FrameAssembler()
+        self.assertEqual(asm.feed(hexbytes(
+            'fe fe 21 01 00 01 01 02 08 08 00 02 00 00 00 00 fe 00 06 64')), [])
+        cmd, data = asm.feed(hexbytes(
+            '0c 04 ec f4 ec 02 00 00 fe 00 f8 00 03 00 08 73'))[0]
+        st = fridge.parse_status(data)
+        self.assertEqual([(z.current, z.target) for z in st.zones], [(6, 8), (-8, -20)])
+        self.assertEqual((st.supply_voltage, st.battery_percent, st.battery_saver,
+                          st.eco_mode, st.powered_on, st.model), (12.4, 100, 2, True, True, 3))
+
     def test_missing_second_sensor(self):
         cmd, data = fridge.FrameAssembler().feed(dual_zone_status(right_current=-128))[0]
         self.assertEqual(len(fridge.parse_status(data).zones), 1)
@@ -394,6 +406,24 @@ class DriverTests(unittest.TestCase):
     def test_fridge_requires_mac(self):
         with self.assertRaises(SystemExit):
             FridgeDriver('s', section('poll_interval = 30\n'))
+
+
+class GlobalPauseTests(unittest.TestCase):
+    def test_pause_file(self):
+        import tempfile
+        import ble_scanner
+        orig = ble_scanner.PAUSE_FILE
+        ble_scanner.PAUSE_FILE = os.path.join(tempfile.mkdtemp(), 'pause')
+        try:
+            self.assertFalse(ble_scanner.global_pause_active())
+            ble_scanner.request_global_pause(30)
+            self.assertTrue(ble_scanner.global_pause_active())
+            ble_scanner.clear_global_pause()
+            self.assertFalse(ble_scanner.global_pause_active())
+            ble_scanner.request_global_pause(-1)          # expired = no pause
+            self.assertFalse(ble_scanner.global_pause_active())
+        finally:
+            ble_scanner.PAUSE_FILE = orig
 
 
 class VenusPythonTests(unittest.TestCase):

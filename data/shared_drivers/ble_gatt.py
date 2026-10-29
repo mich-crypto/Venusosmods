@@ -89,8 +89,17 @@ class GattClient(object):
         if not self.busy:
             return False
         self._attempt += 1
-        if self.scanner is not None:
+        if self.scanner is not None and self._attempt == 1:
             self.scanner.pause()
+            # other driver processes check the pause file every second
+            GLib.timeout_add(1500, self._do_connect)
+        else:
+            self._do_connect()
+        return False
+
+    def _do_connect(self):
+        if not self.busy:
+            return False
         log.debug('connecting to %s (attempt %d)', self.mac, self._attempt)
         obj = self._bus.get_object(BLUEZ, self.dev_path)
         dbus.Interface(obj, DEVICE_IFACE).Connect(

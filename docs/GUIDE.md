@@ -286,8 +286,8 @@ Many 12 V compressor fridges use the same Bluetooth controller, the one the
 temperatures of both zones, the set points, the supply voltage and the
 eco/power state. It does **not** change any fridge settings.
 
-Hyckes's own app could not be checked here, so first test whether your
-fridge uses this controller:
+Hyckes fridges use this controller (confirmed with a dual-zone Hyckes).
+For another brand, or to check yours, test it first:
 
 1. **Close the fridge app on your phone**, or switch off the phone's
    Bluetooth. The fridge accepts only one connection at a time.

@@ -8,7 +8,7 @@ on Modbus-TCP/MQTT):
 |---|---|---|
 | Mopeka Check **Standard / XL** (original, not Pro) | `com.victronenergy.tank.mopeka_standard` | LPG tank |
 | Self-built **ESP32-S3 hydrostatic** water sensor | `com.victronenergy.tank.esp32_hydro` (+ `.temperature.esp32_hydro_temp`) | fresh-water tank (+ water temperature) |
-| 12 V compressor **fridge** with the Alpicool Bluetooth controller (Hyckes: check first) | `com.victronenergy.temperature.fridge_zone1` / `_zone2` | fridge / freezer temperature |
+| 12 V compressor **fridge** with the Alpicool Bluetooth controller (confirmed with a Hyckes dual-zone fridge) | `com.victronenergy.temperature.fridge_zone1` / `_zone2` | fridge / freezer temperature |
 
 **→ Start with the [step-by-step guide](docs/GUIDE.md)**, also as a printable
 **[PDF](docs/Venus-OS-Mods-Guide.pdf)** (guide + wiring + calibration in one file).
@@ -87,7 +87,9 @@ VELIB=/tmp/velib_python dbus-run-session -- python3 tests/integration_dbus.py
 The firmware compiles warning-free on Arduino-ESP32 2.0.17 (Bluedroid) and
 3.3.x (NimBLE).
 
-Still to verify on the real installation: the GUI/VRM display on your Venus
-OS version, Mopeka Standard decoding against your sensor, whether the Hyckes
-fridge uses the Alpicool controller (`fridge_probe.py`), and BLE coexistence
-with Venus OS's own Bluetooth services.
+Verified on the real installation (Venus OS 3.79, Raspberry Pi): the
+diagnostics, Mopeka Standard decoding, and reading a Hyckes dual-zone fridge.
+On the Pi's built-in Bluetooth, a GATT connection fails ("Busy") while any
+process scans, so the fridge driver pauses the other drivers' scanning for
+its few seconds of each read (`/tmp/venusosmods-ble-pause`). Still to verify:
+the GUI/VRM display, and the ESP32 sender once it is built.

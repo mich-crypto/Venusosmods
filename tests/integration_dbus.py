@@ -47,9 +47,18 @@ class Device(dbus.service.Object):
 
 
 class Adapter(dbus.service.Object):
+    """Discovery sessions are per D-Bus client, like in BlueZ."""
+    instance = None
+
     def __init__(self, conn, path):
         super().__init__(conn, path)
-        self.discovering = False
+        self.sessions = set()
+        self.stops = 0
+        Adapter.instance = self
+
+    @property
+    def discovering(self):
+        return bool(self.sessions)
 
     @dbus.service.method(PROPS, in_signature='ss', out_signature='v')
     def Get(self, iface, prop):
@@ -59,14 +68,20 @@ class Adapter(dbus.service.Object):
     def SetDiscoveryFilter(self, f):
         assert f['Transport'] == 'le'
 
-    @dbus.service.method('org.bluez.Adapter1')
-    def StartDiscovery(self):
-        self.discovering = True
+    @dbus.service.method('org.bluez.Adapter1', sender_keyword='sender')
+    def StartDiscovery(self, sender=None):
+        if sender in self.sessions:
+            raise dbus.exceptions.DBusException('Operation already in progress',
+                                                name='org.bluez.Error.InProgress')
+        self.sessions.add(sender)
 
-    @dbus.service.method('org.bluez.Adapter1')
-    def StopDiscovery(self):
-        self.discovering = False
-        self.stops = getattr(self, 'stops', 0) + 1
+    @dbus.service.method('org.bluez.Adapter1', sender_keyword='sender')
+    def StopDiscovery(self, sender=None):
+        if sender not in self.sessions:
+            raise dbus.exceptions.DBusException('No discovery started',
+                                                name='org.bluez.Error.Failed')
+        self.sessions.discard(sender)
+        self.stops += 1
 
 
 def dual_zone_status():
@@ -110,7 +125,7 @@ class Fridge(Device):
         super().__init__(conn, path)
         self.connected = self.notifying = False
         self.received = b''
-        self.connects = self.disconnects = 0
+        self.connects = self.disconnects = self.busy_rejects = 0
         self.write_char = FridgeChar(conn, path + '/service0010/char0011', self, fridge.WRITE_UUID)
         self.notify_char = FridgeChar(conn, path + '/service0010/char0013', self, fridge.NOTIFY_UUID)
 
@@ -121,8 +136,9 @@ class Fridge(Device):
     @dbus.service.method(DEV)
     def Connect(self):
         self.connects += 1
-        if self.connects == 1:
-            # what a Raspberry Pi controller does when it gives up mid-scan
+        if Adapter.instance.discovering:
+            # what the Raspberry Pi's controller does while any process scans
+            self.busy_rejects += 1
             raise dbus.exceptions.DBusException('le-connection-abort-by-local',
                                                 name='org.bluez.Error.Failed')
         self.connected = True
@@ -254,7 +270,7 @@ def main():
         loop.quit()
         return False
 
-    GLib.timeout_add_seconds(7, check)
+    GLib.timeout_add_seconds(9, check)
     loop.run()
 
     # SIGTERM -> graceful shutdown
@@ -266,7 +282,9 @@ def main():
     for k, v in sorted(result.items()):
         print(k, {p: (x if not isinstance(x, dbus.Double) else float(x))
                   for p, x in v.items()} if isinstance(v, dict) else v)
-    print('fridge connects=%d disconnects=%d' % (fridge_dev.connects, fridge_dev.disconnects))
+    print('fridge connects=%d (rejected while scanning: %d) disconnects=%d, adapter stops=%d, '
+          'sessions now=%d' % (fridge_dev.connects, fridge_dev.busy_rejects,
+                               fridge_dev.disconnects, adapter.stops, len(adapter.sessions)))
 
     m, e, t, z1, z2 = (result.get(k) for k in ('mopeka', 'esp', 'esp_temp', 'zone1', 'zone2'))
     assert m and e and t and z1 and z2, result
@@ -280,10 +298,11 @@ def main():
     assert z1['/Fridge/SupplyVoltage'] == 12.8 and z1['/Fridge/TargetTemperature'] == 3
     assert z2['/Temperature'] == -17 and z2['/TemperatureType'] == 6
     assert z2['/CustomName'] == 'Freezer'
-    # first connect aborted, retried with scanning paused, then disconnected
-    # again so the phone app can connect
-    assert fridge_dev.connects == 2 and fridge_dev.disconnects >= 1, fridge_dev.connects
-    assert getattr(adapter, 'stops', 0) >= 1, 'discovery was not paused'
+    # the fridge only connects when NO process scans: the Mopeka and ESP32
+    # drivers must have paused for it, and everyone resumed afterwards
+    assert fridge_dev.disconnects >= 1 and fridge_dev.connects >= 1, fridge_dev.connects
+    assert adapter.stops >= 3, 'not all drivers paused discovery: %d' % adapter.stops
+    assert len(adapter.sessions) == 3, 'discovery not resumed: %r' % adapter.sessions
     # Mopeka paired via the sync button and stored the MAC in localsettings
     assert SettingsTree.stored.get('/Settings/Devices/mopeka_standard/Mac') == MOPEKA_MAC, \
         SettingsTree.stored

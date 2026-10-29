@@ -124,7 +124,7 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div class="devices">
     <div><b>Mopeka Check Standard / XL</b> — LPG bottle level</div>
     <div><b>ESP32-S3 hydrostatic sender</b> — fresh-water level for non-square tanks, water temperature</div>
-    <div><b>Bluetooth compressor fridge</b> — fridge and freezer temperature (Alpicool controller; check Hyckes first)</div>
+    <div><b>Bluetooth compressor fridge</b> — fridge and freezer temperature (Alpicool controller, e.g. Hyckes)</div>
   </div>
   <div class="meta">github.com/mich-crypto/Venusosmods · generated ${date}</div>
 </section>
