@@ -19,7 +19,9 @@ interpolates between.
 ```
 
 You do this once. The table is stored in the ESP32's flash and survives power
-cuts and firmware updates. There are two ways to build it:
+cuts and firmware updates. (For the wheel-arch tank from the drawing, the
+table is already built in: see [tank-filling-chart.md](tank-filling-chart.md).
+You only need `zero` and a check.) There are two ways to build it:
 
 * **A. Fill it in steps** (most accurate, ~30 minutes)
 * **B. Calculate it from the tank's dimensions** (when you can't easily fill

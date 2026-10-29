@@ -138,8 +138,14 @@ Note the **MAC** for later (optional in config.ini).
 
 ## Part 4 – Calibrate the water tank
 
-Install the sensor in the tank, then follow [calibration.md](calibration.md).
-Short version, with the van level and the tank empty:
+**Your wheel-arch tank:** the firmware already contains its filling chart,
+calculated from the technical drawing ([tank-filling-chart.md](tank-filling-chart.md)).
+Put the sensor at the bottom of the tank's leg, park level, empty the tank and
+type `zero`. Then check with a few buckets as described in that chapter.
+
+For any other tank, or to measure yours exactly, follow
+[calibration.md](calibration.md). Short version, with the van level and the
+tank empty:
 
 ```
 zero

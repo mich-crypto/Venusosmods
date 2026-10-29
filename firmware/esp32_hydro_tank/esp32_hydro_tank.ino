@@ -72,14 +72,48 @@
 //      Used until you store a measured table with "cal save" (or paste the
 //      output of the "table" command here). The last entry is 100 %.
 struct TankPoint { float mm; float litres; };
+// Wheel-arch tank from docs/tank/tank-drawing.jpg, computed with
+// tools/tank_wheelarch.py (5 mm walls, 106 L). Heights from the inner floor
+// of the leg, where the sensor lies.
 static const TankPoint DEFAULT_TABLE[] = {
-  {   0.0f,   0.0f },
-  {  40.0f,   5.0f },
-  { 100.0f,  15.0f },
-  { 200.0f,  35.0f },
-  { 300.0f,  55.0f },
-  { 380.0f,  70.0f },
-  { 420.0f,  75.0f },
+  {    0.0f,    0.0f },
+  {   20.0f,    0.9f },
+  {   40.0f,    1.7f },
+  {   60.0f,    2.6f },
+  {   80.0f,    3.5f },
+  {  100.0f,    4.4f },
+  {  120.0f,    5.3f },
+  {  140.0f,    6.3f },
+  {  160.0f,    7.3f },
+  {  180.0f,    8.3f },
+  {  200.0f,    9.4f },
+  {  220.0f,   10.6f },
+  {  240.0f,   11.8f },
+  {  260.0f,   13.1f },
+  {  280.0f,   14.4f },
+  {  300.0f,   15.9f },
+  {  320.0f,   17.4f },
+  {  340.0f,   19.2f },
+  {  350.0f,   20.1f },
+  {  360.0f,   21.1f },
+  {  380.0f,   24.0f },
+  {  400.0f,   27.7f },
+  {  420.0f,   32.4f },
+  {  440.0f,   37.4f },
+  {  460.0f,   42.4f },
+  {  465.0f,   43.7f },
+  {  480.0f,   48.0f },
+  {  500.0f,   53.7f },
+  {  520.0f,   59.4f },
+  {  540.0f,   65.1f },
+  {  560.0f,   70.8f },
+  {  580.0f,   76.5f },
+  {  600.0f,   82.2f },
+  {  620.0f,   87.9f },
+  {  640.0f,   93.6f },
+  {  660.0f,   99.3f },
+  {  680.0f,  105.0f },
+  {  685.0f,  106.4f },
 };
 
 // ---- Filter tuning

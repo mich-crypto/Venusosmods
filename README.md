@@ -12,7 +12,7 @@ on Modbus-TCP/MQTT):
 
 **→ Start with the [step-by-step guide](docs/GUIDE.md)**, also as a printable
 **[PDF](docs/Venus-OS-Mods-Guide.pdf)** (guide + wiring + calibration in one file).
-Also: [wiring](docs/wiring.md) · [tank calibration](docs/calibration.md)
+Also: [wiring](docs/wiring.md) · [tank calibration](docs/calibration.md) · [filling chart of the wheel-arch tank](docs/tank-filling-chart.md)
 
 The PDF is generated from the Markdown files: `cd tools/pdf && npm install && npm run build`.
 
@@ -38,6 +38,7 @@ data/                              -> copied to /data on the Pi
   etc/init.d/<service>/run         daemontools services (+ log/run)
 firmware/esp32_hydro_tank/         Arduino sketch for the ESP32-S3 (calibration via serial)
 tools/tank_table.py                height->litres table from tank dimensions
+tools/tank_wheelarch.py            filling chart of the wheel-arch tank (docs/tank/tank-drawing.jpg)
 docs/                              guide, wiring, calibration
 tests/                             unit tests + D-Bus integration test with simulated sensors
 ```

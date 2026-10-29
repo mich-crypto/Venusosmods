@@ -21,6 +21,7 @@ const CHAPTERS = [
   { file: 'GUIDE.md', id: 'guide', title: 'Installation guide' },
   { file: 'wiring.md', id: 'wiring', title: 'Wiring' },
   { file: 'calibration.md', id: 'calibration', title: 'Calibrating the water tank' },
+  { file: 'tank-filling-chart.md', id: 'tank-filling-chart', title: 'Filling chart: wheel-arch tank' },
 ];
 
 const slug = (s) => s.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -29,9 +30,11 @@ const slug = (s) => s.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^a-z0-9]+/
 const REPO = 'https://github.com/mich-crypto/Venusosmods/blob/master/';
 function fixLinks(md) {
   return md
-    .replace(/\]\((?:docs\/)?(GUIDE|wiring|calibration)\.md(#[^)]*)?\)/gi,
-      (_, f, a) => `](#${a ? a.slice(1) : f.toLowerCase() === 'guide' ? 'guide' : f.toLowerCase()})`)
-    .replace(/\]\((?!https?:|#)([^)]+)\)/g,
+    // images are embedded from disk
+    .replace(/!\[([^\]]*)\]\((?!https?:)([^)]+)\)/g, (_, alt, p) => `![${alt}](file://${join(DOCS, p)})`)
+    .replace(/\]\((?:docs\/)?(GUIDE|wiring|calibration|tank-filling-chart)\.md(#[^)]*)?\)/gi,
+      (_, f, a) => `](#${a ? a.slice(1) : f.toLowerCase()})`)
+    .replace(/\]\((?!https?:|#|file:)([^)]+)\)/g,
       (_, p) => `](${REPO}${p.startsWith('../') ? p.slice(3) : 'docs/' + p})`);
 }
 
@@ -109,6 +112,7 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .toc li.toc-ch:first-child { padding-top: 0; }
   figure { margin: 0 0 5mm; break-inside: avoid; text-align: center; }
   figure img { max-width: 100%; max-height: 225mm; }
+  .chapter p > img { display: block; max-width: 100%; max-height: 110mm; margin: 0 auto 3mm; }
   figcaption { font-size: 8pt; color: var(--muted); margin-top: 1mm; }
   .note { border: 1px solid #f0c36d; background: #fff8e6; border-radius: 4px; padding: 3mm 4mm; margin-top: 8mm; font-size: 9.5pt; }
 </style></head><body>
