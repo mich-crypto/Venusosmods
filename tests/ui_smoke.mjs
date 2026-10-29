@@ -64,9 +64,9 @@ await shot(page, '03-gas');
 check((await page.locator('.metric', { hasText: 'Level' }).locator('.num').innerText()).length > 0, 'gas tab shows the level at the top');
 await page.getByRole('heading', { name: /Sensor battery/ }).waitFor();
 check(await page.getByRole('heading', { name: /Sensor battery/ }).isVisible(), 'gas tab shows the sensor battery');
-await page.locator('.field', { hasText: 'Propane share' }).waitFor({ state: 'attached' });
+await page.locator('.field .switch', { hasText: /temperature/i }).first().waitFor();
 check((await page.locator('.field .switch', { hasText: /temperature/i }).count()) >= 1, 'temperature is a simple on/off switch');
-check((await page.locator('.field', { hasText: 'Propane share' }).count()) === 1 && !(await page.locator('.field', { hasText: 'Propane share' }).isVisible()), 'the technical settings are folded away');
+check((await page.locator('.field', { hasText: 'Propane share' }).count()) === 0 && (await page.getByText('More settings').count()) === 0, 'the technical settings are not on the page');
 await page.getByRole('button', { name: 'Calibrate', exact: true }).click();
 await page.locator('#wiz .livebox').waitFor();
 await shot(page, '03a-gas-calibrate');
@@ -87,21 +87,12 @@ check(true, 'popup: bottle type chosen from a list');
 await page.getByRole('button', { name: 'Close', exact: true }).last().click();
 await page.waitForTimeout(800);
 // a simple setting goes through the save bar
-const gname = page.locator('.field', { hasText: 'Name' }).first().locator('input');
-await gname.fill('Camper gas');
+await page.locator('.field .switch', { hasText: /temperature/i }).first().locator('input[type=checkbox]').click();
 await page.getByRole('button', { name: 'Save', exact: true }).click();
 await page.locator('#toast', { hasText: 'Saved' }).waitFor();
-check(true, 'gas name saved');
+check(true, 'gas temperature switch saved');
 await page.locator('#savebar').waitFor({ state: 'hidden' });
 await page.waitForTimeout(600);
-// a wrong value is refused and marked (inside "More settings")
-await page.getByText('More settings').click();
-const capacity = page.locator('.field', { hasText: 'Usable gas volume' }).locator('input');
-await capacity.fill('-5');
-await page.getByRole('button', { name: 'Save', exact: true }).click();
-await page.getByText('must be at least 0').waitFor();
-check(true, 'out-of-range value is refused with a message');
-await page.getByRole('button', { name: 'Discard' }).click();
 
 // fridge
 await tab(page, 'Fridge');
