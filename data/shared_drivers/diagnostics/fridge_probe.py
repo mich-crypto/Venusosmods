@@ -59,7 +59,7 @@ def scan(bus, seconds):
           'signals next to the fridge with: fridge_probe.py <MAC>')
 
 
-def probe(bus, mac, timeout, loop, scanner=None):
+def probe(bus, mac, timeout, loop, scanner=None, rssi=None):
     asm = proto.FrameAssembler()
     state = {'status': None}
 
@@ -100,16 +100,9 @@ def probe(bus, mac, timeout, loop, scanner=None):
                   '  * switch the fridge off and on, wait 30 s, try again')
         loop.quit()
 
-    rssi = None
-    for path, ifaces in managed(bus).items():
-        d = ifaces.get('org.bluez.Device1')
-        if d and str(d.get('Address', '')).upper() == mac:
-            rssi = int(d['RSSI']) if 'RSSI' in d else None
-    if rssi is None:
-        print('Fridge %s not heard in the last seconds - is it on and in range?' % mac)
-    else:
-        print('Fridge %s signal: %d dBm%s' % (mac, rssi, '  (weak - move closer if this fails)'
-                                              if rssi < -78 else ''))
+    if rssi is not None:
+        print('Heard the fridge, signal %d dBm%s' % (rssi, '  (weak - move closer if this fails)'
+                                                     if rssi < -78 else ''))
     print('Connecting (scanning paused, up to 3 attempts; close the phone app first)...')
     client = GattClient(bus, mac, proto.WRITE_UUID, proto.NOTIFY_UUID, on_notify,
                         timeout_s=timeout, scanner=scanner)
@@ -122,19 +115,40 @@ def probe(bus, mac, timeout, loop, scanner=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('mac', nargs='?', help='connect to this fridge and query it')
-    ap.add_argument('--seconds', type=int, default=20)
+    ap.add_argument('--seconds', type=int, default=20, help='scan time without a MAC')
+    ap.add_argument('--wait', type=int, default=45,
+                    help='with a MAC: how long to wait for the fridge to be heard')
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING, format='  %(message)s')
     logging.getLogger('ble_gatt').setLevel(logging.DEBUG)   # show connect attempts
     DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     if args.mac:
-        # make sure BlueZ has seen the device recently
-        scanner = BlueZScanner(bus, lambda *a: None)
-        scanner.start()
+        # Connect right after hearing a broadcast: the fridge is then known to
+        # BlueZ and in range, which matters on a weak link.
+        mac = args.mac.upper()
         loop = GLib.MainLoop()
-        print('Listening 8 s for the fridge...')
-        GLib.timeout_add_seconds(8, probe, bus, args.mac.upper(), 60, loop, scanner)
+        state = {'heard': False}
+
+        def on_adv(m, mfr, rssi):
+            if not state['heard']:
+                state['heard'] = True
+                GLib.idle_add(probe, bus, mac, 60, loop, scanner, rssi)
+
+        def give_up():
+            if not state['heard']:
+                print('\nFAILED: the fridge was not heard in %d s.\n'
+                      '  * A connected phone makes the fridge invisible: close the app\n'
+                      '    completely or switch off the phone\'s Bluetooth.\n'
+                      '  * Out of range? Bring the Pi and the fridge closer.\n'
+                      '  * Check that the fridge is switched on.' % args.wait)
+                loop.quit()
+            return False
+
+        scanner = BlueZScanner(bus, on_adv, mac_filter=[mac])
+        scanner.start()
+        print('Waiting up to %d s for the fridge %s to be heard...' % (args.wait, mac))
+        GLib.timeout_add_seconds(args.wait, give_up)
         loop.run()
     else:
         scan(bus, args.seconds)
