@@ -9,8 +9,8 @@
 | Fuse holder + 1 A fuse | at the 12 V tap |
 | Schottky diode 1N5819 / SS14 | lets USB and 12 V be connected together |
 | Hydrostatic level transmitter | 0–3.3 V, 0.5–4.5 V or 4–20 mA output (see below) |
-| Resistors | 0–3.3 V version: 100 kΩ; 0.5–4.5 V version: 10 kΩ + 20 kΩ; 4–20 mA version: 120 Ω 0.1 %/1 % |
-| 1 kΩ resistor + 100 nF capacitor | input filter/protection |
+| Resistors | 0–3.3 V version: 10 kΩ + 1 MΩ; 0.5–4.5 V version: 10 kΩ + 20 kΩ; 4–20 mA version: 120 Ω 0.1 %/1 % |
+| 1 kΩ resistor + 100 nF capacitor | input filter/protection (options A and B) |
 | DS18B20 waterproof probe + 4.7 kΩ | optional water temperature |
 | IP65 junction box, cable glands, ferrules | |
 | Wire | 0.75 mm² for 12 V, any thin wire for signals |
@@ -40,36 +40,48 @@
 ## Pressure sensor, option C: 0–3.3 V output (e.g. QDY30A 0–3.3 V)
 
 This is the firmware's default. The output can go straight to the ESP32,
-with no divider and no shunt resistor.
+with no divider and no shunt resistor. The QDY30A datasheet is saved in
+[datasheets/](datasheets/QDY30A-water-level-transmitter.png).
+
+QDY30A 3-wire voltage version, colours per the datasheet:
 
 ```
- sensor +V   ── ESP32 5V   (check the label: if it says 12-24 V, use the fused 12 V)
- sensor GND  ── GND
- sensor OUT  ──[1k]──┬──────┬── GPIO4
-                     │      │
-                  [100nF] [100k]
-                     │      │
-                    GND    GND
+ red    (V+)   ── fused 12 V   (see "Supply voltage" below)
+ green  (V-)   ── GND  (common with the ESP32 GND)
+ yellow (out)  ──[10k]──┬───────┬── GPIO4
+                        │       │
+                     [100nF]  [1M]
+                        │       │
+                       GND     GND
 ```
 Firmware: `INPUT_CURRENT_LOOP 0`, `DIVIDER_RATIO 1.0f`,
 `SIGNAL_AT_ZERO 0.0f`, `SIGNAL_AT_FULL 3.3f`, `SENSOR_RANGE_MM 2000.0f`
 (for the 2 m version), `SIGNAL_FAULT_LOW -1.0f`, `SIGNAL_FAULT_HIGH 3.05f`.
 
-* **Find out the supply voltage and wire colours first.** Sellers ship this
-  sensor with different supply ratings, and the colour code is not
-  standard. Check the label on the cable or the user manual. Before
-  connecting the ESP32, power the sensor alone and measure OUT to GND with
-  a multimeter: about 0 V in air, and rising when you dip it into a bucket.
+* **Supply voltage:** the datasheet lists 10–32 V DC for the voltage-output
+  versions (0–5 V, 1–5 V) and 5 V only for the 0.5–4.5 V ratiometric version.
+  The 0–3.3 V version is not in its table, and another seller lists a 0–3.3 V
+  version for 5 V. **Ask the seller, or read the label on the cable, before
+  powering it.** Most likely it is 10–32 V: then use the van's fused 12 V.
+  If it says 5 V, use the ESP32's 5V pin instead.
+* **Test before connecting the ESP32:** power the sensor alone and measure
+  yellow to green with a multimeter: about 0 V in air, rising by about 0.165 V
+  per 10 cm when you lower it into a bucket or a pipe filled with water.
+* **Why 10 kΩ:** with 12 V on the sensor, a fault could push the output above
+  3.3 V. The 10 kΩ limits the current into the pin's protection diode to under
+  1 mA. With the 1 MΩ pull-down it reads about 1 % low, which the
+  calibration cancels out.
 * **Resolution:** the ESP32 reads up to about 3.1 V, i.e. about 1.88 m of
   water with the 2 m sensor. A van tank of 30–50 cm uses a quarter of the
   range: about 0.6 mm of water per mV, which the firmware's median filter
   handles well. The datasheet's ±2 % F.S. zero drift (±40 mm) is long-term
   drift: run `zero` on an empty tank once or twice a year.
 * **No broken-wire detection:** 0 V means "empty" and also "wire broken". The
-  100 kΩ pull-down makes a broken signal wire read as empty instead of random
+  1 MΩ pull-down makes a broken signal wire read as empty instead of random
   values. Option B (4–20 mA) is the only one that can tell the two apart.
-* The 1 kΩ in series protects the pin if the sensor ever outputs more than
-  3.3 V (overpressure, or the 5 V wire touching the signal wire).
+* **Vent tube:** the cable has a breather capillary (the datasheet's
+  "breather capillary"). Keep the cable end with the tube inside the dry
+  junction box, open to air.
 
 ## Pressure sensor, option A: voltage output (0.5–4.5 V, 5 V supply)
 

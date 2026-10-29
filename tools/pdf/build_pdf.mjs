@@ -4,7 +4,7 @@
 //
 // Needs Playwright with Chromium (npm i -g playwright && npx playwright install chromium).
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,8 @@ function fixLinks(md) {
   return md
     .replace(/\]\((?:docs\/)?(GUIDE|wiring|calibration)\.md(#[^)]*)?\)/gi,
       (_, f, a) => `](#${a ? a.slice(1) : f.toLowerCase() === 'guide' ? 'guide' : f.toLowerCase()})`)
-    .replace(/\]\((?!https?:|#)([^)]+)\)/g, (_, p) => `](${REPO}${p.replace(/^\.\.\//, '')})`);
+    .replace(/\]\((?!https?:|#)([^)]+)\)/g,
+      (_, p) => `](${REPO}${p.startsWith('../') ? p.slice(3) : 'docs/' + p})`);
 }
 
 const toc = [];
@@ -51,13 +52,22 @@ for (const ch of CHAPTERS) {
 }
 
 // Keep chapter entries before their sections in the contents list
-const ordered = CHAPTERS.flatMap((ch) => [
+const ordered = [...CHAPTERS, { id: 'datasheets' }].flatMap((ch) => [
   toc.find((t) => t.top && t.chapter === ch.id),
   ...toc.filter((t) => !t.top && t.chapter === ch.id),
-]);
+]).filter(Boolean);
 const tocHtml = ordered.map((t) => t.top
   ? `<li class="toc-ch"><a href="#${t.id}">${t.text}</a></li>`
   : `<li><a href="#${t.id}">${t.text}</a></li>`).join('\n');
+
+// Appendix: datasheet images from docs/datasheets
+const sheets = readdirSync(join(DOCS, 'datasheets')).filter((f) => /\.(png|jpe?g)$/i.test(f)).sort();
+if (sheets.length) {
+  toc.push({ id: 'datasheets', text: 'Appendix: datasheets', chapter: 'datasheets', top: true });
+  body += `<section class="chapter" id="datasheets"><h1>Appendix: datasheets</h1>` +
+    sheets.map((f) => `<figure><img src="${join(DOCS, 'datasheets', f)}"><figcaption>${f}</figcaption></figure>`).join('') +
+    `</section>`;
+}
 
 const date = new Date().toISOString().slice(0, 10);
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -97,6 +107,9 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .toc li { padding: 0.8mm 0 0.8mm 6mm; }
   .toc li.toc-ch { padding: 3mm 0 1mm 0; font-weight: 700; font-size: 11pt; }
   .toc li.toc-ch:first-child { padding-top: 0; }
+  figure { margin: 0 0 5mm; break-inside: avoid; text-align: center; }
+  figure img { max-width: 100%; max-height: 225mm; }
+  figcaption { font-size: 8pt; color: var(--muted); margin-top: 1mm; }
   .note { border: 1px solid #f0c36d; background: #fff8e6; border-radius: 4px; padding: 3mm 4mm; margin-top: 8mm; font-size: 9.5pt; }
 </style></head><body>
 <section class="cover">
