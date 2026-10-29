@@ -174,6 +174,7 @@ class AppTestCase(unittest.TestCase):
         return web_ui.App({'driver_config': self.config, 'init_dir': self.init, 'service_dir': self.svc,
                            'log_dir': self.logs, 'rc_local': self.rc, 'password': password,
                            'serialbattery_dir': self.sb,
+                           'state_dir': os.path.join(self.tmp, 'state'),
                            'html': os.path.join(HERE, '..', 'data', 'shared_drivers', 'web', 'index.html')})
 
     def script(self, name, body):
@@ -351,68 +352,67 @@ class BatteryDebugTests(AppTestCase):
         self.assertEqual((d['ok'], d['batteries'], d['service']), (True, [], ''))
 
 
-class StarlinkTests(AppTestCase):
-    def reply(self, **kw):
-        import test_starlink as ts
-        return web_ui.starlink.frame(ts.status_message(**kw))
-
-    def monitor(self, **cfg):
-        m = web_ui.StarlinkMonitor(dict({'host': '10.9.9.9', 'port': '9201'}, **cfg))
-        m._try = lambda tried: self.tries.append(tried)           # no real curl in the tests
-        return m
-
+class StarlinkApiTests(AppTestCase):
     def setUp(self):
         super().setUp()
-        self.tries = []
+        self.started = []
+        self.saved = web_ui.starlink_hub.run_async
+        web_ui.starlink_hub.run_async = lambda argv, cb, input_bytes=None, timeout=10: self.started.append((argv, cb))
+        self.addCleanup(lambda: setattr(web_ui.starlink_hub, 'run_async', self.saved))
 
-    def test_candidates(self):
-        m = self.monitor()
-        names = [c[0] for c in m.candidates()]
-        self.assertEqual(names, ['gRPC-web port 9201', 'gRPC-web port 80', 'gRPC port 9200'])
-        self.assertTrue(m.candidates()[0][2].startswith('http://10.9.9.9:9201/SpaceX.API.Device.Device/Handle'))
+    def test_views_and_locking(self):
+        for path in ('/api/starlink_dashboard', '/api/starlink_energy', '/api/starlink_log', '/api/update_check', '/api/debug_result'):
+            self.assertEqual(self.get(path, auth=False).status, 401, path)
+        d = body_of(self.get('/api/starlink_dashboard'))
+        self.assertEqual((d['ok'], d['last'], d['running']['running']), (True, None, False))
+        self.assertEqual(body_of(self.get('/api/starlink_energy'))['energy']['currency'], 'EUR')
+        self.assertEqual(body_of(self.get('/api/starlink_log', query='window=86400'))['stats']['count'], 0)
 
-    def test_good_answer_is_stored_and_remembered(self):
-        m = self.monitor()
-        m.busy = True
-        m._finish(1, 1, 'gRPC-web port 80', self.reply(), None)
-        self.assertEqual((m.method, m.via, m.error, m.busy, m.fails), (1, 'gRPC-web port 80', None, False, 0))
-        self.assertEqual(m.summary()['state'], 'Connected')
-        self.assertEqual(len(m.history.rows), 1)
+    def test_speed_test_button(self):
+        r = self.post('/api/starlink_test', {})
+        self.assertEqual(r.status, 200)
+        self.assertEqual(self.post('/api/starlink_test', {}).status, 409)           # one at a time
+        self.assertEqual(self.post('/api/starlink_test', {}, auth=False).status, 401)
 
-    def test_failure_tries_the_next_way_then_gives_up_and_backs_off(self):
-        m = self.monitor()
-        m.busy = True
-        m._finish(0, 0, 'gRPC-web port 9201', b'', 'curl exit code 7')
-        self.assertEqual(self.tries, [1])
-        m._finish(1, 1, 'gRPC-web port 80', b'garbage', None)
-        self.assertEqual(self.tries, [1, 2])
-        m._finish(2, 2, 'gRPC port 9200', None, 'curl exit code 7')
-        self.assertEqual((m.busy, m.fails), (False, 1))
-        self.assertIn('9200', m.error)
-        self.assertFalse(m.summary()['reachable'])
-        for _ in range(4):
-            m.busy = True
-            m._finish(2, 2, 'gRPC port 9200', None, 'x')
-        self.assertGreater(m.skip_until, web_ui.time.time() + 30)
-        self.tries.clear()
-        m.poll()                                                   # inside the quiet minute
-        self.assertEqual(self.tries, [])
+    def test_debug_tools_only_take_safe_targets(self):
+        for tool, target in (('ping', '-c 1; rm -rf /'), ('ping', ''), ('ping', 'a b'), ('dns', '$(id)'), ('http', 'file:///etc/passwd'),
+                             ('http', 'https://x.example/ -o /tmp/x'), ('shell', 'ls'), ('ping', '-oProxyCommand')):
+            self.assertEqual(self.post('/api/debug_start', {'tool': tool, 'target': target}).status, 400, (tool, target))
+        r = self.post('/api/debug_start', {'tool': 'ping', 'target': '192.168.100.1'})
+        job = body_of(r)['job']
+        argv, cb = self.started[-1]
+        self.assertEqual(argv[:1] + argv[-1:], ['ping', '192.168.100.1'])
+        self.assertFalse(body_of(self.get('/api/debug_result', query='job=' + job))['done'])
+        cb(0, b'4 packets transmitted, 4 packets received, 0% packet loss')
+        res = body_of(self.get('/api/debug_result', query='job=' + job))
+        self.assertTrue(res['done'] and 'packet loss' in res['out'])
+        self.assertEqual(self.get('/api/debug_result', query='job=nope').status, 404)
+        http = self.post('/api/debug_start', {'tool': 'http', 'target': 'https://example.com/path?a=1'})
+        self.assertEqual(http.status, 200)
+        self.assertEqual(self.started[-1][0][-1], 'https://example.com/path?a=1')
 
-    def test_disabled_never_polls(self):
-        m = self.monitor(enabled='no')
-        self.assertFalse(m.enabled)
-        m.poll()
-        self.assertEqual(self.tries, [])
+    def test_update_check(self):
+        d = body_of(self.get('/api/update_check'))
+        self.assertTrue(d['checking'] and d['latest'] is None)
+        argv, cb = self.started[-1]
+        self.assertIn('api.github.com/repos/mich-crypto/Venusosmods/commits/master', argv[-1])
+        cb(0, b'{"sha": "' + b'a' * 40 + b'", "commit": {"message": "Fix things\\n\\nbody", "author": {"date": "2026-10-29T12:00:00Z"}}}')
+        d = body_of(self.get('/api/update_check'))
+        self.assertEqual((d['latest'], d['message'], d['date'][:10], d['checking']), ('a' * 40, 'Fix things', '2026-10-29', False))
+        self.assertTrue(d['available'])                                  # nothing installed yet = unknown version
+        self.assertEqual(body_of(self.get('/api/update_log'))['running'], False)
 
-    def test_api(self):
-        m = self.app.starlink
-        m._finish(0, 0, 'gRPC-web port 9201', self.reply(alerts=(7,)), None)
-        d = body_of(self.get('/api/starlink', query='window=900'))
-        self.assertEqual((d['ok'], d['state'], d['window']), (True, 'Connected', 900))
-        self.assertEqual(d['status']['alerts'], ['roaming'])
-        self.assertEqual(len(d['history']['t']), 1)
-        self.assertEqual(self.get('/api/starlink', auth=False).status, 401)
-        self.assertEqual(body_of(self.get('/api/state', auth=False))['starlink']['state'], 'Connected')
+    def test_optional_sections_can_be_created(self):
+        d = body_of(self.get('/api/driver_config'))
+        self.assertEqual(sorted(s['kind'] for s in d['optional']), ['starlink', 'telegram'])
+        r = self.post('/api/driver_config', {'section': 'telegram', 'f.enabled': 'yes', 'f.token': 'SECRET-TOKEN', 'f.chat_id': '42'})
+        self.assertEqual(r.status, 200, r.body)
+        text = self.config_text()
+        self.assertIn('[telegram]', text)
+        self.assertIn('token = SECRET-TOKEN', text)
+        shown = self.get('/api/driver_config').body.decode()
+        self.assertNotIn('SECRET-TOKEN', shown)                                          # never sent back to the browser
+        self.assertEqual(self.post('/api/driver_config', {'section': 'nosuch', 'f.x': '1'}).status, 400)
 
 
 class SerialBatteryTests(AppTestCase):
@@ -426,7 +426,7 @@ class SerialBatteryTests(AppTestCase):
     def test_not_installed(self):
         app = web_ui.App({'driver_config': self.config, 'init_dir': self.init, 'service_dir': self.svc,
                           'log_dir': self.logs, 'rc_local': self.rc, 'password': self.PASSWORD,
-                          'serialbattery_dir': os.path.join(self.tmp, 'missing')})
+                          'serialbattery_dir': os.path.join(self.tmp, 'missing'), 'state_dir': os.path.join(self.tmp, 'state')})
         self.assertFalse(body_of(self.get('/api/serialbattery', app=app))['installed'])
         self.assertEqual(self.post('/api/serialbattery', {'s.LOGGING': 'DEBUG'}, app=app).status, 400)
 

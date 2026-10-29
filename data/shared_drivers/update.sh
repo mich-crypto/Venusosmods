@@ -27,6 +27,12 @@ chmod +x /data/shared_drivers/*.sh /data/shared_drivers/*.py \
 rm -rf "$TMP"
 echo "Files updated in /data/shared_drivers and /data/etc/init.d"
 
+# remember which commit this is, for the "update available" check on the settings page
+SHA=$( (curl -fsSL -m 10 https://api.github.com/repos/mich-crypto/Venusosmods/commits/master 2>/dev/null \
+        || wget -q -T 10 -O - https://api.github.com/repos/mich-crypto/Venusosmods/commits/master 2>/dev/null) \
+      | sed -n 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)
+[ -n "$SHA" ] && echo "$SHA" > /data/shared_drivers/.version
+
 for svc in /data/etc/init.d/*; do
     name=$(basename "$svc")
     if [ -e "/service/$name" ]; then

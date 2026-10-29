@@ -149,13 +149,45 @@ await page.getByText('Only changed').first().isVisible().catch(() => {});
 
 // starlink
 await tab(page, 'Starlink');
+await page.getByRole('button', { name: 'Dish', exact: true }).click();
 await page.getByText('Dish says: roaming').waitFor();
-check(await page.locator('.metric', { hasText: 'Downlink' }).locator('.num').innerText().then(t => /^\d+/.test(t)), 'Starlink shows the downlink speed in the hero');
+check(await page.locator('.metric', { hasText: 'Downlink' }).locator('.num').innerText().then(t => /^\d+/.test(t)), 'Starlink dish view shows the downlink speed in the hero');
 check((await page.locator('.hero .metric').count()) === 3, 'Starlink hero has three metrics');
 check((await page.locator('.stats .stat').count()) >= 10, 'Starlink statistics grid is filled');
 await page.locator('.chart path[stroke]').first().waitFor({ state: 'attached' });   // a flat line has no height: never "visible"
 check((await page.locator('.chart').count()) >= 3, 'Starlink graphs are drawn');
 await shot(page, '07c-starlink');
+await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+await page.locator('.hzgrid .hz', { hasText: 'Local' }).waitFor();
+check(true, 'ping health tile for the target is shown');
+await page.getByRole('button', { name: 'Run speed test' }).click();
+await page.getByRole('button', { name: 'Run speed test' }).waitFor({ timeout: 60000 });      // back to idle when it is done
+await page.getByText('Test edge').waitFor();
+check(await page.locator('.metric', { hasText: 'Download' }).locator('.num').innerText().then(t => /^\d+/.test(t)), 'speed test result shows in the hero');
+await shot(page, '07c1-starlink-dashboard');
+await page.getByRole('button', { name: 'Energy', exact: true }).click();
+await page.getByText('Power now').waitFor();
+check((await page.locator('.metric', { hasText: 'Today' }).locator('.num').innerText()) !== '', 'energy view shows today');
+await shot(page, '07c2-starlink-energy');
+await page.getByRole('button', { name: 'Tests', exact: true }).click();
+await page.locator('table tbody tr').first().waitFor();
+check((await page.locator('table tbody tr .chip.ok').count()) >= 1, 'test table lists the finished test');
+await page.getByRole('button', { name: 'Log', exact: true }).click();
+await page.getByText('Availability').first().waitFor();
+await page.getByText('Public IP history').waitFor();
+await shot(page, '07c3-starlink-log');
+await page.getByRole('button', { name: 'Sky', exact: true }).click();
+await page.getByText('Where the dish points').waitFor();
+await page.getByRole('button', { name: 'Debug', exact: true }).click();
+await page.getByRole('button', { name: 'Dish', exact: true }).last().click();
+await page.locator('pre.rawbox', { hasText: 'packet loss' }).waitFor({ timeout: 20000 });
+check(true, 'network tool runs and shows its output');
+await shot(page, '07c4-starlink-debug');
+await page.getByRole('button', { name: 'Settings', exact: true }).click();
+await page.getByText('Software update').waitFor();
+await page.getByText('Bot token').waitFor();
+check((await page.locator('.field', { hasText: 'Speed test every' }).locator('input').count()) === 1, 'settings offer the speed test interval');
+await shot(page, '07c5-starlink-settings');
 
 // raw data
 await tab(page, 'Raw data');
@@ -196,6 +228,7 @@ await page.getByText('Cell voltage limits').waitFor();
 await shot(page, '12b-phone-limits');
 check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scrolling on the limits view');
 await tab(page, 'Starlink');
+await page.getByRole('button', { name: 'Dish', exact: true }).click();
 await page.getByText('Dish says: roaming').waitFor();
 await page.waitForTimeout(1200);
 await shot(page, '12c-phone-starlink');

@@ -109,6 +109,47 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(s['down_bps'], 1e6)
 
 
+def packed(number, values):
+    return sl.field_bytes(number, b''.join(struct.pack('<f', v) for v in values))
+
+
+def history_message(current=1000, power=None, down=None, up=None, outages=()):
+    n = sl.HISTORY_LEN
+    parts = [vint(1, current), packed(1010, power or [30.0] * n), packed(1003, down or [8e6] * n),
+             packed(1004, up or [1e6] * n), packed(1002, [30.0] * n), packed(1001, [0.0] * n)]
+    for cause, start_ns, duration_ns in outages:
+        parts.append(sub(1009, vint(1, cause), vint(2, start_ns), vint(3, duration_ns)))
+    return sub(2006, *parts)
+
+
+class DishHistoryTests(unittest.TestCase):
+    def test_request_bytes(self):
+        self.assertEqual(sl.history_request(), b'\x00\x00\x00\x00\x03\xfa\x3e\x00')
+
+    def test_decode(self):
+        h = sl.decode_history_reply(sl.frame(history_message(outages=[(6, 1700000000 * 10 ** 9, 5 * 10 ** 9)])))
+        self.assertEqual((h['current'], len(h['power']), len(h['down'])), (1000, 900, 900))
+        self.assertAlmostEqual(h['power'][5], 30.0, places=3)
+        self.assertEqual(h['outages'], [{'cause': 'obstructed', 'start_ns': 1700000000 * 10 ** 9,
+                                         'duration_s': 5.0, 'switched': False}])
+
+    def test_unpacked_floats_also_work(self):
+        msg = sub(2006, vint(1, 5), *[f32(1010, v) for v in (1.0, 2.0)])
+        # one 32-bit value per entry (wire type 5): older firmware may send it that way
+        h = sl.decode_history(msg)
+        self.assertEqual(h['power'], [1.0, 2.0])
+
+    def test_new_samples_ring_buffer(self):
+        arr = list(range(900))                       # arr[k % 900] = k for the first lap
+        self.assertEqual(sl.new_samples(arr, 900, 897), [897, 898, 899])
+        self.assertEqual(sl.new_samples(arr, 902, 900), [0, 1])                      # wrapped around
+        self.assertEqual(sl.new_samples(arr, 900, None), [899])                       # first look: newest only
+        self.assertEqual(sl.new_samples(arr, 900, 900), [])
+        self.assertEqual(len(sl.new_samples(arr, 5000, 100)), 900)                    # missed more than a lap
+        self.assertEqual(sl.new_samples(arr, 100, 200), [])                           # counter went back (dish reboot)
+        self.assertEqual(sl.new_samples([], 5, 1), [])
+
+
 class HistoryTests(unittest.TestCase):
     def test_window_and_decimation(self):
         now = [10000.0]

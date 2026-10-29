@@ -38,7 +38,9 @@ from gi.repository import GLib  # noqa: E402
 import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
 import rawlog  # noqa: E402
+import netmon  # noqa: E402
 import starlink  # noqa: E402
+import starlink_hub  # noqa: E402
 
 log = logging.getLogger('web_ui')
 
@@ -197,108 +199,6 @@ def unwrap(v):
     return v
 
 
-# ------------------------------------------------------------- starlink dish
-
-class StarlinkMonitor(object):
-    """
-    Asks the dish for its status every few seconds. The request goes out with curl (no HTTP or gRPC
-    libraries on Venus OS) and is watched from the main loop, so a dish that does not answer never
-    blocks the page. Tries gRPC-web on the configured port, on port 80 and plain gRPC on 9200, and
-    sticks with whichever answered last.
-    """
-
-    def __init__(self, cfg):
-        self.enabled = str(cfg.get('enabled', 'yes')).strip().lower() in ct.TRUE
-        self.host = cfg.get('host') or '192.168.100.1'
-        self.interval = max(2, int(cfg.get('interval') or 5))
-        self.port = int(cfg.get('port') or 9201)
-        self.status = None            # last decoded status
-        self.time = None              # when it was read
-        self.error = None
-        self.via = None
-        self.fails = 0
-        self.method = 0
-        self.busy = False
-        self.skip_until = 0
-        self.history = starlink.History(interval=self.interval)
-
-    def candidates(self):
-        web = ['--http1.1', '-H', 'Content-Type: application/grpc-web+proto', '-H', 'X-Grpc-Web: 1',
-               '-H', 'Accept: application/grpc-web+proto']
-        native = ['--http2-prior-knowledge', '-H', 'Content-Type: application/grpc', '-H', 'TE: trailers']
-        path = starlink.SERVICE_PATH
-        return [('gRPC-web port %d' % self.port, web, 'http://%s:%d%s' % (self.host, self.port, path)),
-                ('gRPC-web port 80', web, 'http://%s%s' % (self.host, path)),
-                ('gRPC port 9200', native, 'http://%s:9200%s' % (self.host, path))]
-
-    def summary(self):
-        age = None if self.time is None else int(time.time() - self.time)
-        s = self.status or {}
-        return {'enabled': self.enabled, 'reachable': self.error is None and self.status is not None,
-                'error': self.error, 'age': age, 'via': self.via, 'state': s.get('state'),
-                'down_bps': s.get('down_bps'), 'up_bps': s.get('up_bps'), 'latency_ms': s.get('latency_ms'),
-                'obstructed_pct': s.get('obstructed_pct'), 'alerts': s.get('alerts')}
-
-    # -- polling
-    def poll(self):
-        """Timer callback (returns True to stay armed)."""
-        if not self.enabled or self.busy or time.time() < self.skip_until:
-            return True
-        self.busy = True
-        self._try(0)
-        return True
-
-    def _try(self, tried):
-        cands = self.candidates()
-        idx = (self.method + tried) % len(cands)
-        name, args, url = cands[idx]
-        try:
-            proc = subprocess.Popen(['curl', '-s', '-m', '4', '-X', 'POST'] + args + ['--data-binary', '@-', url],
-                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            proc.stdin.write(starlink.status_request())
-            proc.stdin.close()
-        except OSError as e:
-            self._finish(tried, idx, name, None, 'could not run curl: %s' % e)
-            return
-        deadline = time.time() + 6
-        GLib.timeout_add(100, self._check, proc, tried, idx, name, deadline)
-
-    def _check(self, proc, tried, idx, name, deadline):
-        if proc.poll() is None and time.time() < deadline:
-            return True
-        if proc.poll() is None:
-            proc.kill()
-        data = proc.stdout.read()
-        proc.stdout.close()
-        proc.wait()
-        self._finish(tried, idx, name, data, None if proc.returncode == 0 else 'curl exit code %s' % proc.returncode)
-        return False
-
-    def _finish(self, tried, idx, name, data, failure):
-        """Handle one answer (or its absence); also called directly by the tests."""
-        error = failure
-        status = None
-        if error is None:
-            try:
-                status = starlink.decode_reply(data)
-            except ValueError as e:
-                error = str(e)
-        if status is not None:
-            self.status, self.time, self.error, self.via = status, time.time(), None, name
-            self.method, self.fails, self.busy = idx, 0, False
-            self.history.add(status)
-            return
-        self.error = '%s: %s' % (name, error)
-        if tried + 1 < len(self.candidates()):
-            self._try(tried + 1)
-            return
-        self.fails += 1
-        self.busy = False
-        if self.fails >= 5:
-            self.skip_until = time.time() + 60          # nobody home: only look once a minute
-        log.debug('Starlink dish not read: %s', self.error)
-
-
 # ---------------------------------------------------------------- the app
 
 class Response(object):
@@ -333,7 +233,9 @@ class App(object):
         self.failures = {}                  # ip -> [count, first time]
         self._bus = None
         self.recorder = battery_debug.Recorder(interval=opts.get('sample_s', 10))
-        self.starlink = StarlinkMonitor(opts.get('starlink') or {})
+        self.state_dir = opts.get('state_dir') or os.path.join(HERE, 'state')
+        self.starlink = starlink_hub.Hub(opts.get('starlink') or {}, opts.get('telegram') or {},
+                                         netmon.Store(os.path.join(self.state_dir, 'starlink.json')))
         self.rawlog_dir = opts.get('rawlog_dir') or rawlog.DEFAULT_DIR
 
     # ---------------------------------------------------------- plumbing
@@ -423,6 +325,16 @@ class App(object):
             'POST /api/driver_config': self.api_driver_config_save,
             'GET /api/battery': self.api_battery,
             'GET /api/starlink': self.api_starlink,
+            'GET /api/starlink_dashboard': self.api_starlink_dashboard,
+            'GET /api/starlink_energy': self.api_starlink_energy,
+            'GET /api/starlink_log': self.api_starlink_log,
+            'POST /api/starlink_test': self.api_starlink_test,
+            'POST /api/telegram_test': self.api_telegram_test,
+            'POST /api/debug_start': self.api_debug_start,
+            'GET /api/debug_result': self.api_debug_result,
+            'GET /api/update_check': self.api_update_check,
+            'POST /api/update_run': self.api_update_run,
+            'GET /api/update_log': self.api_update_log,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
@@ -574,7 +486,140 @@ class App(object):
         out = dict(m.summary(), ok=True, window=window, interval=m.interval, host=m.host)
         out['status'] = m.status
         out['history'] = m.history.history(window)
+        out['hist_error'] = m.hist_error
         return jsonr(out)
+
+    def api_starlink_dashboard(self, req):
+        m = self.starlink
+        out = dict(m.dashboard(), ok=True, enabled=m.enabled, usage=m.usage())
+        out['summary'] = m.summary()
+        return jsonr(out)
+
+    def api_starlink_energy(self, req):
+        m = self.starlink
+        return jsonr({'ok': True, 'enabled': m.enabled, 'energy': m.energy(), 'usage': m.usage(),
+                      'hist_error': m.hist_error, 'hist_time': m.hist_time})
+
+    def api_starlink_log(self, req):
+        raw = req.query.get('window', '')
+        window = max(3600, min(90 * 86400, int(raw))) if raw.isdigit() else 86400
+        return jsonr(dict(self.starlink.log_view(window), ok=True, window=window))
+
+    def api_starlink_test(self, req):
+        m = self.starlink
+        if not m.start_speedtest(manual=True):
+            return jsonr({'ok': False, 'error': 'a test is already running'}, 409)
+        return jsonr({'ok': True, 'message': 'Speed test started (about %d MB of data)' % (m.test_down_mb + m.test_up_mb)})
+
+    def api_telegram_test(self, req):
+        m = self.starlink
+        if not (m.tg['enabled'] and m.tg['token'] and m.tg['chat_id']):
+            return jsonr({'ok': False, 'error': 'Telegram is not set up: enable it and fill in the bot token and chat ID, save and restart the page'}, 400)
+        m.test_message()
+        return jsonr({'ok': True, 'message': 'Test message queued'})
+
+    # ----------------------------------------------------- network tools
+    DEBUG_HOST_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9.:_-]{0,99}$')
+    DEBUG_URL_RE = re.compile(r'^https?://[A-Za-z0-9][A-Za-z0-9.:_/?&=%+~#@,;!*()\[\]-]{0,200}$')
+
+    def api_debug_start(self, req):
+        tool, target = req.form.get('tool', ''), req.form.get('target', '').strip()
+        host_tools = {'ping': (['ping', '-c', '4', '-W', '2'], 14), 'traceroute': (['traceroute', '-n', '-m', '15', '-w', '1', '-q', '1'], 35),
+                      'dns': (['nslookup'], 12)}
+        if tool in host_tools:
+            if not self.DEBUG_HOST_RE.match(target):
+                return jsonr({'ok': False, 'error': 'enter a host name or an IP address'}, 400)
+            argv, limit = host_tools[tool]
+            argv = argv + [target]
+        elif tool == 'http':
+            if not self.DEBUG_URL_RE.match(target):
+                return jsonr({'ok': False, 'error': 'enter a URL starting with http:// or https://'}, 400)
+            argv, limit = ['curl', '-sS', '-I', '-m', '10', '-w', '\n--- total %{time_total}s, connect %{time_connect}s, remote %{remote_ip}\n', target], 14
+        else:
+            return jsonr({'ok': False, 'error': 'unknown tool'}, 400)
+        self.jobs = dict((k, v) for k, v in getattr(self, 'jobs', {}).items() if time.time() - v['time'] < 600)
+        job_id = str(int(time.time() * 1000))
+        job = self.jobs[job_id] = {'time': time.time(), 'done': False, 'out': '', 'cmd': ' '.join(argv[:3]) + ' ...'}
+
+        def finished(rc, out):
+            text = out.decode('utf-8', 'replace')[:20000]
+            if rc is None:
+                text += '\n(stopped after %d s)' % limit
+            elif rc != 0 and not text.strip():
+                text = 'exit code %s, no output' % rc
+            job.update(done=True, out=text, rc=rc)
+        starlink_hub.run_async(argv, finished, timeout=limit)
+        return jsonr({'ok': True, 'job': job_id})
+
+    def api_debug_result(self, req):
+        job = getattr(self, 'jobs', {}).get(req.query.get('job', ''))
+        if job is None:
+            return jsonr({'ok': False, 'error': 'unknown job'}, 404)
+        return jsonr({'ok': True, 'done': job['done'], 'out': job['out']})
+
+    # ------------------------------------------------------------- updates
+    UPDATE_REPO = 'mich-crypto/Venusosmods'
+    update_info = None
+
+    def installed_version(self):
+        try:
+            with open(os.path.join(HERE, '.version')) as f:
+                return f.read().strip()[:40] or None
+        except OSError:
+            return None
+
+    def api_update_check(self, req):
+        info = self.update_info or {}
+        stale = time.time() - info.get('checked', 0) > 6 * 3600
+        if (req.query.get('refresh') == '1' or stale) and not info.get('checking'):
+            self.update_info = info = dict(info, checking=True)
+
+            def got(rc, out):
+                text = out.decode('utf-8', 'replace') if rc == 0 else ''
+                sha = re.search(r'"sha":\s*"([0-9a-f]{40})"', text)
+                msg = re.search(r'"message":\s*"((?:[^"\\]|\\.)*)"', text)
+                date = re.search(r'"date":\s*"([^"]+)"', text)
+                self.update_info = {'checked': time.time(), 'checking': False,
+                                    'error': None if sha else 'could not reach GitHub',
+                                    'latest': sha.group(1) if sha else (info.get('latest')),
+                                    'message': (msg.group(1).split('\\n')[0] if msg else info.get('message')),
+                                    'date': date.group(1) if date else info.get('date')}
+            starlink_hub.run_async(['curl', '-s', '-m', '10', 'https://api.github.com/repos/%s/commits/master' % self.UPDATE_REPO],
+                                   got, timeout=14)
+        installed = self.installed_version()
+        info = self.update_info or {}
+        return jsonr({'ok': True, 'installed': installed, 'latest': info.get('latest'), 'message': info.get('message'),
+                      'date': info.get('date'), 'error': info.get('error'), 'checking': bool(info.get('checking')),
+                      'available': bool(info.get('latest') and installed != info.get('latest')),
+                      'running': self.update_running()})
+
+    UPDATE_LOG = '/tmp/venusosmods-update.log'
+
+    def update_running(self):
+        proc = getattr(self, 'update_proc', None)
+        return proc is not None and proc.poll() is None
+
+    def api_update_run(self, req):
+        if self.update_running():
+            return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
+        script = os.path.join(HERE, 'update.sh')
+        if not os.path.isfile(script):
+            return jsonr({'ok': False, 'error': 'update.sh not found'}, 400)
+        try:
+            log_file = open(self.UPDATE_LOG, 'w')
+            self.update_proc = subprocess.Popen(['sh', script], stdout=log_file, stderr=subprocess.STDOUT,
+                                                stdin=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:
+            return jsonr({'ok': False, 'error': 'could not start the update: %s' % e}, 500)
+        return jsonr({'ok': True, 'message': 'Update started. The page restarts when it is done.'})
+
+    def api_update_log(self, req):
+        try:
+            with open(self.UPDATE_LOG) as f:
+                text = f.read()[-6000:]
+        except OSError:
+            text = ''
+        return jsonr({'ok': True, 'text': text, 'running': self.update_running()})
 
     def venus_version(self):
         try:
@@ -611,8 +656,13 @@ class App(object):
                     s['values'][f['key']] = ''
                     s.setdefault('secret_set', {})[f['key']] = bool(
                         ct.parse_ini(text).get(s['section'], {}).get(f['key']))
+        have = set(x['kind'] for x in sections)
+        optional = [{'section': k, 'kind': k, 'title': ct.SCHEMA[k]['title'], 'values': {}, 'fields': ct.SCHEMA[k]['fields'],
+                     'presets': [], 'secret_set': {}} for k in self.OPTIONAL_SECTIONS if k not in have]
         return jsonr({'ok': True, 'path': self.driver_config, 'exists': bool(text), 'sections': sections,
-                      'services': self.init_services()})
+                      'optional': optional, 'services': self.init_services()})
+
+    OPTIONAL_SECTIONS = ('starlink', 'telegram')           # work without a section; saving one creates it
 
     def restart_service(self, name):
         link = self.link(name)
@@ -626,6 +676,9 @@ class App(object):
         text = self.read_text(self.driver_config)
         parsed = ct.parse_ini(text)
         section = next((s for s in parsed if s.lower() == form.get('section', '').lower()), None)
+        if section is None and form.get('section') in self.OPTIONAL_SECTIONS:
+            section = form['section']
+            parsed[section] = {}
         if section is None:
             return jsonr({'ok': False, 'error': 'unknown section'}, 400)
         kind = ct.kind_of(section, parsed[section])
@@ -646,7 +699,7 @@ class App(object):
         ct.write_file(self.driver_config, new)
         result = {'ok': True, 'message': 'Saved', 'restarted': False}
         if form.get('restart') == '1':
-            if kind in ('web', 'starlink'):
+            if kind in ('web', 'starlink', 'telegram'):
                 GLib.timeout_add(800, self._restart_self)
                 result.update(restarted=True, message='Saved. This page restarts in a moment.')
             elif self.restart_service(section):
@@ -1049,6 +1102,8 @@ def main():
     ap.add_argument('--config', default=os.path.join(HERE, 'config.ini'))
     ap.add_argument('--section', default='web')
     ap.add_argument('--starlink-section', default='starlink')
+    ap.add_argument('--telegram-section', default='telegram')
+    ap.add_argument('--state-dir', default=None)
     ap.add_argument('--init-dir', default='/data/etc/init.d')
     ap.add_argument('--service-dir', default='/service')
     ap.add_argument('--log-dir', default='/var/log')
@@ -1075,26 +1130,37 @@ def main():
         log.warning('No password in [%s] of %s: the page is read-only', args.section, args.config)
 
     starlink_cfg = dict(parser[args.starlink_section]) if parser.has_section(args.starlink_section) else {}
+    telegram_cfg = dict(parser[args.telegram_section]) if parser.has_section(args.telegram_section) else {}
 
     DBusGMainLoop(set_as_default=True)
     app = App({'driver_config': args.config, 'init_dir': args.init_dir, 'service_dir': args.service_dir,
                'log_dir': args.log_dir, 'rc_local': args.rc_local, 'password': password,
                'serialbattery_dir': args.serialbattery_dir, 'sample_s': max(1, args.sample_s),
-               'starlink': starlink_cfg, 'rawlog_dir': args.rawlog_dir})
+               'starlink': starlink_cfg, 'telegram': telegram_cfg, 'rawlog_dir': args.rawlog_dir,
+               'state_dir': args.state_dir})
     server = Server(app, host, port)
     log.info('Settings page on http://%s:%d/', host, server.port)
     if not args.no_firewall and get('open_firewall', 'yes').lower() in ct.TRUE:
         open_firewall(server.port)
 
     app.sample_batteries()
-    if app.starlink.enabled:
-        app.starlink.poll()
-        GLib.timeout_add_seconds(app.starlink.interval, app.starlink.poll)
+    hub = app.starlink
+    if hub.enabled:
+        hub.poll_status()
+        GLib.timeout_add_seconds(hub.interval, hub.poll_status)
+        GLib.timeout_add_seconds(hub.history_interval, hub.poll_history)
+        GLib.timeout_add_seconds(hub.icmp_interval, hub.poll_icmp)
+        GLib.timeout_add_seconds(60, hub.maybe_speedtest)
+        GLib.timeout_add_seconds(60, hub.flush)
+        GLib.timeout_add_seconds(5, lambda: (hub.poll_icmp(), hub.poll_wan(), False)[2])
+        GLib.timeout_add_seconds(300, hub.poll_wan)
+        GLib.timeout_add_seconds(300, lambda: (hub.store.save(), True)[1])
     GLib.timeout_add_seconds(app.recorder.interval, app.sample_batteries)
     loop = GLib.MainLoop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, loop.quit)
     loop.run()
+    hub.store.save(force=True)                    # the books survive a restart of the page
 
 
 if __name__ == '__main__':

@@ -105,11 +105,31 @@ bind = 0.0.0.0
 open_firewall = yes
 
 [starlink]
-# Starlink dish status on the settings page (Starlink tab): speed, ping, obstructions, alerts.
+# Starlink tabs on the settings page: dish, energy, data use, outages, speed tests, ping health.
 # The Pi must reach the dish, normally at 192.168.100.1 (check: curl http://192.168.100.1/).
 enabled = yes
 host = 192.168.100.1
-# Seconds between readings (after 5 failures in a row it only tries once a minute)
+# Speed test every N minutes; 0 = only when you press the button. A test moves about 33 MB.
+speedtest_interval = 0
+# Ping tiles: Name=address, up to 8 (default: Cloudflare, Google, Quad9 and the dish)
+#icmp_targets = Cloudflare=1.1.1.1, Google=8.8.8.8, Dish=192.168.100.1, Gateway=100.64.0.1
+# Billing cycle day (1-28) and data cap in GB (0 = no cap) for the data-use bar
+cycle_day = 1
+cap_gb = 0
+# Electricity price per kWh for the energy cost (0 = hide) and its currency label
+price_per_kwh = 0
+currency = EUR
+# Record the public IP address (every 5 minutes, through Cloudflare)
+wan_check = yes
+# Seconds between live readings, and between reads of the dish's 15-minute history
 interval = 5
+history_interval = 60
 # gRPC-web port of the dish
 port = 9201
+
+[telegram]
+# Alerts to a Telegram chat: dish offline/back, packet loss, hardware alerts, new public IP,
+# failed speed tests. Make a bot with @BotFather, send it a message, then fill in both lines.
+enabled = no
+token =
+chat_id =

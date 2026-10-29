@@ -62,7 +62,8 @@ class DriverSchemaTests(unittest.TestCase):
         cfg = ct.read_driver_config(EXAMPLE)
         kinds = dict((c['section'], c['kind']) for c in cfg)
         self.assertEqual(kinds, {'mopeka_standard': 'mopeka', 'esp32_hydro': 'esp32',
-                                 'fridge': 'fridge', 'web': 'web', 'starlink': 'starlink'})
+                                 'fridge': 'fridge', 'web': 'web', 'starlink': 'starlink',
+                                 'telegram': 'telegram'})
         mop = [c for c in cfg if c['kind'] == 'mopeka'][0]
         self.assertEqual(mop['values']['capacity_l'], '27')
         self.assertTrue(any(f['key'] == 'full_mm' for f in mop['fields']))

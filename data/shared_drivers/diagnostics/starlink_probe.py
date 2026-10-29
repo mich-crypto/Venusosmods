@@ -53,6 +53,21 @@ def main():
         print('   OK')
         for k in sorted(st):
             print('   %-22s %s' % (k, st[k]))
+        print('== history (used for energy, data use and outages)')
+        try:
+            p = subprocess.run(['curl', '-s', '-m', '8', '-X', 'POST'] + args + ['--data-binary', '@-', url],
+                               input=starlink.history_request(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+            h = starlink.decode_history_reply(p.stdout)
+            print('   OK: counter %d, samples power=%d down=%d up=%d, outages=%d' % (
+                h['current'], len(h['power']), len(h['down']), len(h['up']), len(h['outages'])))
+            if h['power']:
+                print('   last power %.1f W, last downlink %.0f bit/s' % (h['power'][(h['current'] - 1) % len(h['power'])],
+                                                                         h['down'][(h['current'] - 1) % len(h['down'])] if h['down'] else 0))
+            for o in h['outages'][:3]:
+                print('   outage', o)
+        except (OSError, subprocess.SubprocessError, ValueError) as e:
+            print('   history not understood: %s' % e)
+            print('   first bytes: %s' % (p.stdout[:120].hex() if 'p' in dir() else ''))
         break
     if not worked:
         print('\nNo way worked. Is the dish reachable? Try: curl -s -m 5 -o /dev/null -w "%%{http_code}" http://%s/' % host)

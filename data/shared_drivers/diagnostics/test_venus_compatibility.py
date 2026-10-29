@@ -68,6 +68,11 @@ def check_imports():
         except Exception as e:
             report('FAIL', 'import ' + mod, str(e))
             ok = False
+    try:
+        import json  # noqa: F401
+        report('PASS', 'import json')
+    except ImportError:
+        report('WARN', 'import json', 'missing: the Starlink energy and data-use history will not be saved')
     return ok
 
 
@@ -130,7 +135,7 @@ def check_bluetooth(bus, names):
 
 def driver_of(section, cfg):
     kind = cfg.get('driver', '') or section
-    for prefix in ('mopeka', 'esp32', 'fridge', 'starlink', 'web'):
+    for prefix in ('mopeka', 'esp32', 'fridge', 'starlink', 'telegram', 'web'):
         if kind.startswith(prefix):
             return prefix
     return None
@@ -158,6 +163,12 @@ def check_config(path):
         if kind is None:
             report('WARN', '[%s]' % name, 'unknown driver - name the section mopeka_*, '
                    'esp32_*, fridge_* or web, or add driver = ...')
+            continue
+        if kind == 'telegram':
+            if cfg.get('enabled', 'no').lower() in ('yes', 'true', '1', 'on') and not (cfg.get('token') and cfg.get('chat_id')):
+                report('WARN', '[%s]' % name, 'enabled but the bot token or chat id is empty')
+            else:
+                report('PASS', '[%s]' % name, 'Telegram alerts')
             continue
         if kind == 'starlink':
             try:

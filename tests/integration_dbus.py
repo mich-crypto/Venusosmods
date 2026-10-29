@@ -267,6 +267,17 @@ def check_web_results(web):
     st, raw = res['raw_fridge']
     assert st == 200 and any(' tx ' in l and 'query' in l for l in raw['lines']), raw
     assert any(' status ' in l and 'payload=' in l and 'Zone(target=3.0' in l for l in raw['lines']), raw['lines'][-5:]
+    st, dash = res['dash']
+    last = dash['last']
+    assert st == 200 and last and last['ok'] and last['colo'] == 'AMS' and last['down_mbps'] > 10, dash['tests']
+    assert dash['icmp'][0]['state'] == 'good' and dash['icmp'][0]['result']['avg'] == 12.0, dash['icmp']
+    assert dash['wan']['ip'] == '203.0.113.7' and dash['usage']['test_bytes'] > 3e7, (dash['wan'], dash['usage'])
+    st, en = res['energy']
+    assert st == 200 and en['energy']['today_wh'] > 0 and en['usage']['down'] > 0, en
+    st, lg = res['slog']
+    assert st == 200 and lg['outages'] and lg['outages'][0]['cause'] == 'obstructed', lg
+    assert lg['wan'][0]['ip'] == '203.0.113.7', lg['wan']
+    assert res['speed'][0] == 200 and res['debug'][0] == 200 and res['debug_bad'][0] == 400, (res['speed'], res['debug_bad'])
     st, sl = res['starlink']
     assert st == 200 and sl['state'] == 'Connected' and sl['via'].startswith('gRPC-web port'), sl
     assert sl['status']['alerts'] == ['roaming'] and sl['status']['down_bps'] > 1e8 and sl['history']['t'], sl
@@ -342,7 +353,9 @@ def main():
                 '[esp32_hydro]\ndevice_id = 1\ntemperature_service = yes\n'
                 '[fridge]\nmac = %s\npoll_interval = 10\n'
                 '[web]\npassword = %s\nopen_firewall = no\n'
-                '[starlink]\nhost = 127.0.0.1\nport = %d\ninterval = 2\n' % (FRIDGE_MAC, web['password'], dish_port))
+                '[starlink]\nhost = 127.0.0.1\nport = %d\ninterval = 2\nhistory_interval = 10\nicmp_interval = 5\n'
+                'icmp_targets = Local=127.0.0.1\ntest_server = http://127.0.0.1:%d\nwan_url = http://127.0.0.1:%d/cdn-cgi/trace\n'
+                % (FRIDGE_MAC, web['password'], dish_port, dish_port, dish_port))
     # folders the page looks at: services, logs, dbus-serialbattery, fake svc/svstat
     shutil.copytree(os.path.join(DRIVERS, '..', 'etc', 'init.d'), os.path.join(W, 'init.d'))
     for d in ('service', 'log/fridge', 'sb', 'bin'):
@@ -350,7 +363,8 @@ def main():
     for name in ('fridge', 'mopeka_standard', 'esp32_hydro', 'web_ui'):
         os.symlink(os.path.join(W, 'init.d', name), os.path.join(W, 'service', name))
     web['calls'] = os.path.join(W, 'calls.log')
-    for name, body in (('svc', 'echo "svc $@" >> %s' % web['calls']),
+    for name, body in (('ping', 'echo "2 packets transmitted, 2 packets received, 0% packet loss"; echo "round-trip min/avg/max = 10.0/12.0/14.0 ms"'),
+                       ('svc', 'echo "svc $@" >> %s' % web['calls']),
                        ('svstat', 'for a in "$@"; do echo "$a: up (pid 99) 12 seconds"; done')):
         path = os.path.join(W, 'bin', name)
         with open(path, 'w') as f:
@@ -373,7 +387,7 @@ def main():
                                   env=dict(env, VELIB=velib)))
     procs.append(subprocess.Popen(
         [sys.executable, os.path.join(DRIVERS, 'web_ui.py'), '--config', cfg, '--port', str(web['port']),
-         '--bind', '127.0.0.1', '--no-firewall', '--sample-s', '1', '--init-dir', os.path.join(W, 'init.d'),
+         '--bind', '127.0.0.1', '--no-firewall', '--sample-s', '1', '--state-dir', os.path.join(W, 'state'), '--init-dir', os.path.join(W, 'init.d'),
          '--service-dir', os.path.join(W, 'service'), '--log-dir', os.path.join(W, 'log'),
          '--rc-local', os.path.join(W, 'rc.local'), '--serialbattery-dir', os.path.join(W, 'sb')],
         env=dict(env, PATH=os.path.join(W, 'bin') + os.pathsep + env['PATH'])))
@@ -458,7 +472,13 @@ def main():
             http_call('sb_get', 'GET', '/api/serialbattery', headers=auth)
             http_call('sb_save', 'POST', '/api/serialbattery',
                       {'s.MAX_BATTERY_CHARGE_CURRENT': '40', 'restart': '1'}, dict(auth, **csrf))
-            time.sleep(3)                                  # the page asks the dish every 2 s
+            http_call('speed', 'POST', '/api/starlink_test', {}, dict(auth, **csrf))
+            time.sleep(14)                                 # a speed test, two history reads, the ping tiles
+            http_call('dash', 'GET', '/api/starlink_dashboard', headers=auth)
+            http_call('energy', 'GET', '/api/starlink_energy', headers=auth)
+            http_call('slog', 'GET', '/api/starlink_log', headers=auth)
+            http_call('debug', 'POST', '/api/debug_start', {'tool': 'ping', 'target': '127.0.0.1'}, dict(auth, **csrf))
+            http_call('debug_bad', 'POST', '/api/debug_start', {'tool': 'ping', 'target': '-c 1; rm'}, dict(auth, **csrf))
             http_call('starlink', 'GET', '/api/starlink', headers=auth)
             http_call('raw_gas', 'GET', '/api/rawlog?source=gas', headers=auth)
             http_call('raw_fridge', 'GET', '/api/rawlog?source=fridge', headers=auth)
@@ -505,10 +525,25 @@ def main():
     GLib.timeout_add_seconds(9, check)
     loop.run()
 
+    # a fridge poll may be in progress right now (the scanners pause for it): give them time to resume
+    ctx = GLib.MainContext.default()
+    resume_by = time.time() + 12
+    while len(adapter.sessions) < 3 and time.time() < resume_by:
+        while ctx.iteration(False):
+            pass
+        time.sleep(0.05)
+    sessions_running = set(adapter.sessions)          # before the drivers stop their scans on the way out
     # SIGTERM -> graceful shutdown
     for p in procs:
         p.terminate()
-    codes = [p.wait(10) for p in procs]
+    # keep serving the fake BlueZ while the drivers shut down: one may be in the middle of a call to it
+    ctx = GLib.MainContext.default()
+    deadline = time.time() + 15
+    while time.time() < deadline and any(p.poll() is None for p in procs):
+        while ctx.iteration(False):
+            pass
+        time.sleep(0.05)
+    codes = [p.wait(1) for p in procs]
     del names
 
     for k, v in sorted(result.items()):
@@ -516,7 +551,7 @@ def main():
                   for p, x in v.items()} if isinstance(v, dict) else v)
     print('fridge connects=%d (rejected while scanning: %d) disconnects=%d, adapter stops=%d, '
           'sessions now=%d' % (fridge_dev.connects, fridge_dev.busy_rejects,
-                               fridge_dev.disconnects, adapter.stops, len(adapter.sessions)))
+                               fridge_dev.disconnects, adapter.stops, len(sessions_running)))
 
     mt = result.get('mopeka_temp')
     assert mt and mt['/Temperature'] == 19.0 and mt['/Connected'] == 1 and mt['/TemperatureType'] == 4, mt
@@ -536,7 +571,7 @@ def main():
     # drivers must have paused for it, and everyone resumed afterwards
     assert fridge_dev.disconnects >= 1 and fridge_dev.connects >= 1, fridge_dev.connects
     assert adapter.stops >= 3, 'not all drivers paused discovery: %d' % adapter.stops
-    assert len(adapter.sessions) == 3, 'discovery not resumed: %r' % adapter.sessions
+    assert len(sessions_running) == 3, 'discovery not resumed: %r' % sessions_running
     # GUI control: the commands reached the fridge and its read-back status
     # shows the new values
     c = result.get('control')

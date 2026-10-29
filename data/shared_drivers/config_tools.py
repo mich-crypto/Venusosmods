@@ -247,16 +247,55 @@ SCHEMA = {
         'presets': [],
     },
     'starlink': {
-        'title': 'Starlink dish',
+        'title': 'Starlink',
         'fields': [
-            F('enabled', 'bool', 'Read the dish', 'Shows the Starlink tab. Turn off if you have no dish.',
+            F('enabled', 'bool', 'Read the dish', 'Shows the Starlink tabs. Turn off if you have no dish.',
               options=YES_NO, default='yes'),
             F('host', 'text', 'Dish address', 'Usually 192.168.100.1; the Pi must be able to reach it.',
               default='192.168.100.1'),
-            F('interval', 'int', 'Read every', 'Seconds between readings.', unit='s', min=2, max=300,
-              default='5'),
-            F('port', 'int', 'gRPC-web port', 'Normally 9201.', min=1, max=65535, advanced=True,
-              default='9201'),
+            F('speedtest_interval', 'int', 'Speed test every', '0 = only when you press the button. Each test moves about '
+              '33 MB, so 30 minutes is roughly 1.6 GB a day.', unit='min', min=0, max=1440, default='0',
+              presets=[0, 30, 60, 360, 1440]),
+            F('icmp_targets', 'text', 'Ping targets', 'Name=address pairs separated by commas, up to 8. Default: '
+              'Cloudflare=1.1.1.1, Google=8.8.8.8, Quad9=9.9.9.9, Dish=192.168.100.1. Add the Starlink gateway as '
+              'Gateway=100.64.0.1.', default=''),
+            F('cycle_day', 'int', 'Billing cycle starts on day', 'For the data-use totals.', min=1, max=28, default='1'),
+            F('cap_gb', 'float', 'Data cap', '0 = no cap bar.', unit='GB', min=0, max=100000, default='0'),
+            F('price_per_kwh', 'float', 'Electricity price per kWh', '0 hides the cost.', min=0, max=100, default='0'),
+            F('currency', 'text', 'Currency label', '', default='EUR'),
+            F('wan_check', 'bool', 'Record the public IP address', 'Checks every 5 minutes through Cloudflare.',
+              options=YES_NO, default='yes'),
+            F('interval', 'int', 'Read the dish every', 'Seconds between live readings.', unit='s', min=2, max=300,
+              advanced=True, default='5'),
+            F('history_interval', 'int', 'Read the dish history every', 'Energy, data use and outages come from it.',
+              unit='s', min=10, max=600, advanced=True, default='60'),
+            F('icmp_interval', 'int', 'Ping every', '', unit='s', min=5, max=3600, advanced=True, default='30'),
+            F('icmp_good_ms', 'int', 'Ping is good up to', '', unit='ms', min=1, max=1000, advanced=True, default='40'),
+            F('icmp_warn_ms', 'int', 'Ping is slow up to', '', unit='ms', min=1, max=5000, advanced=True, default='100'),
+            F('speedtest_down_mb', 'int', 'Download test size', '', unit='MB', min=1, max=200, advanced=True, default='25'),
+            F('speedtest_up_mb', 'int', 'Upload test size', '', unit='MB', min=1, max=100, advanced=True, default='8'),
+            F('min_sane_mbps', 'float', 'Retry below', 'A speed test under this is run once more.', unit='Mbps', min=0,
+              max=1000, advanced=True, default='5'),
+            F('port', 'int', 'gRPC-web port', 'Normally 9201.', min=1, max=65535, advanced=True, default='9201'),
+        ],
+        'presets': [],
+    },
+    'telegram': {
+        'title': 'Telegram alerts',
+        'fields': [
+            F('enabled', 'bool', 'Send alerts', 'Create a bot with @BotFather, send it a message, then enter its token '
+              'and your chat ID.', options=YES_NO, default='no'),
+            F('token', 'secret', 'Bot token', ''),
+            F('chat_id', 'text', 'Chat ID', ''),
+            F('alert_offline', 'bool', 'Dish offline and back', '', options=YES_NO, default='yes'),
+            F('alert_drop', 'bool', 'High packet loss', '', options=YES_NO, default='yes'),
+            F('alert_hardware', 'bool', 'Dish hardware alerts', 'Thermal throttle, motors stuck, water detected ...',
+              options=YES_NO, default='yes'),
+            F('alert_wan', 'bool', 'Public IP changed', '', options=YES_NO, default='yes'),
+            F('alert_test', 'bool', 'Speed test failed', '', options=YES_NO, default='yes'),
+            F('offline_min', 'int', 'Offline after', 'Minutes without an answer from the dish.', unit='min', min=1,
+              max=1440, advanced=True, default='5'),
+            F('drop_pct', 'float', 'Packet loss alert at', '', unit='%', min=0.1, max=100, advanced=True, default='5'),
         ],
         'presets': [],
     },
@@ -280,7 +319,7 @@ SCHEMA = {
 def kind_of(section, values=None):
     """Which driver a config section belongs to, by its `driver =` key or its name."""
     name = ((values or {}).get('driver') or section).lower()
-    for prefix in ('mopeka', 'esp32', 'fridge', 'starlink', 'web'):
+    for prefix in ('mopeka', 'esp32', 'fridge', 'starlink', 'telegram', 'web'):
         if name.startswith(prefix):
             return prefix
     return None

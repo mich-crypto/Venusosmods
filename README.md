@@ -34,6 +34,8 @@ data/                              -> copied to /data on the Pi
     fridge_venus.py                driver: fridge  -> temperature per zone
     web_ui.py + web/index.html     settings page on port 8088 (drivers + dbus-serialbattery)
     rawlog.py                      rolling log of the raw sensor bytes (shown on the Raw data tab)
+    starlink_hub.py                polls the dish, ping, speed tests, WAN IP, Telegram alerts
+    netmon.py                      energy, data use, outage and test bookkeeping (JSON store)
     starlink.py                    Starlink dish status (gRPC-web, hand-made protobuf reader)
     battery_debug.py               battery history for the graphs (cells, current, temperatures)
     config_tools.py                config.ini parsing, validation and safe writing for the page

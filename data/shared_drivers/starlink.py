@@ -55,6 +55,11 @@ def status_request():
     return frame(field_bytes(1004, b''))
 
 
+def history_request():
+    """gRPC message: Request { get_history = 1007 { } }."""
+    return frame(field_bytes(1007, b''))
+
+
 def frame(message):
     return b'\x00' + struct.pack('>I', len(message)) + message
 
@@ -195,6 +200,9 @@ def decode_status(message):
                       enumerate(('cady', 'scp', 'l1l2', 'xphy', 'aap', 'rf'), 1)) if ready else None,
         'update': UPDATE_STATES.get(_int(st, 1021) or 0, 'unknown') if _first(st, 1021) is not None else None,
         'stow_requested': bool(_int(st, 1010)),
+        # RateLimitReason: 0 = none; the dish names POLICY_LIMIT, OVERAGE_LIMIT, LOW_SPEED_POLICY_LIMIT
+        'throttled_down': _int(st, 1044) or 0,
+        'throttled_up': _int(st, 1045) or 0,
     }
     if outage is not None:
         out['state'] = 'Outage: ' + out['outage']['cause']
@@ -216,6 +224,65 @@ def decode_reply(data):
     if not messages:
         raise ValueError('empty reply')
     return decode_status(messages[0])
+
+
+# ----------------------------------------------------- dish history (1 Hz)
+
+HISTORY_LEN = 900          # the dish keeps the last 900 seconds in a ring buffer
+
+
+def _floats(msg, number):
+    """A repeated float field: packed (one length-delimited blob) or one 32-bit value per entry."""
+    out = []
+    for v in msg.get(number, ()):
+        if isinstance(v, bytes) and len(v) % 4 == 0:
+            out.extend(struct.unpack('<%df' % (len(v) // 4), v))
+    return out
+
+
+def decode_history(message):
+    """Reply message -> {'current', 'down', 'up', 'latency', 'drop', 'power', 'outages'} (arrays of 900 floats)."""
+    resp = parse_message(message)
+    inner = _first(resp, 2006)
+    if not isinstance(inner, bytes):
+        raise ValueError('the reply has no dish history')
+    h = parse_message(inner)
+    outages = []
+    for raw in h.get(1009, ()):
+        o = parse_message(raw) if isinstance(raw, bytes) else {}
+        ts = _int(o, 2)
+        if ts is not None and ts > 2 ** 62:           # int64 sent as an unsigned varint
+            ts -= 2 ** 64
+        outages.append({'cause': OUTAGE_CAUSES.get(_int(o, 1) or 0, 'unknown'), 'start_ns': ts,
+                        'duration_s': (_int(o, 3) or 0) / 1e9, 'switched': bool(_int(o, 4))})
+    return {'current': _int(h, 1) or 0, 'drop': _floats(h, 1001), 'latency': _floats(h, 1002),
+            'down': _floats(h, 1003), 'up': _floats(h, 1004), 'power': _floats(h, 1010), 'outages': outages}
+
+
+def decode_history_reply(data):
+    messages, trailers = split_frames(data)
+    code = trailers.get('grpc-status')
+    if code not in (None, '0'):
+        raise ValueError('the dish answered grpc-status %s %s' % (code, trailers.get('grpc-message', '')))
+    if not messages:
+        raise ValueError('empty reply')
+    return decode_history(messages[0])
+
+
+def new_samples(array, current, last):
+    """
+    The entries of a 900-long ring buffer written since the previous look, oldest first.
+    `current` counts all samples ever written; `last` is the `current` of the previous look
+    (None the first time: then only the newest entry, so a restart never double counts).
+    """
+    n = len(array)
+    if not n:
+        return []
+    if last is None:
+        count = 1
+    else:
+        count = min(max(current - last, 0), n)
+    return [array[k % n] for k in range(current - count, current)]
 
 
 # ------------------------------------------------------------------ history

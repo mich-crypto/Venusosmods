@@ -549,6 +549,8 @@ class VenusPythonTests(unittest.TestCase):
         # not verified on a Venus OS image, but every Victron Python service (MQTT, Modbus,
         # VRM logger) needs it; the diagnostics check that it imports before web_ui is enabled
         'socket',
+        # in the standard library; netmon.py imports it guarded and the diagnostics WARN when it is missing
+        'json',
     }
 
     def test_only_available_modules(self):
