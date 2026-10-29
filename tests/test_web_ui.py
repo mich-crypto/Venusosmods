@@ -402,6 +402,16 @@ class StarlinkApiTests(AppTestCase):
         self.assertTrue(d['available'])                                  # nothing installed yet = unknown version
         self.assertEqual(body_of(self.get('/api/update_log'))['running'], False)
 
+    def test_saving_says_what_was_written_and_never_shows_secrets(self):
+        r = body_of(self.post('/api/driver_config', {'section': 'starlink', 'f.cap_gb': '100'}))
+        self.assertTrue(r['ok'] and r['restarted'])                                  # read once at start-up: a save restarts the page
+        self.assertEqual(r['saved'], {'cap_gb': '100.0'} if r['saved']['cap_gb'] == '100.0' else {'cap_gb': '100'})
+        self.assertIn('cap_gb = 100', self.config_text())
+        r = body_of(self.post('/api/driver_config', {'section': 'telegram', 'f.token': 'SECRET-TOKEN'}))
+        self.assertEqual(r['saved'], {'token': '(hidden)'})
+        self.assertNotIn('SECRET-TOKEN', str(r))
+        self.assertTrue(os.path.exists(self.config + '.bak'))
+
     def test_optional_sections_can_be_created(self):
         d = body_of(self.get('/api/driver_config'))
         self.assertEqual(sorted(s['kind'] for s in d['optional']), ['starlink', 'telegram'])

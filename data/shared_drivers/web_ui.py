@@ -697,12 +697,19 @@ class App(object):
         if problem:
             return jsonr({'ok': False, 'error': 'file would be invalid: ' + problem}, 400)
         ct.write_file(self.driver_config, new)
-        result = {'ok': True, 'message': 'Saved', 'restarted': False}
-        if form.get('restart') == '1':
-            if kind in ('web', 'starlink', 'telegram'):
-                GLib.timeout_add(800, self._restart_self)
-                result.update(restarted=True, message='Saved. This page restarts in a moment.')
-            elif self.restart_service(section):
+        # read it back: what the page says it saved is what is in the file now
+        written = ct.parse_ini(self.read_text(self.driver_config)).get(section, {})
+        saved = dict((k, '(hidden)' if k in secrets else written.get(k.lower())) for k in clean)
+        missing = [k for k, v in clean.items() if v != '' and written.get(k.lower()) is None]
+        if missing:
+            return jsonr({'ok': False, 'error': 'the file does not contain %s after saving: not saved' % ', '.join(missing)}, 500)
+        result = {'ok': True, 'message': 'Saved', 'restarted': False, 'saved': saved}
+        if kind in ('web', 'starlink', 'telegram'):
+            # these are read once at start-up, so a save is only real after the page restarts
+            GLib.timeout_add(800, self._restart_self)
+            result.update(restarted=True, message='Saved. This page restarts in a moment.')
+        elif form.get('restart') == '1':
+            if self.restart_service(section):
                 result.update(restarted=True, message='Saved and restarted')
             else:
                 result['message'] = 'Saved (the service is not enabled, nothing to restart)'

@@ -76,6 +76,12 @@ await page.locator('#toast', { hasText: 'Saved' }).waitFor();
 check(true, 'gas settings saved');
 await page.locator('#savebar').waitFor({ state: 'hidden' });
 await page.waitForTimeout(600);                                   // the form is redrawn after a save
+// "the app says 73 %": the page works out "Reading when full" and saves it
+await page.getByRole('button', { name: 'Match it and save' }).click();
+await page.locator('#toast', { hasText: 'full_mm =' }).waitFor();
+check(true, 'matching the level to 73 % saves a new "Reading when full" and says so');
+await page.locator('#savebar').waitFor({ state: 'hidden' });
+await page.waitForTimeout(600);
 // a wrong value is refused and marked
 await capacity.fill('-5');
 await page.getByRole('button', { name: 'Save', exact: true }).click();

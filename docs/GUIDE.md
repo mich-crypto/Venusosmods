@@ -276,7 +276,12 @@ svc -t /service/mopeka_standard          # then press sync on the new sensor
    winter gas), around 0.3–0.4 for summer propane/butane mixes (e.g.
    southern Europe). This corrects the speed of sound in the liquid.
 5. `capacity_l`: liquid volume, e.g. 11 kg ≈ 27 L, 5 kg ≈ 12 L.
-6. `svc -t /service/mopeka_standard` restarts the driver after changes.
+6. To make the level match the Mopeka app at this moment, open the settings
+   page → *Gas*, type the percentage the app shows next to *Right now the
+   Mopeka app says* and press *Match it and save*. The page works out
+   "Reading when full" from the current sensor reading and your bottle curve
+   and saves it. Redo it right after a refill for the best accuracy.
+   `svc -t /service/mopeka_standard` restarts the driver after changes.
 7. The sensor's temperature is also published as its own temperature sensor,
    `com.victronenergy.temperature.mopeka_standard_temp` ("Gas bottle
    temperature", type outdoor), so it shows up with the other environment
@@ -459,6 +464,9 @@ Each save keeps the previous file as `config.ini.bak` next to it.
 ## Part 9 – Updates, troubleshooting, removal
 
 ### Updating the drivers
+Your settings are not touched by an update: `config.ini` is not in the
+download, and `update.sh` also keeps a copy as `config.ini.pre-update`. Saves
+from the settings page keep the previous version as `config.ini.bak`.
 On the Pi (from Termius too):
 ```sh
 sh /data/shared_drivers/update.sh

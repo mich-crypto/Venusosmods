@@ -21,7 +21,11 @@ fi
 tar -xzf "$TMP/src.tar.gz" -C "$TMP"
 SRC=$(ls -d "$TMP"/Venusosmods-*)
 
+# the settings are not in the download, but keep a copy next to them in case anything goes wrong
+[ -f /data/shared_drivers/config.ini ] && cp -p /data/shared_drivers/config.ini /data/shared_drivers/config.ini.pre-update
+
 cp -r "$SRC/data/shared_drivers" "$SRC/data/etc" /data/
+[ -f /data/shared_drivers/config.ini ] || { [ -f /data/shared_drivers/config.ini.pre-update ] && cp -p /data/shared_drivers/config.ini.pre-update /data/shared_drivers/config.ini; }
 chmod +x /data/shared_drivers/*.sh /data/shared_drivers/*.py \
          /data/shared_drivers/diagnostics/*.py /data/etc/init.d/*/run /data/etc/init.d/*/log/run
 rm -rf "$TMP"

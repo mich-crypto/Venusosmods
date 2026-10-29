@@ -502,11 +502,14 @@ async function saveForms(restart) {
         if (f) { f.input.classList.add('bad'); clear(f.err).append(msg); }
       }
       toast(r.data.error || 'Not saved', true);
-    } else lastMessage = r.data.message;
+    } else {
+      const shown = Object.entries(r.data.saved || {}).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => k + ' = ' + v).join(', ');
+      lastMessage = r.data.message + (shown ? ' (' + shown + ')' : '');
+    }
   }
   if (allOk) {
     toast(lastMessage || 'Saved');
-    if (S.tab === 'water' || S.tab === 'gas' || S.tab === 'fridge') {
+    if (S.tab === 'water' || S.tab === 'gas' || S.tab === 'fridge' || (S.tab === 'starlink' && S.slView === 'settings')) {
       const d = await api('/api/driver_config'); if (d.ok) S.driver = d.data;
       await refreshState(); await renderTab();
     }
@@ -551,18 +554,43 @@ async function tabDriver(kind) {
 function livePanel(kind, dev, form) {
   const v = dev.values, box = h('div', { class: 'banner' });
   if (kind === 'mopeka') {
-    const dist = v['/Mopeka/DistanceMm'];
+    const dist = v['/Mopeka/DistanceMm'], pctInput = h('input', { type: 'number', value: '73', min: 1, max: 100, style: 'width:80px;min-height:34px' });
     box.append(h('div', {}, h('b', {}, 'Now: '), num(v['/Level'], 0) + ' % · sensor reads ' + num(dist, 0) + ' mm · echo quality ' + (v['/Mopeka/EchoQuality'] ?? '–')),
       h('div', { class: 'muted' }, 'Calibrate: with an empty bottle press "Use as empty", right after a refill press "Use as full", then save.'),
       h('div', { class: 'row', style: 'margin-top:8px' },
         h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => setField(form, 'empty_mm', Math.round(dist)) }, 'Use as empty (' + num(dist, 0) + ' mm)'),
-        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => setField(form, 'full_mm', Math.round(dist)) }, 'Use as full (' + num(dist, 0) + ' mm)')));
+        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => setField(form, 'full_mm', Math.round(dist)) }, 'Use as full (' + num(dist, 0) + ' mm)')),
+      h('div', { class: 'row', style: 'margin-top:8px' }, h('span', { class: 'muted' }, 'Right now the Mopeka app says'), pctInput, '%',
+        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => calibrateTo(form, parseFloat(pctInput.value), dist) }, 'Match it and save')));
   } else if (kind === 'fridge') {
     box.append(h('b', {}, 'Now: '), num(v['/Temperature'], 1) + ' °C · set to ' + num(v['/Fridge/TargetTemperature'], 0) + ' °C · supply ' + num(v['/Fridge/SupplyVoltage'], 1) + ' V');
   } else {
     box.append(h('b', {}, 'Now: '), num(v['/Level'], 0) + ' % · ' + num(v['/Remaining'] * 1000, 1) + ' L · height ' + num(v['/Hydro/HeightMm'], 0) + ' mm');
   }
   return box;
+}
+
+// inverse of the "fraction:percent" bottle curve (no curve = straight line): how far up the bottle a level is
+function curveFraction(text, pct) {
+  const pts = String(text || '').split(',').map(p => p.split(':').map(Number)).filter(p => p.length === 2 && !p.some(isNaN)).sort((a, b) => a[0] - b[0]);
+  if (pts.length < 2) return pct / 100;
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    if (pct >= y0 && pct <= y1 && y1 > y0) return x0 + (x1 - x0) * (pct - y0) / (y1 - y0);
+  }
+  return null;
+}
+
+// make the level read `pct` at the current sensor distance by choosing "Reading when full"
+async function calibrateTo(form, pct, dist) {
+  const f = form.fields;
+  if (f.level_table && f.level_table.input.value.trim()) { toast('A distance table is set, which overrides this. Clear "Distance table" first.', true); return; }
+  const raw = f.empty_mm.input.value.trim(), empty = raw === '' ? 38 : parseFloat(raw);
+  const x = curveFraction(f.level_curve ? f.level_curve.input.value : '', pct);
+  if (!(pct > 0 && pct <= 100) || x === null || !(x > 0.01)) { toast('Cannot work that out from ' + pct + ' %', true); return; }
+  if (!(dist > empty)) { toast('The sensor reads ' + dist + ' mm, which is not above "Reading when empty" (' + empty + ' mm)', true); return; }
+  setField(form, 'full_mm', Math.round(empty + (dist - empty) / x));
+  await saveForms(true);
 }
 
 function setField(form, key, value) {
@@ -1624,7 +1652,7 @@ async function slSettings(box) {
     if (kind === 'telegram') card.append(h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: async () => { const x = await api('/api/telegram_test', {}); toast(x.ok ? x.data.message : x.data.error, !x.ok); } }, 'Send a test message')));
     out.append(card);
   }
-  out.append(h('div', { class: 'muted' }, 'Saving restarts this page (a few seconds). Settings that are not in config.ini use the defaults shown.'));
+  out.append(h('div', { class: 'muted' }, 'Saving restarts this page (a few seconds): these settings are read when it starts. Settings that are not in config.ini use the defaults shown.'));
 }
 
 async function updatePanel() {
