@@ -70,7 +70,7 @@ await page.locator('select').first().selectOption({ index: 1 });          // bot
 await page.getByText('Preset applied').waitFor();
 await shot(page, '04-gas-edited');
 await page.getByRole('button', { name: 'Save', exact: true }).click();
-await page.getByText('Saved', { exact: false }).first().waitFor();
+await page.locator('#toast', { hasText: 'Saved' }).waitFor();
 check(true, 'gas settings saved');
 await page.locator('#savebar').waitFor({ state: 'hidden' });
 await page.waitForTimeout(600);                                   // the form is redrawn after a save
@@ -98,6 +98,27 @@ await shot(page, '06-water');
 
 // battery
 await tab(page, 'Battery');
+await page.getByText('What I notice').waitFor();
+check((await page.locator('.tile').count()) >= 8, 'battery tiles are shown');
+check((await page.locator('.chart svg rect').count()) >= 16, 'one bar per cell (16)');
+await page.waitForTimeout(8000);                                  // let the Pi record a few points
+await page.getByRole('button', { name: '1 hour' }).click();
+await page.getByText('Cell 7 is the lowest cell').waitFor();
+check(true, 'findings name the weak cell');
+check((await page.locator('.chart path[stroke]').count()) >= 10, 'graphs are drawn');
+await page.locator('.chart .legend button', { hasText: 'Cell 7' }).first().click();
+check((await page.locator('.chart .legend button.off').count()) >= 1, 'legend hides a cell line');
+const cellsChart = page.locator('.chart', { hasText: 'Cell voltages' }).first();
+await cellsChart.scrollIntoViewIfNeeded();
+await cellsChart.locator('svg rect').first().hover();
+check(await cellsChart.locator('.tt').isVisible(), 'hover shows a tooltip');
+await shot(page, '07a-battery-live');
+await page.getByRole('button', { name: 'Limits & curves' }).click();
+await page.getByText('Cell voltage limits').waitFor();
+check((await page.locator('.chart svg path').count()) >= 2, 'limit curves drawn');
+await page.getByText('What you changed from the defaults').waitFor();
+await shot(page, '07b-battery-limits');
+await page.getByRole('button', { name: 'All settings' }).click();
 await page.getByText('Most used settings').waitFor();
 check((await page.locator('.entry').count()) >= 15, 'all documented settings are listed');
 await shot(page, '07-battery');
@@ -111,7 +132,7 @@ check((await page.getByText('2 unsaved changes').count()) === 1, 'two changes co
 await page.locator('.entry .link', { hasText: 'About this setting' }).first().click();
 await shot(page, '08-battery-edited');
 await page.getByRole('button', { name: 'Save', exact: true }).click();
-await page.getByText('Saved', { exact: false }).first().waitFor();
+await page.locator('#toast', { hasText: 'Saved' }).waitFor();
 check(true, 'battery settings saved');
 // bluetooth list widget -> needs a reboot
 await page.getByRole('button', { name: 'Add a BMS' }).click();
@@ -140,6 +161,15 @@ await page.goto(base + '/');
 await page.getByText('Unlocked').waitFor();
 await shot(page, '11-phone-overview');
 await tab(page, 'Battery');
+await page.getByText('What I notice').waitFor();
+await page.waitForTimeout(3000);
+await shot(page, '12a-phone-live');
+check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scrolling on the live view');
+await page.getByRole('button', { name: 'Limits & curves' }).click();
+await page.getByText('Cell voltage limits').waitFor();
+await shot(page, '12b-phone-limits');
+check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scrolling on the limits view');
+await page.getByRole('button', { name: 'All settings' }).click();
 await page.getByText('Most used settings').waitFor();
 check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scrolling on a phone');
 await shot(page, '12-phone-battery');

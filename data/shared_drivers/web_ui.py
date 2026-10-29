@@ -35,6 +35,7 @@ import dbus  # noqa: E402
 from dbus.mainloop.glib import DBusGMainLoop  # noqa: E402
 from gi.repository import GLib  # noqa: E402
 
+import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
 
 log = logging.getLogger('web_ui')
@@ -227,6 +228,7 @@ class App(object):
         self.html = opts.get('html', os.path.join(HERE, 'web', 'index.html'))
         self.failures = {}                  # ip -> [count, first time]
         self._bus = None
+        self.recorder = battery_debug.Recorder(interval=opts.get('sample_s', 10))
 
     # ---------------------------------------------------------- plumbing
 
@@ -313,6 +315,7 @@ class App(object):
         handler = {
             'GET /api/driver_config': self.api_driver_config,
             'POST /api/driver_config': self.api_driver_config_save,
+            'GET /api/battery': self.api_battery,
             'GET /api/serialbattery': self.api_serialbattery,
             'POST /api/serialbattery': self.api_serialbattery_save,
             'GET /api/raw': self.api_raw,
@@ -395,6 +398,42 @@ class App(object):
                 batteries.append({'service': name, 'kind': kind,
                                   'values': dict((k, values.get(k)) for k in keep)})
         return ours, batteries
+
+    def battery_names(self):
+        try:
+            return sorted(str(n) for n in self.bus.list_names()
+                          if str(n).startswith('com.victronenergy.battery.'))
+        except dbus.exceptions.DBusException:
+            return []
+
+    def sample_batteries(self):
+        """Timer: remember what every battery reports, for the graphs on the Battery tab."""
+        names = self.battery_names()
+        for name in names:
+            try:
+                self.recorder.add(name, self.dbus_dump(name))
+            except dbus.exceptions.DBusException as e:
+                log.debug('battery %s: %s', name, e)
+        self.recorder.forget_missing(names)
+        return True
+
+    def api_battery(self, req):
+        q = req.query
+        raw = q.get('window', '')
+        window = max(60, min(6 * 3600, int(raw))) if raw.isdigit() else 3600
+        names = self.recorder.services()
+        service = q.get('service') or ''
+        if service not in names:
+            service = names[0] if names else ''
+        batteries = [{'service': n, 'name': (self.recorder.latest[n][1].get('/CustomName') or
+                                             self.recorder.latest[n][1].get('/ProductName') or n)}
+                     for n in names]
+        out = {'ok': True, 'batteries': batteries, 'service': service, 'interval': self.recorder.interval,
+               'window': window}
+        if service:
+            out['info'] = self.recorder.info(service)
+            out['history'] = self.recorder.history(service, window)
+        return jsonr(out)
 
     def venus_version(self):
         try:
@@ -876,6 +915,7 @@ def main():
     ap.add_argument('--port', type=int, default=None)
     ap.add_argument('--bind', default=None)
     ap.add_argument('--no-firewall', action='store_true')
+    ap.add_argument('--sample-s', type=int, default=10, help='seconds between battery samples')
     ap.add_argument('--debug', action='store_true')
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
@@ -894,12 +934,14 @@ def main():
     DBusGMainLoop(set_as_default=True)
     app = App({'driver_config': args.config, 'init_dir': args.init_dir, 'service_dir': args.service_dir,
                'log_dir': args.log_dir, 'rc_local': args.rc_local, 'password': password,
-               'serialbattery_dir': args.serialbattery_dir})
+               'serialbattery_dir': args.serialbattery_dir, 'sample_s': max(1, args.sample_s)})
     server = Server(app, host, port)
     log.info('Settings page on http://%s:%d/', host, server.port)
     if not args.no_firewall and get('open_firewall', 'yes').lower() in ct.TRUE:
         open_firewall(server.port)
 
+    app.sample_batteries()
+    GLib.timeout_add_seconds(app.recorder.interval, app.sample_batteries)
     loop = GLib.MainLoop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, loop.quit)

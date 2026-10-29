@@ -108,6 +108,31 @@ dialog pre { background:var(--code); border-radius:10px; padding:10px; max-heigh
   white-space:pre-wrap; word-break:break-word; }
 .cells { display:flex; align-items:flex-end; gap:3px; height:44px; margin-top:8px; }
 .cells i { flex:1; background:var(--accent); border-radius:3px 3px 0 0; min-height:3px; }
+.pills { display:flex; gap:6px; margin:0 0 14px; flex-wrap:wrap; }
+.pills button { background:var(--soft); border:1px solid var(--line); border-radius:99px; padding:7px 14px; cursor:pointer; }
+.pills button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-bottom:12px; }
+.tile { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 14px; }
+.tile .k { color:var(--muted); font-size:.8rem; } .tile .v { font-size:1.45rem; font-weight:700; line-height:1.2; }
+.tile .v small { font-size:.85rem; font-weight:500; color:var(--muted); } .tile .s { color:var(--muted); font-size:.82rem; }
+.find { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line); }
+.find:last-child { border-bottom:0; } .dot { flex:none; width:12px; height:12px; border-radius:50%; margin-top:5px; background:var(--muted); }
+.dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); } .dot.bad { background:var(--bad); }
+.chart { position:relative; } .chart svg { display:block; width:100%; }
+.chart .legend { display:flex; gap:4px 10px; flex-wrap:wrap; margin:4px 0 2px; font-size:.8rem; }
+.chart .legend button { background:none; border:0; padding:2px 4px; cursor:pointer; color:var(--ink); display:inline-flex; gap:5px; align-items:center; }
+.chart .legend button.off { opacity:.35; text-decoration:line-through; }
+.chart .legend i { width:10px; height:10px; border-radius:3px; display:inline-block; }
+.chart .tt { position:absolute; top:0; pointer-events:none; background:var(--card); border:1px solid var(--line);
+  border-radius:8px; padding:6px 8px; font-size:.78rem; box-shadow:0 2px 8px rgba(0,0,0,.2); white-space:nowrap; z-index:2; }
+.chart text, .gauge text { fill:var(--muted); font-size:11px; }
+.chart .grid line, .gauge .grid line { stroke:var(--line); }
+.two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+.two .card { margin:0; }
+.pill-on { background:var(--ok-bg); color:var(--ok); } .pill-off { background:var(--bad-bg); color:var(--bad); }
+td code { overflow-wrap:anywhere; }
+table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-size:.78rem; }
+@media (max-width:600px) { .tile .v { font-size:1.25rem; } .two { grid-template-columns:1fr; } }
 @media (max-width:600px) { .big { font-size:1.7rem; } main { padding:12px; } }
 </style>
 </head>
@@ -208,6 +233,7 @@ function renderLock() {
 async function selectTab(id) {
   S.tab = id;
   stopLogs();
+  stopBattery();
   hideSaveBar();
   renderTabs();
   await renderTab();
@@ -632,7 +658,7 @@ function sbEntry(e, ro) {
   return row;
 }
 
-async function tabBattery(main) {
+async function tabBatterySettings(main) {
   S.sbCtl = {};
   if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
   const r = await api('/api/serialbattery');
@@ -679,10 +705,494 @@ async function tabBattery(main) {
     });
   };
   search.addEventListener('input', filter); onlyMod.addEventListener('change', filter);
+  if (S.sbSearch) { search.value = S.sbSearch; S.sbSearch = ''; filter(); }
   if (Object.keys(view.unknown || {}).length) {
     main.append(h('div', { class: 'banner' }, 'Settings in config.ini this page does not know (kept as they are): ' + Object.keys(view.unknown).join(', ')));
   }
   updateSbBar();
+}
+
+// ------------------------------------------------- battery: drawing helpers
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svg(tag, attrs, ...kids) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+const cellColor = (i, n) => 'hsl(' + Math.round(i * 360 / Math.max(n, 1)) + ',65%,50%)';
+
+function niceTicks(lo, hi, count) {
+  if (!(hi > lo)) hi = lo + 1;
+  const raw = (hi - lo) / count, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw - 1e-12);
+  const out = [];
+  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  const dec = Number.isInteger(+step.toFixed(8)) ? 0 : Math.max(1, Math.ceil(-Math.log10(step)));
+  return { ticks: out, dec };
+}
+
+// draws into `box` at its real width, again whenever the width changes
+function sized(box, draw) {
+  let last = 0;
+  const go = () => { const w = Math.floor(box.clientWidth); if (w > 40 && w !== last) { last = w; draw(w); } };
+  new ResizeObserver(go).observe(box);
+  return go;
+}
+
+const clock = (t, withSeconds) => {
+  const d = new Date(t * 1000), p = n => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + (withSeconds ? ':' + p(d.getSeconds()) : '');
+};
+
+// A time chart. o = { title, t, series:[{id,name,color,vals,dash}], unit, dec, area, include:[], lines:[{y,label,color}], height }
+function timeChart(o) {
+  S.hidden = S.hidden || {};
+  const hidden = S.hidden[o.title] = S.hidden[o.title] || {};
+  const box = h('div', { class: 'chart' }), legend = h('div', { class: 'legend' }), holder = h('div', {});
+  const tip = h('div', { class: 'tt', hidden: true });
+  const shown = () => o.series.filter(s => !hidden[s.id]);
+  if (o.series.length > 1) {
+    o.series.forEach(s => {
+      const b = h('button', { type: 'button', class: hidden[s.id] ? 'off' : '', onclick: () => { hidden[s.id] = !hidden[s.id]; b.className = hidden[s.id] ? 'off' : ''; redraw(); } },
+        h('i', { style: 'background:' + s.color }), s.name);
+      legend.append(b);
+    });
+  }
+  box.append(h('h3', { style: 'margin:0' }, o.title, o.note ? h('span', { class: 'muted', style: 'font-weight:400' }, ' ' + o.note) : null), legend, holder, tip);
+  let width = 0;
+  const H = o.height || 190, L = 48, R = 10, T = 8, B = 22;
+  function redraw() {
+    if (!width) return;
+    clear(holder);
+    const t = o.t, vis = shown();
+    const root = svg('svg', { width, height: H, viewBox: '0 0 ' + width + ' ' + H });
+    holder.append(root);
+    if (t.length < 2) { root.append(svg('text', { x: width / 2, y: H / 2, 'text-anchor': 'middle' }, 'Collecting data… (one point every ' + (S.bInterval || 10) + ' s)')); return; }
+    let lo = Infinity, hi = -Infinity;
+    for (const s of vis) for (const v of s.vals) if (v !== null && v !== undefined) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    for (const v of (o.include || [])) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (!isFinite(lo)) { root.append(svg('text', { x: width / 2, y: H / 2, 'text-anchor': 'middle' }, 'no data')); return; }
+    const pad = (hi - lo) * 0.1 || (Math.abs(hi) * 0.02) || 1;
+    if (o.min !== undefined) lo = o.min; else lo -= pad;
+    if (o.max !== undefined) hi = o.max; else hi += pad;
+    const yt = niceTicks(lo, hi, 4);
+    const t0 = t[0], t1 = t[t.length - 1], span = Math.max(1, t1 - t0);
+    const X = x => L + (x - t0) / span * (width - L - R), Y = y => T + (1 - (y - lo) / (hi - lo)) * (H - T - B);
+    const grid = svg('g', { class: 'grid' });
+    yt.ticks.forEach(v => { grid.append(svg('line', { x1: L, x2: width - R, y1: Y(v), y2: Y(v) })); root.append(svg('text', { x: L - 6, y: Y(v) + 4, 'text-anchor': 'end' }, v.toFixed(yt.dec))); });
+    root.prepend(grid);
+    const nx = width < 420 ? 3 : 5;
+    for (let k = 0; k <= nx; k++) {
+      const tt = t0 + span * k / nx;
+      root.append(svg('text', { x: X(tt), y: H - 6, 'text-anchor': k === 0 ? 'start' : (k === nx ? 'end' : 'middle') }, clock(tt, span < 600)));
+    }
+    for (const ln of (o.lines || [])) {
+      if (ln.y < lo || ln.y > hi) continue;
+      root.append(svg('line', { x1: L, x2: width - R, y1: Y(ln.y), y2: Y(ln.y), stroke: ln.color || 'var(--warn)', 'stroke-dasharray': '5 4', 'stroke-width': 1 }),
+        svg('text', { x: width - R - 2, y: Y(ln.y) - 3, 'text-anchor': 'end', style: 'fill:' + (ln.color || 'var(--warn)') }, ln.label));
+    }
+    if (o.zero !== false && lo < 0 && hi > 0) root.append(svg('line', { x1: L, x2: width - R, y1: Y(0), y2: Y(0), stroke: 'var(--muted)', 'stroke-width': 1 }));
+    for (const s of vis) {
+      let d = '', pen = false, first = null, lastx = null;
+      s.vals.forEach((v, i) => {
+        if (v === null || v === undefined) { pen = false; return; }
+        d += (pen ? 'L' : 'M') + X(t[i]).toFixed(1) + ' ' + Y(v).toFixed(1);
+        pen = true; if (first === null) first = X(t[i]); lastx = X(t[i]);
+      });
+      if (!d) continue;
+      if (o.area && vis.length === 1) root.append(svg('path', { d: d + 'L' + lastx.toFixed(1) + ' ' + Y(Math.max(lo, Math.min(hi, 0))).toFixed(1) + 'L' + first.toFixed(1) + ' ' + Y(Math.max(lo, Math.min(hi, 0))).toFixed(1) + 'Z', fill: s.color, opacity: 0.14 }));
+      root.append(svg('path', { d, fill: 'none', stroke: s.color, 'stroke-width': s.w || 1.6, 'stroke-linejoin': 'round', 'stroke-dasharray': s.dash || null }));
+    }
+    const cursor = svg('line', { y1: T, y2: H - B, stroke: 'var(--muted)', 'stroke-width': 1, visibility: 'hidden' });
+    const overlay = svg('rect', { x: L, y: T, width: width - L - R, height: H - T - B, fill: 'transparent', style: 'touch-action:pan-y' });
+    root.append(cursor, overlay);
+    const move = ev => {
+      const r = root.getBoundingClientRect(), px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+      const target = t0 + (px - L) / (width - L - R) * span;
+      let best = 0; for (let i = 1; i < t.length; i++) if (Math.abs(t[i] - target) < Math.abs(t[best] - target)) best = i;
+      cursor.setAttribute('x1', X(t[best])); cursor.setAttribute('x2', X(t[best])); cursor.setAttribute('visibility', 'visible');
+      clear(tip).hidden = false;
+      tip.append(h('b', {}, clock(t[best], true)));
+      const rows = vis.filter(s => s.vals[best] !== null && s.vals[best] !== undefined);
+      (rows.length > 12 ? rows.slice().sort((a, b) => a.vals[best] - b.vals[best]).filter((s, i, arr) => i < 3 || i >= arr.length - 3) : rows).forEach(s =>
+        tip.append(h('div', {}, h('i', { style: 'display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' + s.color }), s.name + ': ' + s.vals[best].toFixed(o.dec === undefined ? yt.dec : o.dec) + (o.unit ? ' ' + o.unit : ''))));
+      const left = X(t[best]) + 12 + tip.offsetWidth > width ? X(t[best]) - 12 - tip.offsetWidth : X(t[best]) + 12;
+      tip.style.left = Math.max(0, left) + 'px'; tip.style.top = (T + 24) + 'px';
+    };
+    const leave = () => { cursor.setAttribute('visibility', 'hidden'); tip.hidden = true; };
+    overlay.addEventListener('pointermove', move); overlay.addEventListener('pointerleave', leave);
+    overlay.addEventListener('touchstart', move, { passive: true }); overlay.addEventListener('touchmove', move, { passive: true });
+    overlay.addEventListener('touchend', leave);
+  }
+  sized(box, w => { width = w; redraw(); });
+  return box;
+}
+
+function ring(pct, color) {
+  const r = 38, c = 2 * Math.PI * r, p = Math.max(0, Math.min(100, pct || 0));
+  return svg('svg', { width: 96, height: 96, viewBox: '0 0 96 96' },
+    svg('circle', { cx: 48, cy: 48, r, fill: 'none', stroke: 'var(--soft)', 'stroke-width': 10 }),
+    svg('circle', { cx: 48, cy: 48, r, fill: 'none', stroke: color, 'stroke-width': 10, 'stroke-linecap': 'round',
+      'stroke-dasharray': (c * p / 100).toFixed(1) + ' ' + c.toFixed(1), transform: 'rotate(-90 48 48)' }),
+    svg('text', { x: 48, y: 54, 'text-anchor': 'middle', style: 'font-size:20px;font-weight:700;fill:var(--ink)' }, pct == null ? '–' : Math.round(pct) + '%'));
+}
+
+// bars of the cell voltages: the axis starts near the lowest cell, so small differences are visible
+function cellBars(cells, bal) {
+  const box = h('div', { class: 'chart' });
+  const known = cells.filter(c => c !== null);
+  const draw = width => {
+    clear(box);
+    const n = cells.length, H = 210, L = 44, R = 8, T = 22, B = 30;
+    const mn = Math.min(...known), mx = Math.max(...known), avg = known.reduce((a, b) => a + b, 0) / known.length;
+    const pad = Math.max(0.01, (mx - mn) * 0.6);
+    const lo = Math.floor((mn - pad) * 100) / 100, hi = Math.ceil((mx + pad) * 100) / 100;
+    const Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B), root = svg('svg', { width, height: H, viewBox: '0 0 ' + width + ' ' + H });
+    const yt = niceTicks(lo, hi, 4), grid = svg('g', { class: 'grid' });
+    yt.ticks.forEach(v => { grid.append(svg('line', { x1: L, x2: width - R, y1: Y(v), y2: Y(v) })); root.append(svg('text', { x: L - 5, y: Y(v) + 4, 'text-anchor': 'end' }, v.toFixed(yt.dec))); });
+    root.prepend(grid);
+    const slot = (width - L - R) / n, bw = Math.min(46, slot * 0.72);
+    cells.forEach((v, i) => {
+      const x = L + slot * i + (slot - bw) / 2;
+      if (v === null) { root.append(svg('text', { x: x + bw / 2, y: H - B - 4, 'text-anchor': 'middle' }, '?')); }
+      else {
+        const color = v === mx && mx !== mn ? 'var(--accent)' : (v === mn && mx !== mn ? 'var(--warn)' : 'var(--accent)');
+        root.append(svg('rect', { x, y: Y(v), width: bw, height: Math.max(1, H - B - Y(v)), rx: 3, fill: color, opacity: v === mx || v === mn ? 1 : 0.5 }));
+        const rotate = bw < 34, lx = x + bw / 2, ly = Y(v) - 4;
+        root.append(svg('text', { x: lx, y: ly, 'text-anchor': rotate ? 'start' : 'middle', transform: rotate ? 'rotate(-90 ' + lx + ' ' + ly + ')' : null,
+          style: 'font-size:' + (rotate ? 10 : 11) + 'px;fill:var(--ink)' }, v.toFixed(3)));
+        if (bal && bal[i]) root.append(svg('circle', { cx: x + bw / 2, cy: H - B + 20, r: 3.5, fill: 'var(--warn)' }));
+      }
+      root.append(svg('text', { x: x + bw / 2, y: H - B + 13, 'text-anchor': 'middle' }, i + 1));
+    });
+    root.append(svg('line', { x1: L, x2: width - R, y1: Y(avg), y2: Y(avg), stroke: 'var(--muted)', 'stroke-dasharray': '4 4' }),
+      svg('text', { x: width - R, y: Y(avg) - 3, 'text-anchor': 'end' }, 'average ' + avg.toFixed(3) + ' V'));
+    box.append(root, h('div', { class: 'muted' }, 'Axis starts at ' + lo.toFixed(2) + ' V, so small differences look bigger. ',
+      h('span', { style: 'color:var(--accent)' }, '■ highest '), h('span', { style: 'color:var(--warn)' }, '■ lowest '),
+      bal && bal.some(Boolean) ? h('span', { style: 'color:var(--warn)' }, '● balancing') : null));
+  };
+  sized(box, draw);
+  return box;
+}
+
+// ------------------------------------------------------ battery: the page
+const BAT_WINDOWS = [[900, '15 min'], [3600, '1 hour'], [21600, '6 hours']];
+function stopBattery() { clearInterval(S.bTimer); S.bTimer = null; }
+
+async function tabBattery(main) {
+  stopBattery();
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  S.sbView = S.sbView || 'live';
+  const views = [['live', 'Live & cells'], ['limits', 'Limits & curves'], ['settings', 'All settings']];
+  main.append(h('div', { class: 'pills', role: 'group' }, views.map(([id, label]) =>
+    h('button', { type: 'button', 'aria-pressed': S.sbView === id, onclick: () => { S.sbView = id; renderTab(); } }, label))));
+  const box = h('div', {});
+  main.append(box);
+  if (S.sbView === 'settings') return tabBatterySettings(box);
+  if (S.sbView === 'limits') return tabBatteryLimits(box);
+  await liveView(box);
+  S.bTimer = setInterval(() => {
+    if (document.hidden || S.tab !== 'battery' || S.sbView !== 'live' || $('#dlg').open) return;
+    liveView(box);
+  }, 10000);
+}
+
+const pretty = s => s.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+const lastOf = arr => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i] !== null && arr[i] !== undefined) return arr[i]; return null; };
+
+async function liveView(box) {
+  const q = '/api/battery?window=' + (S.bWindow || 3600) + (S.bService ? '&service=' + encodeURIComponent(S.bService) : '');
+  const r = await api(q);
+  if (S.tab !== 'battery' || S.sbView !== 'live') return;
+  const out = h('div', {});
+  if (!r.ok) { out.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read the battery data')); clear(box).append(out); return; }
+  const d = r.data;
+  S.bInterval = d.interval;
+  if (!d.service) {
+    out.append(h('div', { class: 'banner warn' }, 'No battery found on the Pi. Is dbus-serialbattery running and connected to the BMS? On the Pi: ',
+      h('code', {}, 'svstat /service/dbus-serialbattery.*'), ' and look at its log on the Files & logs tab. This page starts recording a minute after a battery shows up.'));
+    clear(box).append(out); return;
+  }
+  S.bService = d.service;
+  const hist = d.history, info = d.info, V = p => info.values[p];
+  const controls = h('div', { class: 'row', style: 'margin-bottom:12px' },
+    d.batteries.length > 1 ? h('select', { style: 'max-width:260px', onchange: ev => { S.bService = ev.target.value; liveView(box); } },
+      d.batteries.map(b => h('option', { value: b.service, selected: b.service === d.service }, b.name + ' (' + b.service.split('.').pop() + ')'))) : h('b', {}, d.batteries[0].name),
+    h('span', { class: 'spacer' }),
+    BAT_WINDOWS.map(([sec, label]) => h('button', { type: 'button', class: 'btn small' + (S.bWindow === sec || (!S.bWindow && sec === 3600) ? ' primary' : ''), onclick: () => { S.bWindow = sec; liveView(box); } }, label)));
+  out.append(controls);
+  if (info.age > 60) out.append(h('div', { class: 'banner warn' }, 'The last reading is ' + ago(info.age) + ' old. The driver may have lost the BMS.'));
+
+  const cellsNow = hist.cells.map(c => lastOf(c)), balNow = hist.bal.map(c => lastOf(c));
+  const known = cellsNow.filter(c => c !== null);
+  out.append(h('div', { class: 'tiles' },
+    h('div', { class: 'tile' }, h('div', { class: 'k' }, 'Charge'), h('div', { style: 'display:flex;justify-content:center' }, ring(V('/Soc'), 'var(--ok)'))),
+    tile('Voltage', num(V('/Dc/0/Voltage'), 2), 'V', known.length ? known.length + ' cells, avg ' + (known.reduce((a, b) => a + b, 0) / known.length).toFixed(3) + ' V' : ''),
+    tile('Current', num(V('/Dc/0/Current'), 1), 'A', V('/Dc/0/Current') > 0.3 ? 'charging' : (V('/Dc/0/Current') < -0.3 ? 'discharging' : 'idle')),
+    tile('Power', num(V('/Dc/0/Power'), 0), 'W', ''),
+    tile('Battery temp', num(V('/Dc/0/Temperature'), 1), '°C', ['/System/Temperature1', '/System/Temperature2', '/System/Temperature3', '/System/Temperature4'].map(p => V(p)).filter(x => x != null && x > -50).map(x => x.toFixed(1)).join(' / ')),
+    tile('MOSFET temp', num(V('/System/MOSTemperature'), 1), '°C', ''),
+    tile('Cell spread', known.length > 1 ? ((Math.max(...known) - Math.min(...known)) * 1000).toFixed(0) : '–', 'mV', known.length > 1 ? 'lowest ' + Math.min(...known).toFixed(3) + ' · highest ' + Math.max(...known).toFixed(3) : 'no cell data'),
+    tile('BMS allows', '', '', '', [['charge', V('/Io/AllowToCharge')], ['discharge', V('/Io/AllowToDischarge')], ['balance', V('/Io/AllowToBalance')]].filter(x => x[1] != null)
+      .map(([n, on]) => h('span', { class: 'chip ' + (on ? 'pill-on' : 'pill-off'), style: 'margin:2px 4px 0 0' }, n + (on ? ' ✓' : ' ✗'))))));
+
+  const tbl = hist.cells.length ? cellTable(hist, cellsNow, balNow) : null;      // also fills S.cellStats
+  out.append(findingsCard(info, hist, cellsNow, balNow));
+
+  if (known.length) {
+    out.append(h('div', { class: 'card' }, h('h3', {}, 'Cells right now'), cellBars(cellsNow, balNow)));
+  } else {
+    out.append(h('div', { class: 'banner' }, 'No per-cell voltages published. Turn them on under All settings → BATTERY_CELL_DATA_FORMAT = 1 (or 3), then restart the driver.'));
+  }
+
+  const t = hist.t, s = hist.series, charts = [];
+  if (s.i) charts.push(timeChart({ title: 'Current', unit: 'A', t, area: true, dec: 1, note: '(+ charging, − discharging)', series: [{ id: 'i', name: 'Current', color: 'var(--accent)', vals: s.i }] }));
+  if (s.soc) charts.push(timeChart({ title: 'State of charge', unit: '%', t, min: Math.max(0, Math.min(...s.soc.filter(x => x != null)) - 5), max: 100, dec: 0, series: [{ id: 'soc', name: 'SOC', color: 'var(--ok)', vals: s.soc }] }));
+  if (s.v) charts.push(timeChart({ title: 'Pack voltage', unit: 'V', t, dec: 2, series: [{ id: 'v', name: 'Voltage', color: '#8e44ad', vals: s.v }] }));
+  if (s.diff) charts.push(timeChart({ title: 'Cell spread (highest − lowest)', unit: 'mV', t, dec: 0, min: 0, include: [30], lines: [{ y: 30, label: '30 mV' }], series: [{ id: 'diff', name: 'Spread', color: 'var(--warn)', vals: s.diff }] }));
+  if (charts.length) out.append(h('div', { class: 'two' }, charts.map(c => h('div', { class: 'card' }, c))));
+
+  const nc = hist.cells.length;
+  if (nc) {
+    const cellSeries = hist.cells.map((vals, i) => ({ id: 'c' + i, name: 'Cell ' + (i + 1), color: cellColor(i, nc), vals, w: 1.3 }));
+    const avgAt = hist.t.map((_, k) => { const xs = hist.cells.map(c => c[k]).filter(x => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; });
+    const devSeries = hist.cells.map((vals, i) => ({ id: 'c' + i, name: 'Cell ' + (i + 1), color: cellColor(i, nc), w: 1.3,
+      vals: vals.map((x, k) => x == null || avgAt[k] == null ? null : (x - avgAt[k]) * 1000) }));
+    out.append(h('div', { class: 'card' }, timeChart({ title: 'Cell voltages', unit: 'V', t, dec: 3, height: 240, note: '(tap a cell in the legend to hide it)', series: cellSeries })));
+    out.append(h('div', { class: 'card' }, timeChart({ title: 'Cell difference from the average', unit: 'mV', t, dec: 1, height: 220, note: '(a cell that stays far from 0 is the odd one out)', series: devSeries })));
+    out.append(tbl);
+  }
+  const temps = [['temp', 'Battery', '#e67e22'], ['t1', 'Probe 1', '#c0392b'], ['t2', 'Probe 2', '#d35400'], ['t3', 'Probe 3', '#f39c12'], ['t4', 'Probe 4', '#a04000'], ['mos', 'MOSFET', '#16a085']]
+    .filter(([k]) => s[k]).map(([k, name, color]) => ({ id: k, name, color, vals: s[k] }));
+  const lim = [['ccl', 'Charge limit (A)', 'var(--ok)'], ['dcl', 'Discharge limit (A)', 'var(--bad)']].filter(([k]) => s[k]).map(([k, name, color]) => ({ id: k, name, color, vals: s[k] }));
+  const more = [];
+  if (temps.length) more.push(timeChart({ title: 'Temperatures', unit: '°C', t, dec: 1, series: temps }));
+  if (lim.length) more.push(timeChart({ title: 'Current the BMS allows', unit: 'A', t, dec: 0, min: 0, series: lim }));
+  if (more.length) out.append(h('div', { class: 'two' }, more.map(c => h('div', { class: 'card' }, c))));
+
+  const rows = Object.entries(info.values).sort((a, b) => a[0] < b[0] ? -1 : 1);
+  out.append(h('details', { class: 'group', open: S.openAll, ontoggle: ev => { S.openAll = ev.target.open; } }, h('summary', {}, 'All values from the BMS ', h('span', { class: 'muted' }, '(' + rows.length + ')')),
+    h('div', { class: 'body' }, h('table', { class: 'kv' }, rows.map(([k, v]) => h('tr', {}, h('td', {}, h('code', {}, k)), h('td', {}, typeof v === 'number' ? String(Math.round(v * 1000) / 1000) : String(v))))))));
+  out.append(h('div', { class: 'muted', style: 'margin-top:8px' }, 'The Pi records a point every ' + d.interval + ' s and keeps up to 6 hours in memory (since ' + clock(info.since, false) + ', restarting the settings page starts it over). Updates every 10 s.'));
+  clear(box).append(out);
+}
+
+function tile(k, v, unit, sub, extra) {
+  return h('div', { class: 'tile' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v, unit ? h('small', {}, ' ' + unit) : null), sub ? h('div', { class: 's' }, sub) : null, extra || null);
+}
+
+function cellTable(hist, cellsNow, balNow) {
+  const n = hist.cells.length, lowCount = new Array(n).fill(0), highCount = new Array(n).fill(0), devSum = new Array(n).fill(0), samples = [];
+  hist.t.forEach((_, k) => {
+    const row = hist.cells.map(c => c[k]), ok = row.filter(x => x != null);
+    if (ok.length < 2) return;
+    const mn = Math.min(...ok), mx = Math.max(...ok), avg = ok.reduce((a, b) => a + b, 0) / ok.length;
+    samples.push(k);
+    row.forEach((x, i) => { if (x == null) return; devSum[i] += x - avg; if (x === mn && mx - mn >= 0.003) lowCount[i]++; if (x === mx && mx - mn >= 0.003) highCount[i]++; });
+  });
+  const total = samples.length || 1;
+  S.cellStats = { lowCount, highCount, devSum, total };
+  const rows = hist.cells.map((c, i) => {
+    const vals = c.filter(x => x != null), dev = devSum[i] / total * 1000;
+    return h('tr', {}, h('td', {}, 'Cell ' + (i + 1)), h('td', {}, cellsNow[i] === null ? '–' : cellsNow[i].toFixed(3) + ' V'),
+      h('td', {}, vals.length ? Math.min(...vals).toFixed(3) + ' – ' + Math.max(...vals).toFixed(3) : '–'),
+      h('td', { style: Math.abs(dev) > 15 ? 'color:var(--warn);font-weight:600' : '' }, (dev > 0 ? '+' : '') + dev.toFixed(1) + ' mV'),
+      h('td', {}, Math.round(lowCount[i] / total * 100) + ' %'), h('td', {}, Math.round(highCount[i] / total * 100) + ' %'),
+      h('td', {}, balNow[i] ? h('span', { class: 'chip warn' }, 'balancing') : ''));
+  });
+  return h('details', { class: 'group', open: S.openCells !== false, ontoggle: ev => { S.openCells = ev.target.open; } }, h('summary', {}, 'Cell table for this period'),
+    h('div', { class: 'body', style: 'overflow-x:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['Cell', 'Now', 'Range', 'Avg vs others', 'Lowest', 'Highest', ''].map(x => h('th', {}, x)))), h('tbody', {}, rows))));
+}
+
+function findingsCard(info, hist, cellsNow, balNow) {
+  const items = [], V = p => info.values[p];
+  const add = (level, text) => items.push({ level, text });
+  const known = cellsNow.filter(c => c !== null);
+  const alarms = Object.entries(info.values).filter(([k, v]) => k.startsWith('/Alarms/') && typeof v === 'number' && v > 0);
+  alarms.forEach(([k, v]) => add(v >= 2 ? 'bad' : 'warn', 'BMS ' + (v >= 2 ? 'alarm' : 'warning') + ': ' + pretty(k.replace('/Alarms/', ''))));
+  if (info.age > 60) add('warn', 'No fresh reading for ' + ago(info.age) + '.');
+  if (known.length > 1) {
+    const mn = Math.min(...known), mx = Math.max(...known), diff = (mx - mn) * 1000;
+    if (mx >= 3.40) add(diff <= 20 ? 'ok' : (diff <= 50 ? 'warn' : 'bad'), 'Cells are ' + (diff <= 20 ? 'well balanced' : (diff <= 50 ? 'a bit apart' : 'far apart')) + ' near full: ' + diff.toFixed(0) + ' mV between the best and worst cell.' + (diff > 20 ? ' Charge to full and keep it there for some hours so the balancer can work.' : ''));
+    else add(diff <= 60 ? 'ok' : 'warn', 'Spread is ' + diff.toFixed(0) + ' mV. It only says something near full (cells above 3.40 V); in the middle of the range LiFePO4 cells are naturally further apart.');
+    if (mx > 3.65) add('bad', 'A cell is at ' + mx.toFixed(3) + ' V, above the 3.65 V a LiFePO4 cell may reach.');
+    if (mn < 2.8) add('bad', 'A cell is at ' + mn.toFixed(3) + ' V, below 2.8 V (LiFePO4).');
+    const st = S.cellStats;
+    if (st && st.total >= 5) {
+      const worst = st.lowCount.indexOf(Math.max(...st.lowCount)), share = st.lowCount[worst] / st.total, dev = st.devSum[worst] / st.total * 1000;
+      if (share >= 0.6 && dev < -10) add('warn', 'Cell ' + (worst + 1) + ' is the lowest cell ' + Math.round(share * 100) + ' % of the time (' + dev.toFixed(0) + ' mV under the average). Watch it: it may be weaker or have a poor connection.');
+      const best = st.highCount.indexOf(Math.max(...st.highCount)), bshare = st.highCount[best] / st.total, bdev = st.devSum[best] / st.total * 1000;
+      if (bshare >= 0.6 && bdev > 10) add('warn', 'Cell ' + (best + 1) + ' is the highest cell ' + Math.round(bshare * 100) + ' % of the time (+' + bdev.toFixed(0) + ' mV over the average). It hits the charge limit first.');
+    }
+  }
+  const bal = balNow.map((b, i) => b ? i + 1 : null).filter(x => x);
+  if (bal.length) add('ok', 'Balancing cell' + (bal.length > 1 ? 's ' : ' ') + bal.join(', ') + ' right now.');
+  const temps = ['/System/Temperature1', '/System/Temperature2', '/System/Temperature3', '/System/Temperature4', '/Dc/0/Temperature'].map(p => V(p)).filter(x => x != null && x > -50);
+  if (temps.length > 1 && Math.max(...temps) - Math.min(...temps) > 5) add('warn', 'Temperature probes differ by ' + (Math.max(...temps) - Math.min(...temps)).toFixed(1) + ' °C.');
+  if (V('/System/MOSTemperature') != null && V('/System/MOSTemperature') > 60) add(V('/System/MOSTemperature') > 80 ? 'bad' : 'warn', 'The MOSFETs are at ' + V('/System/MOSTemperature').toFixed(0) + ' °C.');
+  if (temps.length && Math.min(...temps) < 5 && V('/Io/AllowToCharge') !== 0 && (V('/Dc/0/Current') || 0) > 0) add('warn', 'Charging at ' + Math.min(...temps).toFixed(0) + ' °C: LiFePO4 should not be charged below 0 °C.');
+  const ccl = V('/Info/MaxChargeCurrent'), dcl = V('/Info/MaxDischargeCurrent'), cclMax = Math.max(...(hist.series.ccl || [0]).filter(x => x != null), 0);
+  if (ccl === 0) add('warn', 'Charging is currently blocked (charge current limit is 0 A).');
+  else if (ccl != null && cclMax > 0 && ccl < cclMax * 0.9) add('warn', 'Charge current is limited to ' + ccl.toFixed(0) + ' A (it was up to ' + cclMax.toFixed(0) + ' A). That is normal near full or when cold; see Limits & curves.');
+  if (dcl === 0) add('warn', 'Discharging is currently blocked (discharge current limit is 0 A).');
+  if (!items.length) add('ok', 'Nothing unusual.');
+  else if (!items.some(i => i.level !== 'ok')) add('ok', 'No problems found.');
+  return h('div', { class: 'card' }, h('h3', {}, 'What I notice'), items.map(i => h('div', { class: 'find' }, h('span', { class: 'dot ' + i.level }), h('div', {}, i.text))));
+}
+
+// ----------------------------------------------- battery: limits & curves
+const parseList = text => String(text || '').split(',').map(x => parseFloat(x)).filter(x => !isNaN(x));
+const truthy = v => ['true', 'yes', '1', 'on'].includes(String(v).trim().toLowerCase());
+
+function lerp(points, x) {
+  if (!points.length) return null;
+  if (x <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) if (x <= points[i][0]) {
+    const [x0, y0] = points[i - 1], [x1, y1] = points[i];
+    return x1 === x0 ? y1 : y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+  }
+  return points[points.length - 1][1];
+}
+
+// current limit against a measurement; the driver interpolates between the points
+function curveChart(o) {
+  const box = h('div', { class: 'chart' });
+  const pts = o.xs.map((x, i) => [x, o.ys[i] * o.max]).sort((a, b) => a[0] - b[0]);
+  sized(box, width => {
+    clear(box);
+    const H = 170, L = 40, R = 12, T = 12, B = 34;
+    const xs = pts.map(p => p[0]), pad = (Math.max(...xs) - Math.min(...xs)) * 0.12 || 1;
+    let lo = Math.min(...xs) - pad, hi = Math.max(...xs) + pad;
+    if (o.live != null) { lo = Math.min(lo, o.live - pad / 2); hi = Math.max(hi, o.live + pad / 2); }
+    const ymax = Math.max(o.max, ...pts.map(p => p[1])) * 1.1 || 1;
+    const X = x => L + (x - lo) / (hi - lo) * (width - L - R), Y = y => T + (1 - y / ymax) * (H - T - B);
+    const root = svg('svg', { width, height: H, viewBox: '0 0 ' + width + ' ' + H, style: o.off ? 'opacity:.45' : '' });
+    const yt = niceTicks(0, ymax, 3), xt = niceTicks(lo, hi, width < 420 ? 4 : 6), grid = svg('g', { class: 'grid' });
+    yt.ticks.forEach(v => { grid.append(svg('line', { x1: L, x2: width - R, y1: Y(v), y2: Y(v) })); root.append(svg('text', { x: L - 5, y: Y(v) + 4, 'text-anchor': 'end' }, v.toFixed(yt.dec))); });
+    xt.ticks.forEach(v => root.append(svg('text', { x: X(v), y: H - B + 14, 'text-anchor': 'middle' }, v.toFixed(xt.dec))));
+    root.prepend(grid);
+    const line = [[lo, lerp(pts, lo)], ...pts, [hi, lerp(pts, hi)]];
+    root.append(svg('path', { d: line.map((p, i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join(''), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2 }));
+    pts.forEach(p => root.append(svg('circle', { cx: X(p[0]), cy: Y(p[1]), r: 3.5, fill: 'var(--accent)' })));
+    root.append(svg('text', { x: (L + width - R) / 2, y: H - 4, 'text-anchor': 'middle' }, o.xlabel));
+    if (o.live != null) {
+      const now = lerp(pts, o.live);
+      root.append(svg('line', { x1: X(o.live), x2: X(o.live), y1: T, y2: H - B, stroke: 'var(--warn)', 'stroke-dasharray': '4 3', 'stroke-width': 1.5 }),
+        svg('circle', { cx: X(o.live), cy: Y(now), r: 4.5, fill: 'var(--warn)' }));
+    }
+    box.append(root);
+  });
+  return box;
+}
+
+const CURVES = [
+  ['Charge current vs highest cell voltage', 'CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION', 'CCCM_CV_ENABLE', 'MAX_BATTERY_CHARGE_CURRENT', 'cell voltage (V)', 'cmax'],
+  ['Discharge current vs lowest cell voltage', 'CELL_VOLTAGES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_CV_FRACTION', 'DCCM_CV_ENABLE', 'MAX_BATTERY_DISCHARGE_CURRENT', 'cell voltage (V)', 'cmin'],
+  ['Charge current vs battery temperature', 'TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', 'CCCM_T_ENABLE', 'MAX_BATTERY_CHARGE_CURRENT', 'temperature (°C)', 'temp'],
+  ['Discharge current vs battery temperature', 'TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION', 'DCCM_T_ENABLE', 'MAX_BATTERY_DISCHARGE_CURRENT', 'temperature (°C)', 'temp'],
+  ['Charge current vs MOSFET temperature', 'MOSFET_TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_MOSFET_FRACTION', 'CCCM_T_MOSFET_ENABLE', 'MAX_BATTERY_CHARGE_CURRENT', 'MOSFET temperature (°C)', 'mos'],
+  ['Discharge current vs MOSFET temperature', 'MOSFET_TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION', 'DCCM_T_MOSFET_ENABLE', 'MAX_BATTERY_DISCHARGE_CURRENT', 'MOSFET temperature (°C)', 'mos'],
+  ['Charge current vs state of charge', 'SOC_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_SOC_FRACTION', 'CCCM_SOC_ENABLE', 'MAX_BATTERY_CHARGE_CURRENT', 'state of charge (%)', 'soc'],
+  ['Discharge current vs state of charge', 'SOC_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_SOC_FRACTION', 'DCCM_SOC_ENABLE', 'MAX_BATTERY_DISCHARGE_CURRENT', 'state of charge (%)', 'soc'],
+];
+
+function goSetting(key) { S.sbView = 'settings'; S.sbSearch = key; renderTab(); }
+
+function voltageWindow(eff, live, cells) {
+  const marks = [['MIN_CELL_VOLTAGE', 'empty (min)', 'var(--bad)'], ['FLOAT_CELL_VOLTAGE', 'float', 'var(--ok)'], ['MAX_CELL_VOLTAGE', 'full (max)', 'var(--accent)'], ['SOC_RESET_CELL_VOLTAGE', 'SOC reset', '#8e44ad']]
+    .map(([k, label, color]) => ({ k, label, color, v: parseFloat(eff(k)) })).filter(m => !isNaN(m.v)).sort((a, b) => a.v - b.v);
+  const box = h('div', { class: 'gauge' });
+  if (!marks.length) return box;
+  sized(box, width => {
+    clear(box);
+    const L = 14, R = 14, lo = Math.min(2.6, marks[0].v - 0.1), hi = Math.max(3.75, marks[marks.length - 1].v + 0.1), X = v => L + (v - lo) / (hi - lo) * (width - L - R);
+    const LH = cells ? 38 : 26, gap = 92;
+    const slots = [{ up: true, row: 0, last: -999 }, { up: false, row: 0, last: -999 }, { up: true, row: 1, last: -999 }, { up: false, row: 1, last: -999 }];
+    const placed = marks.map(m => { const x = X(m.v), sl = slots.find(sl => x - sl.last >= gap) || slots[0]; sl.last = x; return { m, x, sl }; });
+    const upRows = Math.max(0, ...placed.filter(p => p.sl.up).map(p => p.sl.row + 1)), downRows = Math.max(0, ...placed.filter(p => !p.sl.up).map(p => p.sl.row + 1));
+    const y = 12 + upRows * LH + 6, hgt = 16, H = y + hgt + 12 + downRows * LH;
+    const root = svg('svg', { width, height: H, viewBox: '0 0 ' + width + ' ' + H });
+    const mn = marks.find(m => m.k === 'MIN_CELL_VOLTAGE'), mx = marks.find(m => m.k === 'MAX_CELL_VOLTAGE');
+    root.append(svg('rect', { x: L, y, width: width - L - R, height: hgt, rx: 8, fill: 'var(--soft)' }));
+    if (mn && mx) root.append(svg('rect', { x: X(mn.v), y, width: Math.max(2, X(mx.v) - X(mn.v)), height: hgt, fill: 'var(--ok)', opacity: 0.28 }));
+    if (live && live.min != null && live.max != null) root.append(svg('rect', { x: X(live.min), y: y - 4, width: Math.max(3, X(live.max) - X(live.min)), height: hgt + 8, rx: 4, fill: 'none', stroke: 'var(--warn)', 'stroke-width': 2 }));
+    placed.forEach(({ m, x, sl }) => {
+      root.append(svg('line', { x1: x, x2: x, y1: sl.up ? y - 4 - sl.row * LH : y, y2: sl.up ? y + hgt : y + hgt + 6 + sl.row * LH, stroke: m.color, 'stroke-width': sl.row ? 1 : 3, opacity: sl.row ? 0.5 : 1 }));
+      const ty = sl.up ? y - 10 - sl.row * LH - (cells ? 26 : 14) : y + hgt + 18 + sl.row * LH;
+      const anchor = x < 56 ? 'start' : (x > width - 56 ? 'end' : 'middle');
+      const lines = [[m.label, 'fill:' + m.color + ';font-weight:600'], [m.v.toFixed(3) + ' V per cell', 'fill:var(--ink)']];
+      if (cells) lines.push([(m.v * cells).toFixed(1) + ' V pack', 'fill:var(--muted)']);
+      lines.forEach(([txt, st], k) => root.append(svg('text', { x, y: ty + k * 12, 'text-anchor': anchor, style: st }, txt)));
+    });
+    box.append(root);
+  });
+  return box;
+}
+
+async function tabBatteryLimits(box) {
+  const [sb, lv] = await Promise.all([api('/api/serialbattery'), api('/api/battery?window=60' + (S.bService ? '&service=' + encodeURIComponent(S.bService) : ''))]);
+  if (S.tab !== 'battery' || S.sbView !== 'limits') return;
+  if (!sb.ok) { box.append(h('div', { class: 'banner bad' }, sb.data.error || 'Could not read the settings')); return; }
+  if (!sb.data.installed) { box.append(h('div', { class: 'banner' }, 'dbus-serialbattery was not found in /data/apps/dbus-serialbattery. Install it first (see mr-manuel/venus-os_dbus-serialbattery).')); return; }
+  S.sb = sb.data;
+  const byKey = {};
+  sb.data.view.groups.forEach(g => g.entries.forEach(e => { byKey[e.key] = e; }));
+  const eff = k => byKey[k] ? sbEffective(byKey[k]) : '';
+  const liveInfo = lv.ok && lv.data.info ? lv.data.info.values : {}, L = p => liveInfo[p];
+  const cells = lv.ok && lv.data.history && lv.data.history.cells.length ? lv.data.history.cells.length : (L('/System/NrOfCellsPerBattery') || 0);
+  const liveVals = { cmax: L('/System/MaxCellVoltage'), cmin: L('/System/MinCellVoltage'), temp: L('/Dc/0/Temperature'), mos: L('/System/MOSTemperature'), soc: L('/Soc') };
+
+  // connection
+  const bms = String(eff('BLUETOOTH_BMS')).split(',').map(s => s.trim()).filter(Boolean);
+  box.append(h('div', { class: 'card' }, h('h3', {}, 'How the BMS is connected'),
+    h('table', { class: 'kv' },
+      h('tr', {}, h('td', {}, 'Bluetooth BMS'), h('td', {}, bms.length ? bms.map(b => h('div', {}, h('code', {}, b))) : '(none)', link('BLUETOOTH_BMS'))),
+      byKey.BMS_TYPE ? h('tr', {}, h('td', {}, 'BMS type (cable)'), h('td', {}, eff('BMS_TYPE') || '(auto)', link('BMS_TYPE'))) : null,
+      byKey.BLUETOOTH_USE_USB ? h('tr', {}, h('td', {}, 'USB Bluetooth adapter'), h('td', {}, truthy(eff('BLUETOOTH_USE_USB')) ? 'yes' : 'no (Pi built-in)', link('BLUETOOTH_USE_USB'))) : null,
+      byKey.POLL_INTERVAL ? h('tr', {}, h('td', {}, 'Read every'), h('td', {}, (eff('POLL_INTERVAL') || 'default') + (eff('POLL_INTERVAL') ? ' ms' : ''), link('POLL_INTERVAL'))) : null,
+      byKey.BATTERY_CELL_DATA_FORMAT ? h('tr', {}, h('td', {}, 'Cell voltages on D-Bus'), h('td', {}, ({ 0: 'off (only min/max)', 1: 'on (format 1)', 2: 'format 2', 3: 'both formats' })[eff('BATTERY_CELL_DATA_FORMAT')] || eff('BATTERY_CELL_DATA_FORMAT'), link('BATTERY_CELL_DATA_FORMAT'))) : null)));
+
+  // voltage window
+  box.append(h('div', { class: 'card' }, h('h3', {}, 'Cell voltage limits'),
+    h('div', { class: 'muted' }, 'Per cell' + (cells ? ', and for all ' + cells + ' cells together' : '') + '. The green part is the working range; the orange frame is where your cells are right now.'),
+    voltageWindow(eff, liveVals.cmin != null ? { min: liveVals.cmin, max: liveVals.cmax } : null, cells)));
+
+  // tiles
+  const t = (k, label, unit, fmt) => { if (!byKey[k]) return null; const shown = String(fmt ? fmt(eff(k)) : (eff(k) === '' ? '–' : eff(k))); return h('div', { class: 'tile' }, h('div', { class: 'k' }, label), h('div', { class: 'v' }, shown, unit && /^[\d.]+$/.test(shown) ? h('small', {}, ' ' + unit) : null),
+    h('div', { class: 's' }, byKey[k].value != null ? 'default ' + (byKey[k].default === '' ? 'empty' : byKey[k].default) : 'default', ' ', link(k))); };
+  box.append(h('div', { class: 'tiles' },
+    t('MAX_BATTERY_CHARGE_CURRENT', 'Max charge current', 'A'), t('MAX_BATTERY_DISCHARGE_CURRENT', 'Max discharge current', 'A'),
+    t('BATTERY_CAPACITY', 'Capacity', 'Ah'), t('SOC_CALCULATION', 'Own SOC calculation', '', v => truthy(v) ? 'on' : 'off'),
+    t('SOC_RESET_AFTER_DAYS', 'SOC reset after', 'days', v => v === '' ? 'never' : v), t('SOC_LOW_WARNING', 'Low SOC warning', '%'), t('SOC_LOW_ALARM', 'Low SOC alarm', '%'),
+    t('USE_BMS_DVCC_VALUES', 'Use BMS limits in DVCC', '', v => truthy(v) ? 'yes' : 'no')));
+
+  // curves
+  const cards = CURVES.filter(c => byKey[c[1]] && byKey[c[2]]).map(([title, xk, yk, ek, mk, xlabel, lk]) => {
+    const xs = parseList(eff(xk)), ys = parseList(eff(yk)), max = parseFloat(eff(mk)) || 0, on = byKey[ek] ? truthy(eff(ek)) : true;
+    if (!xs.length || xs.length !== ys.length) return h('div', { class: 'card' }, h('h3', {}, title), h('div', { class: 'banner bad' }, 'The two lists have different lengths.', link(xk)));
+    const live = liveVals[lk] != null ? liveVals[lk] : null;
+    const pts = xs.map((x, i) => [x, ys[i] * max]).sort((a, b) => a[0] - b[0]);
+    return h('div', { class: 'card' }, h('h3', {}, title, ' ', h('span', { class: 'chip ' + (on ? 'ok' : '') }, on ? 'on' : 'off')),
+      h('div', { class: 'muted' }, live != null ? 'Now ' + live + ' ' + xlabel.replace(/.*\(/, '').replace(')', '') + ' → limit ' + lerp(pts, live).toFixed(1) + ' A of ' + max + ' A' : 'Max ' + max + ' A'),
+      curveChart({ xs, ys, max, xlabel, live, off: !on }), h('div', { class: 'row' }, link(xk), link(yk), byKey[ek] ? link(ek, 'on/off') : null));
+  });
+  box.append(h('h2', {}, 'Current limits'), h('div', { class: 'muted', style: 'margin-bottom:10px' },
+    'The driver tells Venus OS the highest current each curve allows and uses the lowest one. Between the dots it draws a straight line. Orange shows where you are right now.'),
+  h('div', { class: 'two' }, cards));
+
+  // what you changed
+  const changed = [];
+  sb.data.view.groups.forEach(g => g.entries.forEach(e => { if (e.value !== null && e.value !== undefined) changed.push(e); }));
+  box.append(h('h2', {}, 'What you changed from the defaults'),
+    h('div', { class: 'card', style: 'overflow-x:auto' }, changed.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Setting', 'Default', 'Yours', ''].map(x => h('th', {}, x)))),
+      h('tbody', {}, changed.map(e => h('tr', {}, h('td', {}, h('div', {}, e.label), h('code', {}, e.key)), h('td', {}, e.secret ? '–' : (e.default === '' ? '(empty)' : e.default)),
+        h('td', { style: 'font-weight:600' }, e.secret ? '••••' : (e.value === '' ? '(empty)' : e.value)), h('td', {}, link(e.key, 'edit')))))) : h('div', { class: 'muted' }, 'Nothing: all settings use the defaults of dbus-serialbattery.'),
+    Object.keys(sb.data.view.unknown || {}).length ? h('div', { class: 'muted', style: 'margin-top:8px' }, 'Also in your config.ini, not known to this page: ' + Object.keys(sb.data.view.unknown).join(', ')) : null));
+}
+
+function link(key, label) {
+  return h('button', { type: 'button', class: 'link', style: 'margin-left:8px', onclick: () => goSetting(key) }, label || 'edit');
 }
 
 // ------------------------------------------------------------ files & logs

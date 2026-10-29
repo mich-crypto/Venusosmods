@@ -328,6 +328,29 @@ class DriverConfigTests(AppTestCase):
         self.assertEqual(self.svc_calls(), [])                     # after the answer was sent
 
 
+class BatteryDebugTests(AppTestCase):
+    def test_sampling_and_api(self):
+        import test_battery_debug as tb
+        name = 'com.victronenergy.battery.ttyUSB0'
+        self.app.battery_names = lambda: [name]
+        self.app.dbus_dump = lambda n: tb.pack(n=4, spread=0.01)
+        self.assertTrue(self.app.sample_batteries())
+        self.assertTrue(self.app.sample_batteries())
+        self.assertEqual(self.get('/api/battery', auth=False).status, 401)       # locked like the rest
+        d = body_of(self.get('/api/battery', query='window=900'))
+        self.assertEqual((d['service'], d['window']), (name, 900))
+        self.assertEqual(d['batteries'], [{'service': name, 'name': 'JK BMS'}])
+        self.assertEqual(len(d['history']['cells']), 4)
+        self.assertEqual(d['info']['values']['/Alarms/LowVoltage'], 0)
+        self.assertEqual(body_of(self.get('/api/battery', query='window=abc'))['window'], 3600)
+        self.assertEqual(body_of(self.get('/api/battery', query='service=nope'))['service'], name)
+
+    def test_no_battery(self):
+        self.app.battery_names = lambda: []
+        d = body_of(self.get('/api/battery'))
+        self.assertEqual((d['ok'], d['batteries'], d['service']), (True, [], ''))
+
+
 class SerialBatteryTests(AppTestCase):
     def user_text(self):
         try:

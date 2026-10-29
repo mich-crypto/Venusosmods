@@ -363,12 +363,28 @@ if you forget it. Open the address in Safari and add it to the home screen.
   and shape, *Use as empty* / *Use as full* copy the current sensor reading, a
   blank field means "use the default". Press *Save*, or *Save & restart driver*
   to apply it at once.
-* **Battery** – every setting of dbus-serialbattery in groups, with search,
-  switches, the default value, a *Reset to default* link and the original
-  explanation under *About this setting*. Only the settings you change are
-  written to its `config.ini`; the file with the defaults is never touched.
-  Changes to Bluetooth BMS, the USB Bluetooth option or the CAN port need a
-  reboot of the Pi (the page offers a *Reboot now* button).
+* **Battery** – three views for dbus-serialbattery (for example a JK BMS):
+  * *Live & cells*: charge ring, voltage, current, power, temperatures, what the
+    BMS allows, and a plain-language "What I notice" list (cells far apart,
+    one cell always lowest, temperatures, current limits, alarms). Bar chart of
+    every cell, graphs of current, charge, voltage, cell spread, every cell
+    over time, each cell's difference from the average, temperatures and the
+    current the BMS allows. Choose 15 min, 1 hour or 6 hours; touch or hover a
+    graph for the exact values, tap a cell in the legend to hide it. The Pi
+    records a point every 10 s while the settings page runs and keeps 6 hours
+    in memory. Cell voltages need `BATTERY_CELL_DATA_FORMAT = 1` (the default).
+  * *Limits & curves*: how the BMS is connected, the cell voltage limits as a
+    picture (with the pack voltage for your cell count and where your cells
+    are now), the main numbers, one graph per current limit curve (charge and
+    discharge against cell voltage, temperature, MOSFET temperature and
+    charge level, with a marker where you are now) and a table of everything
+    you changed from the defaults.
+  * *All settings*: every setting in groups, with search, switches, the default
+    value, a *Reset to default* link and the original explanation under *About
+    this setting*. Only the settings you change are written to its
+    `config.ini`; the file with the defaults is never touched. Changes to
+    Bluetooth BMS, the USB Bluetooth option or the CAN port need a reboot of
+    the Pi (the page offers a *Reboot now* button).
 * **Files & logs** – the raw config files as a fallback, and the log of every
   service.
 

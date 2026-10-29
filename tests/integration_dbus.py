@@ -356,9 +356,11 @@ def main():
              for script, section in (('mopeka_venus.py', 'mopeka_standard'),
                                      ('esp32_hydro_tank.py', 'esp32_hydro'),
                                      ('fridge_venus.py', 'fridge'))]
+    procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, 'fake_battery.py')],
+                                  env=dict(env, VELIB=velib)))
     procs.append(subprocess.Popen(
         [sys.executable, os.path.join(DRIVERS, 'web_ui.py'), '--config', cfg, '--port', str(web['port']),
-         '--bind', '127.0.0.1', '--no-firewall', '--init-dir', os.path.join(W, 'init.d'),
+         '--bind', '127.0.0.1', '--no-firewall', '--sample-s', '1', '--init-dir', os.path.join(W, 'init.d'),
          '--service-dir', os.path.join(W, 'service'), '--log-dir', os.path.join(W, 'log'),
          '--rc-local', os.path.join(W, 'rc.local'), '--serialbattery-dir', os.path.join(W, 'sb')],
         env=dict(env, PATH=os.path.join(W, 'bin') + os.pathsep + env['PATH'])))
