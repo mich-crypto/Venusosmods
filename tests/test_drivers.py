@@ -396,5 +396,42 @@ class DriverTests(unittest.TestCase):
             FridgeDriver('s', section('poll_interval = 30\n'))
 
 
+class VenusPythonTests(unittest.TestCase):
+    """Venus OS ships a trimmed Python: only import modules known to exist there."""
+    AVAILABLE = {
+        # checked on Venus OS 3.79 (Raspberry Pi) by running the diagnostics
+        'argparse', 'collections', 'configparser', 'functools', 'glob', 'inspect',
+        'logging', 'math', 'os', 're', 'signal', 'struct', 'subprocess', 'sys', 'time',
+        'dbus', 'gi',
+    }
+
+    def test_only_available_modules(self):
+        import ast
+        drivers = os.path.join(HERE, '..', 'data', 'shared_drivers')
+        local = {f[:-3] for f in os.listdir(drivers) if f.endswith('.py')}
+        local |= {'vedbus', 'settingsdevice', 've_utils'}
+        files = [os.path.join(drivers, f) for f in os.listdir(drivers) if f.endswith('.py')]
+        diag = os.path.join(drivers, 'diagnostics')
+        files += [os.path.join(diag, f) for f in os.listdir(diag) if f.endswith('.py')]
+        for path in files:
+            for node in ast.walk(ast.parse(open(path).read())):
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    names = [node.module]
+                else:
+                    continue
+                for name in names:
+                    top = name.split('.')[0]
+                    self.assertTrue(top in self.AVAILABLE or top in local,
+                                    '%s imports %r, which Venus OS may not have'
+                                    % (os.path.basename(path), name))
+
+    def test_median(self):
+        from mopeka_venus import median
+        self.assertEqual(median([3, 1, 2]), 2)
+        self.assertEqual(median([4, 1, 3, 2]), 2.5)
+
+
 if __name__ == '__main__':
     unittest.main()

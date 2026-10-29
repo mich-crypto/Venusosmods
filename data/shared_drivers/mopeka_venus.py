@@ -14,13 +14,19 @@ neighbours at a campsite are ignored.
 
 import collections
 import logging
-import statistics
 
 import mopeka_std_parser
 from venus_service import (BleDriver, SettingsDevice, TankDevice, FLUID_LPG,
                            interpolate, parse_table)
 
 log = logging.getLogger('mopeka_standard')
+
+
+def median(values):
+    # Venus OS's Python has no 'statistics' module
+    v = sorted(values)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
 
 
 class MopekaStandardDriver(BleDriver):
@@ -89,7 +95,7 @@ class MopekaStandardDriver(BleDriver):
 
         if r.quality_ok:
             self._distances.append(r.distance_mm)
-            distance = statistics.median(self._distances)
+            distance = median(self._distances)
             self._level = self.distance_to_level(distance)
         else:
             # Poor echo (bottle moved, sensor not coupled...). Keep the last
