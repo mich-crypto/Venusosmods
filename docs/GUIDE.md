@@ -165,7 +165,19 @@ method B.
 
 ### 5.1 Copy the files
 
-From the folder where you unzipped the repository:
+**From an iPad or phone (Termius or another SSH app), no computer needed:**
+log in to the Pi and let it download the files from GitHub itself:
+```sh
+cd /tmp
+wget -O vom.tar.gz https://github.com/mich-crypto/Venusosmods/archive/refs/heads/master.tar.gz
+tar -xzf vom.tar.gz
+cp -r Venusosmods-master/data/shared_drivers Venusosmods-master/data/etc /data/
+rm -rf vom.tar.gz Venusosmods-master
+```
+The Pi needs internet access for this (it has it if VRM works). Then continue
+with 5.2.
+
+**From a computer**, in the folder where you unzipped the repository:
 
 **macOS / Linux / Windows PowerShell:**
 ```sh
@@ -309,11 +321,13 @@ automatically.
 ## Part 8 – Updates, troubleshooting, removal
 
 ### Updating the drivers
-Copy the new files over the old ones (5.1), then restart:
+On the Pi (from Termius too):
 ```sh
-svc -t /service/mopeka_standard /service/esp32_hydro /service/fridge
+sh /data/shared_drivers/update.sh
 ```
-`config.ini` is not overwritten (it isn't in the repository).
+It downloads the latest version from GitHub, copies it over the old files and
+restarts the running services. `config.ini` is not overwritten (it isn't in
+the repository).
 
 ### Venus OS firmware updates
 Nothing to do: everything lives in `/data`, and `/data/rc.local` restores
