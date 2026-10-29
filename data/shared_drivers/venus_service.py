@@ -71,7 +71,7 @@ class VenusDevice(object):
 
     def __init__(self, settings_bus, uid, product_name, connection,
                  default_instance=20, custom_name='', timeout_s=600,
-                 product_id=0xFFFF, extra_paths=()):
+                 product_id=0xFFFF, extra_paths=(), setup=None):
         self.uid = uid
         self.timeout_s = timeout_s
         self.last_seen = None
@@ -108,6 +108,8 @@ class VenusDevice(object):
         self.add_paths(svc)
         for path in extra_paths:   # sensor-specific paths, all added before register()
             svc.add_path(path, None)
+        if setup is not None:      # writable/special paths: setup(service)
+            setup(svc)
 
         if getattr(svc, '_dbusname', None) is None:
             svc.register()

@@ -4,10 +4,15 @@ Venus OS driver for 12 V compressor fridges with the "Alpicool" Bluetooth
 controller (Alpicool, Brass Monkey, BougeRV, Vevor and probably Hyckes - check
 with diagnostics/fridge_probe.py first).
 
-Read-only monitoring: every poll_interval seconds it connects, sends a status
-query, publishes the answer and disconnects again. Each zone becomes a
+Every poll_interval seconds it connects, sends a status query, publishes the
+answer and disconnects again. Each zone becomes a
 com.victronenergy.temperature service of type fridge or freezer, so it shows
 up with the other environment sensors in the GUI and on VRM.
+
+Control (control = yes, the default): the zone services also carry Venus OS
+"switchable outputs", which the GUI shows on its switch pane: power and eco
+mode as toggles, and a temperature set point per zone. A change connects to
+the fridge right away, sends the command and reads the status back.
 
 The fridge accepts only one Bluetooth connection at a time. Between polls the
 phone app can connect; while the phone is connected the poll fails and the
@@ -46,6 +51,11 @@ class FridgeDriver(BleDriver):
         self.zones = []
         self._assembler = proto.FrameAssembler()
         self._failures = 0
+        self.control = config.getboolean('control', True)
+        self.control_group = config.get('control_group', 'Fridge')
+        self._status = None      # last FridgeStatus, needed to build commands
+        self._want = {}          # pending changes: powered_on, eco_mode, 0/1 = set point C
+        self._send_tries = 0
         self.gatt = GattClient(self.bus, self.mac, proto.WRITE_UUID, proto.NOTIFY_UUID,
                                self._on_notify, adapter=config.get('adapter', 'hci0'),
                                keep_connected=persistent)
@@ -66,10 +76,101 @@ class FridgeDriver(BleDriver):
                 default_instance=self.cfg.getint('device_instance', 20) + n,
                 custom_name=self.zone_names[n],
                 timeout_s=self.timeout,
-                extra_paths=EXTRA_PATHS)
+                extra_paths=EXTRA_PATHS,
+                setup=(lambda svc, n=n: self._add_controls(svc, n)) if self.control else None)
             self.zones.append(dev)
             self.devices.append(dev)
         return self.zones[i]
+
+    # ------------------------------------------------------------- controls
+
+    SO = '/SwitchableOutput/%s/%s'
+    TYPE_TOGGLE, TYPE_SETPOINT = 1, 3
+
+    def _add_channel(self, svc, ch, name, otype, writable_path, callback):
+        so = lambda p: self.SO % (ch, p)
+        svc.add_path(so('Name'), name)
+        svc.add_path(so('Status'), 0)
+        svc.add_path(so('State'), 1 if otype == self.TYPE_SETPOINT else 0,
+                     writeable=writable_path == 'State',
+                     onchangecallback=callback if writable_path == 'State' else None)
+        svc.add_path(so('Settings/Type'), otype)
+        svc.add_path(so('Settings/ValidTypes'), 1 << otype)
+        svc.add_path(so('Settings/CustomName'), name)
+        svc.add_path(so('Settings/Group'), self.control_group)
+        svc.add_path(so('Settings/ShowUIControl'), 1)
+        svc.add_path(so('Settings/Adjustable'), 0)     # type/name fixed by the driver
+        if otype == self.TYPE_SETPOINT:
+            svc.add_path(so('Dimming'), None, writeable=True, onchangecallback=callback)
+            svc.add_path(so('DimmingMin'), None)
+            svc.add_path(so('DimmingMax'), None)
+            svc.add_path(so('StepSize'), 1)
+            svc.add_path(so('Measurement'), None)
+
+    def _add_controls(self, svc, zone):
+        name = self.zone_names[zone]
+        if zone == 0:
+            self._add_channel(svc, 'power', 'Fridge power', self.TYPE_TOGGLE, 'State',
+                              lambda p, v: self._request('powered_on', bool(int(v))))
+            self._add_channel(svc, 'eco', 'Fridge eco mode', self.TYPE_TOGGLE, 'State',
+                              lambda p, v: self._request('eco_mode', bool(int(v))))
+        self._add_channel(svc, 'setpoint', '%s set point' % name, self.TYPE_SETPOINT, 'Dimming',
+                          lambda p, v, z=zone: self._request_setpoint(z, v))
+
+    def _request_setpoint(self, zone, value):
+        if self._status is None or zone >= len(self._status.zones):
+            return False
+        z = self._status.zones[zone]
+        t = float(value)
+        if z.min is not None and z.max is not None:
+            t = max(z.min, min(z.max, t))
+        return self._request(zone, int(round(t)))
+
+    def _request(self, key, value):
+        """A control changed in the GUI: queue it and contact the fridge now."""
+        if self._status is None:
+            log.warning('Fridge not read yet - ignoring %s = %s', key, value)
+            return False
+        log.info('Fridge change requested: %s = %s', key, value)
+        self._want[key] = value
+        self._send_tries = 0
+        GLib.timeout_add(300, self._send)     # collect a few slider steps first
+        return True
+
+    def _send(self):
+        if not self._want:
+            return False
+        if self.gatt.busy:
+            return True                        # try again in 300 ms
+        st = self._status
+        frames = []
+        others = dict((k, self._want[k]) for k in ('powered_on', 'eco_mode') if k in self._want)
+        if others:
+            frames.append(proto.set_others_frame(st.raw, **others))
+        for zone in (0, 1):
+            if zone in self._want:
+                frames.append(proto.set_target_frame(zone, self._want[zone], st.fahrenheit))
+        frames.append(proto.query_frame())     # read the result back
+        sent = dict(self._want)
+        self._want = {}
+        self._send_tries += 1
+        self._assembler = proto.FrameAssembler()
+        chunks = [c for f in frames for c in proto.chunks(f)]
+        self.gatt.exchange(chunks, lambda ok, err: self._on_sent(ok, err, sent))
+        return False
+
+    def _on_sent(self, ok, error, sent):
+        if ok:
+            log.info('Fridge updated: %s', sent)
+            return
+        for k, v in sent.items():
+            self._want.setdefault(k, v)
+        if self._send_tries < 3:
+            log.warning('Could not send to the fridge (%s), retrying', error)
+            GLib.timeout_add_seconds(5, self._send)
+        else:
+            log.warning('Giving up sending %s to the fridge: %s', sent, error)
+            self._want = {}
 
     # ---------------------------------------------------------------- poll
 
@@ -106,6 +207,7 @@ class FridgeDriver(BleDriver):
                 log.warning('short status frame: %s', payload.hex())
                 continue
             log.debug('%r', status)
+            self._status = status
             self._publish(status)
             self.gatt.finish()
 
@@ -127,6 +229,25 @@ class FridgeDriver(BleDriver):
                 '/Fridge/BatteryPercent': st.battery_percent,
                 '/Fridge/RunningStatus': st.running_status,
             })
+            if self.control:
+                self._publish_controls(dev, i, zone, st)
+
+    def _publish_controls(self, dev, i, zone, st):
+        so = self.SO
+        # A change from the GUI that is still waiting to be sent wins over
+        # the fridge's (older) value, so the control doesn't jump back.
+        if i == 0:
+            for ch, key, on in (('power', 'powered_on', st.powered_on),
+                                ('eco', 'eco_mode', st.eco_mode)):
+                if key not in self._want:
+                    dev[so % (ch, 'State')] = int(on)
+                dev[so % (ch, 'Status')] = 0x09 if on else 0x00
+        if i not in self._want:
+            dev[so % ('setpoint', 'Dimming')] = zone.target
+        dev[so % ('setpoint', 'Measurement')] = zone.current
+        dev[so % ('setpoint', 'DimmingMin')] = zone.min
+        dev[so % ('setpoint', 'DimmingMax')] = zone.max
+        dev[so % ('setpoint', 'Status')] = 0x09 if st.powered_on else 0x00
 
     def shutdown(self):
         self.gatt.close()

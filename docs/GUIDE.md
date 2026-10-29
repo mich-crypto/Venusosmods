@@ -316,6 +316,19 @@ connect in between. While the phone app is connected, the Pi can't read the
 fridge; after `timeout` seconds the zones show as disconnected and recover
 automatically.
 
+**Where the fridge shows up in the Remote Console**
+* **Temperatures:** each zone is a temperature sensor ("Fridge", "Freezer").
+  They appear with the other environment sensors (on the *Levels* page's
+  environment view in the newer GUI) and in the *Device list*.
+* **Controls:** the *switch pane* (the switches icon in the top bar) shows a
+  "Fridge" card with *Fridge power*, *Fridge eco mode* and a set point
+  control per zone. A change is sent right away: the Pi connects, sends the
+  command, reads the status back, and the control shows what the fridge
+  actually accepted. Set points stay within the range the fridge itself
+  reports (e.g. 0…8 °C for the fridge, −20…−12 °C for the freezer).
+* Don't want controls in Venus OS? Set `control = no` in the `[fridge]`
+  section.
+
 ---
 
 ## Part 8 – Updates, troubleshooting, removal

@@ -84,14 +84,20 @@ class Adapter(dbus.service.Object):
         self.stops += 1
 
 
-def dual_zone_status():
+def dual_zone_state():
     data = bytearray(30)
     data[1], data[2], data[4] = 1, 1, 3          # on, eco, left target 3 C
+    data[5], data[6] = 8, 0                      # fridge range 0..8
     data[14] = 4                                 # fridge 4 C
     data[15], data[16], data[17] = 0x7F, 12, 8   # 12.8 V
     data[18], data[26] = 0xEE, 0xEF              # freezer target -18, current -17
+    data[19], data[20] = 0xF4, 0xEC              # freezer range -20..-12
     data[28] = 3
-    return fridge.build_frame(fridge.CMD_QUERY, bytes(data))
+    return data
+
+
+def dual_zone_status():
+    return fridge.build_frame(fridge.CMD_QUERY, bytes(dual_zone_state()))
 
 
 class FridgeChar(Device):
@@ -110,13 +116,20 @@ class FridgeChar(Device):
     @dbus.service.method(CHAR, in_signature='aya{sv}')
     def WriteValue(self, value, options):
         assert len(value) <= 20 and options['type'] == 'request'
-        self.fridge.received += bytes(bytearray(value))
-        if self.fridge.received.endswith(fridge.query_frame()) and self.fridge.notifying:
-            self.fridge.received = b''
-            # answer in two notifications, like the real controller
-            for part in fridge.chunks(dual_zone_status()):
-                GLib.idle_add(self.fridge.notify_char.PropertiesChanged, CHAR,
-                              {'Value': dbus.Array(part, signature='y')}, [])
+        f = self.fridge
+        for cmd, data in f.assembler.feed(bytes(bytearray(value))):
+            f.commands.append((cmd, bytes(data)))
+            if cmd == fridge.CMD_SET_LEFT:
+                f.state[4] = data[0]
+            elif cmd == fridge.CMD_SET_RIGHT:
+                f.state[18] = data[0]
+            elif cmd == fridge.CMD_SET_OTHERS:
+                f.state[0:4] = data[0:4]
+            elif cmd == fridge.CMD_QUERY and f.notifying:
+                # answer in two notifications, like the real controller
+                for part in fridge.chunks(fridge.build_frame(fridge.CMD_QUERY, bytes(f.state))):
+                    GLib.idle_add(f.notify_char.PropertiesChanged, CHAR,
+                                  {'Value': dbus.Array(part, signature='y')}, [])
 
 
 class Fridge(Device):
@@ -126,6 +139,9 @@ class Fridge(Device):
         self.connected = self.notifying = False
         self.received = b''
         self.connects = self.disconnects = self.busy_rejects = 0
+        self.assembler = fridge.FrameAssembler()
+        self.commands = []
+        self.state = dual_zone_state()
         self.write_char = FridgeChar(conn, path + '/service0010/char0011', self, fridge.WRITE_UUID)
         self.notify_char = FridgeChar(conn, path + '/service0010/char0013', self, fridge.NOTIFY_UUID)
 
@@ -265,6 +281,34 @@ def main():
                 '/Fridge/TargetTemperature', '/Connected'))
             result['zone2'] = values('com.victronenergy.temperature.fridge_zone2', (
                 '/Temperature', '/TemperatureType', '/CustomName'))
+            # what the GUI's switch pane does: freezer to -15 C, power off
+            bus.call_blocking('com.victronenergy.temperature.fridge_zone2',
+                              '/SwitchableOutput/setpoint/Dimming', 'com.victronenergy.BusItem',
+                              'SetValue', 'v', [dbus.Double(-15.0, variant_level=1)])
+            bus.call_blocking('com.victronenergy.temperature.fridge_zone1',
+                              '/SwitchableOutput/power/State', 'com.victronenergy.BusItem',
+                              'SetValue', 'v', [dbus.Int32(0, variant_level=1)])
+            GLib.timeout_add_seconds(7, check_control)
+            return False
+        except dbus.exceptions.DBusException as e:
+            result['error'] = str(e)
+        loop.quit()
+        return False
+
+    def check_control():
+        try:
+            result['control'] = {
+                'freezer_target': get(bus, 'com.victronenergy.temperature.fridge_zone2',
+                                      '/Fridge/TargetTemperature'),
+                'powered': get(bus, 'com.victronenergy.temperature.fridge_zone1',
+                               '/Fridge/PoweredOn'),
+                'power_switch': get(bus, 'com.victronenergy.temperature.fridge_zone1',
+                                    '/SwitchableOutput/power/State'),
+                'freezer_range': (get(bus, 'com.victronenergy.temperature.fridge_zone2',
+                                      '/SwitchableOutput/setpoint/DimmingMin'),
+                                  get(bus, 'com.victronenergy.temperature.fridge_zone2',
+                                      '/SwitchableOutput/setpoint/DimmingMax')),
+            }
         except dbus.exceptions.DBusException as e:
             result['error'] = str(e)
         loop.quit()
@@ -303,6 +347,15 @@ def main():
     assert fridge_dev.disconnects >= 1 and fridge_dev.connects >= 1, fridge_dev.connects
     assert adapter.stops >= 3, 'not all drivers paused discovery: %d' % adapter.stops
     assert len(adapter.sessions) == 3, 'discovery not resumed: %r' % adapter.sessions
+    # GUI control: the commands reached the fridge and its read-back status
+    # shows the new values
+    c = result.get('control')
+    assert c, result
+    assert c['freezer_target'] == -15 and c['powered'] == 0 and c['power_switch'] == 0, c
+    assert c['freezer_range'] == (-20, -12), c
+    sent = [cmd for cmd, _ in fridge_dev.commands]
+    assert fridge.CMD_SET_RIGHT in sent and fridge.CMD_SET_OTHERS in sent, sent
+
     # Mopeka paired via the sync button and stored the MAC in localsettings
     assert SettingsTree.stored.get('/Settings/Devices/mopeka_standard/Mac') == MOPEKA_MAC, \
         SettingsTree.stored

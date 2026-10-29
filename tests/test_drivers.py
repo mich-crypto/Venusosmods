@@ -52,6 +52,7 @@ def _install_fakes():
     glib = types.SimpleNamespace(
         get_monotonic_time=lambda: clock['us'],
         timeout_add_seconds=lambda *a: 1,
+        timeout_add=lambda *a: 1,
         source_remove=lambda *a: None,
         MainLoop=None)
     dbus = types.ModuleType('dbus')
@@ -198,6 +199,8 @@ def dual_zone_status(left_current=4, right_current=-17, right_target=-18, unit=0
     data[15] = 0x7F                    # battery % unknown
     data[16], data[17] = 12, 8         # 12.8 V
     data[18] = right_target & 0xFF
+    data[19], data[20] = (-12) & 0xFF, (-22) & 0xFF   # freezer range -22..-12
+    data[5], data[6] = 8, 0                          # fridge range 0..8
     data[26] = right_current & 0xFF
     data[28] = 3                       # model
     return fridge.build_frame(fridge.CMD_QUERY, bytes(data))
@@ -402,6 +405,36 @@ class DriverTests(unittest.TestCase):
         self.assertEqual((z2['/Temperature'], z2['/TemperatureType']), (-17.0, venus_service.TEMP_FREEZER))
         self.assertEqual((z2['/CustomName'], z1['/Fridge/SupplyVoltage']), ('Freezer', 12.8))
         self.assertEqual(z1['/Fridge/EcoMode'], 1)
+
+    def test_fridge_controls(self):
+        d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\n'))
+        z1 = d.zones[0].service
+        self.assertEqual(z1['/SwitchableOutput/power/Settings/Type'], 1)      # toggle
+        self.assertEqual(z1['/SwitchableOutput/setpoint/Settings/Type'], 3)   # temp setpoint
+        self.assertIn('/SwitchableOutput/eco/State', z1.paths_at_register)
+        self.assertFalse(d._request('powered_on', False))     # nothing read yet
+
+        for part in fridge.chunks(dual_zone_status()):
+            d._on_notify(part)
+        z2 = d.zones[1].service
+        self.assertEqual((z2['/SwitchableOutput/setpoint/Dimming'],
+                          z2['/SwitchableOutput/setpoint/Measurement']), (-18.0, -17.0))
+
+        sent = []
+        d.gatt.exchange = lambda chunks, cb: sent.append(b''.join(chunks))
+        # freezer set point below the fridge's range is clamped to its minimum
+        d.zones[1].service  # created by the status above
+        status = d._status
+        self.assertTrue(d._request_setpoint(1, -40))
+        self.assertTrue(d._request('powered_on', False))
+        d._send()
+        self.assertEqual(sent[-1], fridge.set_others_frame(status.raw, powered_on=False) +
+                         fridge.set_target_frame(1, status.zones[1].min) + fridge.query_frame())
+        self.assertEqual(d._want, {})
+
+    def test_fridge_control_off(self):
+        d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\ncontrol = no\n'))
+        self.assertNotIn('/SwitchableOutput/power/State', d.zones[0].service)
 
     def test_fridge_requires_mac(self):
         with self.assertRaises(SystemExit):

@@ -91,20 +91,23 @@ def _f_to_c(t):
 
 
 class Zone(object):
-    __slots__ = ('target', 'current')
+    __slots__ = ('target', 'current', 'min', 'max')
 
-    def __init__(self, target, current):
+    def __init__(self, target, current, min=None, max=None):
         self.target = target
         self.current = current
+        self.min = min          # selectable set point range reported by the fridge
+        self.max = max
 
     def __repr__(self):
-        return 'Zone(target=%r, current=%r)' % (self.target, self.current)
+        return 'Zone(target=%r, current=%r, range=%r..%r)' % (
+            self.target, self.current, self.min, self.max)
 
 
 class FridgeStatus(object):
     __slots__ = ('locked', 'powered_on', 'eco_mode', 'battery_saver',
                  'fahrenheit', 'zones', 'battery_percent', 'supply_voltage',
-                 'running_status', 'model')
+                 'running_status', 'model', 'raw')
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -130,9 +133,9 @@ def parse_status(data):
             return None
         return round(_f_to_c(t), 1) if fahrenheit else float(t)
 
-    zones = [Zone(temp(data[4]), temp(data[14]))]
+    zones = [Zone(temp(data[4]), temp(data[14]), temp(data[6]), temp(data[5]))]
     if len(data) >= 27:
-        right = Zone(temp(data[18]), temp(data[26]))
+        right = Zone(temp(data[18]), temp(data[26]), temp(data[20]), temp(data[19]))
         if right.current is not None:
             zones.append(right)
 
@@ -147,4 +150,48 @@ def parse_status(data):
         battery_percent=None if battery == 0x7F else battery,
         supply_voltage=round(data[16] + data[17] / 10.0, 1),
         running_status=data[27] if len(data) > 27 else None,
-        model=_s8(data[28]) if len(data) > 28 else None)
+        model=_s8(data[28]) if len(data) > 28 else None,
+        raw=bytes(data))
+
+
+# ---------------------------------------------------------------- commands
+# Set points are sent in the fridge's display unit; the driver works in C.
+
+def _to_wire(temp_c, fahrenheit):
+    t = int(round(temp_c * 9.0 / 5.0 + 32 if fahrenheit else temp_c))
+    return t & 0xFF
+
+
+def set_target_frame(zone, temp_c, fahrenheit=False):
+    """Set point of zone 0 (left / fridge) or 1 (right / freezer)."""
+    cmd = CMD_SET_LEFT if zone == 0 else CMD_SET_RIGHT
+    return build_frame(cmd, bytes([_to_wire(temp_c, fahrenheit)]))
+
+
+def set_others_frame(raw, powered_on=None, eco_mode=None, locked=None, battery_saver=None):
+    """
+    The fridge has no per-option command: power, eco, lock and battery saver
+    are changed by sending the whole settings block, built from the last
+    status (`raw` = FridgeStatus.raw) with the requested fields changed.
+    Layout per the decompiled app (encodeSetOthers): status idx 0-13; for
+    dual-zone models also idx 18-25, hotTarget (29), model (28) and a tail.
+    """
+    block = bytearray(raw[0:14])
+    if powered_on is not None:
+        block[1] = 1 if powered_on else 0
+    if eco_mode is not None:
+        block[2] = 1 if eco_mode else 0
+    if locked is not None:
+        block[0] = 1 if locked else 0
+    if battery_saver is not None:
+        block[3] = int(battery_saver)
+    model = _s8(raw[28]) if len(raw) > 28 else 1
+    if model != 1 and len(raw) >= 30:
+        block += raw[18:26] + bytes([raw[29], raw[28]])
+        if model >= 9:
+            # runningStatus, sleep (idx 31), disinfect (idx 33), 6 zero bytes
+            at = lambda i: raw[i] if len(raw) > i else 0
+            block += bytes([at(27), at(31), at(33)]) + bytes(6)
+        else:
+            block += b'\x00'
+    return build_frame(CMD_SET_OTHERS, bytes(block))

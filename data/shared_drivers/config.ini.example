@@ -68,6 +68,8 @@ mac = 11:22:33:44:55:77
 poll_interval = 60
 # yes = stay connected between polls (faster, but the phone app is locked out)
 stay_connected = no
+# Show power, eco mode and set points as controls on the GUI's switch pane
+control = yes
 # auto = freezer if the set point is below 0 C, else fridge
 zone1_type = auto
 zone1_name = Fridge
