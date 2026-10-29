@@ -316,6 +316,19 @@ class DriverTests(unittest.TestCase):
         self.assertTrue(r.sync_pressed)
         self.assertEqual(r.temperature, 19)
 
+    def test_hydro_calibration_from_the_settings_page_replaces_the_senders_table(self):
+        d = Esp32HydroDriver('s', section('device_id = 2\nlevel_table = 20:0, 120:25, 300:75, 400:100\n'))
+        s = d.tank.service
+        for seq, height, expected in ((1, 20, 0.0), (2, 70, 12.5), (3, 210, 50.0), (4, 400, 100.0), (5, 900, 100.0), (6, 5, 0.0)):
+            d.handle_advertisement('M', {0xFFFF: proto.build(2, 50, 37.5, 75, height, sequence=seq)}, -60)      # sender says 50 %
+            self.assertAlmostEqual(s['/Level'], expected, places=1, msg=height)
+        self.assertEqual(s['/Capacity'], 0.1)                                   # the table's top, in m3
+        d.handle_advertisement('M', {0xFFFF: proto.build(2, 50, 37.5, 75, 210, sequence=7)}, -60)
+        self.assertAlmostEqual(s['/Remaining'], 0.05, places=4)
+        d2 = Esp32HydroDriver('s', section('device_id = 2\nlevel_table = 0:0, 400:100\ncapacity_l = 80\n'))
+        d2.handle_advertisement('M', {0xFFFF: proto.build(2, 50, 37.5, 75, 200, sequence=1)}, -60)
+        self.assertEqual((d2.tank.service['/Level'], d2.tank.service['/Capacity']), (62.5, 0.08))   # 50 L of 80 L
+
     def test_hydro_driver_and_timeout(self):
         d = Esp32HydroDriver('s', section('device_id = 2\ntimeout = 60\n'))
         s = d.tank.service
@@ -458,7 +471,7 @@ class DriverTests(unittest.TestCase):
 class StuckAdapterTests(unittest.TestCase):
     """BlueZ saying "in progress" while the adapter is not scanning must not stay that way."""
 
-    class BusError(Exception):
+    class BusError(sys.modules['dbus'].exceptions.DBusException):
         def __init__(self, name):
             super().__init__(name)
             self.name = name
@@ -492,8 +505,9 @@ class StuckAdapterTests(unittest.TestCase):
                 state['stops'] += 1
 
         bus = types.SimpleNamespace(get_object=lambda *a: Adapter(), add_signal_receiver=lambda *a, **k: None)
+        previous = ble_scanner.dbus.Interface
         ble_scanner.dbus.Interface = lambda obj, iface: obj
-        self.addCleanup(lambda: delattr(ble_scanner.dbus, 'Interface'))
+        self.addCleanup(lambda: setattr(ble_scanner.dbus, 'Interface', previous))
         sc = ble_scanner.BlueZScanner(bus, lambda *a: None)
         sc._adapter_path = '/org/bluez/hci0'
         return sc, state

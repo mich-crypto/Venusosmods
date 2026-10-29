@@ -54,36 +54,49 @@ page = await newPage({}, { Authorization: auth });
 await page.goto(base + '/');
 await page.getByText('Unlocked').waitFor();
 await shot(page, '02-overview');
+await page.locator('table tr').nth(3).waitFor();
 check((await page.locator('table tr').count()) >= 4, 'driver table lists the services');
 
-// gas
+// gas: a header with the numbers, a few simple settings, and a calibration popup (no typing)
 await tab(page, 'Gas');
-await page.getByText('Calibrate: with an empty bottle').waitFor();
+await page.getByRole('button', { name: 'Calibrate', exact: true }).waitFor();
 await shot(page, '03-gas');
-const capacity = page.locator('.field', { hasText: 'Usable gas volume' }).locator('input');
-check((await capacity.inputValue()) !== '', 'gas form shows a saved volume');
+check((await page.locator('.metric', { hasText: 'Level' }).locator('.num').innerText()).length > 0, 'gas tab shows the level at the top');
+await page.getByRole('heading', { name: /Sensor battery/ }).waitFor();
 check(await page.getByRole('heading', { name: /Sensor battery/ }).isVisible(), 'gas tab shows the sensor battery');
-check((await page.locator('.field', { hasText: 'Temperature type' }).locator('select').inputValue()) === 'outdoor', 'gas form offers the temperature as outdoor sensor by default');
-check((await page.locator('.field', { hasText: 'Publish temperature' }).locator('select').inputValue()) === 'yes', 'temperature service shown as on by default');
-await page.getByRole('button', { name: /Use as full/ }).click();
-const full = page.locator('.field', { hasText: 'Reading when full' }).locator('input');
-check((await full.inputValue()) === '233', '"Use as full" copies the live reading (233 mm)');
-check(await page.getByText('1 unsaved change').isVisible(), 'save bar counts changes');
-await page.locator('select').first().selectOption({ index: 1 });          // bottle preset
-await page.getByText('Preset applied').waitFor();
-await shot(page, '04-gas-edited');
+await page.locator('.field', { hasText: 'Propane share' }).waitFor({ state: 'attached' });
+check((await page.locator('.field .switch', { hasText: /temperature/i }).count()) >= 1, 'temperature is a simple on/off switch');
+check((await page.locator('.field', { hasText: 'Propane share' }).count()) === 1 && !(await page.locator('.field', { hasText: 'Propane share' }).isVisible()), 'the technical settings are folded away');
+await page.getByRole('button', { name: 'Calibrate', exact: true }).click();
+await page.locator('#wiz .livebox').waitFor();
+await shot(page, '03a-gas-calibrate');
+await page.getByText('Make it match the Mopeka app').click();
+await page.getByRole('button', { name: '−' }).first().click();
+await page.getByRole('button', { name: 'Match it', exact: true }).click();
+await page.getByText('✓ Saved').waitFor();
+check(true, 'popup: the level is matched to the app with a slider');
+await page.getByRole('button', { name: 'Calibrate more' }).click();
+await page.getByText('The bottle is empty right now').click();
+await page.getByText('✓ Saved').waitFor();
+check(true, 'popup: "empty" is recorded from the live reading');
+await page.getByRole('button', { name: 'Calibrate more' }).click();
+await page.getByText('Change the bottle type').click();
+await page.locator('#wiz .choice').first().click();
+await page.getByText('✓ Saved').waitFor();
+check(true, 'popup: bottle type chosen from a list');
+await page.getByRole('button', { name: 'Close', exact: true }).last().click();
+await page.waitForTimeout(800);
+// a simple setting goes through the save bar
+const gname = page.locator('.field', { hasText: 'Name' }).first().locator('input');
+await gname.fill('Camper gas');
 await page.getByRole('button', { name: 'Save', exact: true }).click();
 await page.locator('#toast', { hasText: 'Saved' }).waitFor();
-check(true, 'gas settings saved');
-await page.locator('#savebar').waitFor({ state: 'hidden' });
-await page.waitForTimeout(600);                                   // the form is redrawn after a save
-// "the app says 73 %": the page works out "Reading when full" and saves it
-await page.getByRole('button', { name: 'Match it and save' }).click();
-await page.locator('#toast', { hasText: 'full_mm =' }).waitFor();
-check(true, 'matching the level to 73 % saves a new "Reading when full" and says so');
+check(true, 'gas name saved');
 await page.locator('#savebar').waitFor({ state: 'hidden' });
 await page.waitForTimeout(600);
-// a wrong value is refused and marked
+// a wrong value is refused and marked (inside "More settings")
+await page.getByText('More settings').click();
+const capacity = page.locator('.field', { hasText: 'Usable gas volume' }).locator('input');
 await capacity.fill('-5');
 await page.getByRole('button', { name: 'Save', exact: true }).click();
 await page.getByText('must be at least 0').waitFor();
@@ -92,7 +105,7 @@ await page.getByRole('button', { name: 'Discard' }).click();
 
 // fridge
 await tab(page, 'Fridge');
-await page.getByText('Fridge address').waitFor();
+await page.getByRole('button', { name: 'Change the fridge' }).waitFor();
 await page.getByRole('button', { name: '5 min', exact: true }).click();
 check(await page.locator('.field', { hasText: 'Read every' }).locator('input').inputValue() === '300', 'poll interval chip sets 300 s');
 await shot(page, '05-fridge');
@@ -113,10 +126,28 @@ await page.locator('.ctl .seg').first().getByRole('button', { name: 'On' }).clic
 await page.getByText('The fridge confirmed.').waitFor({ timeout: 40000 });
 await shot(page, '05b-fridge-controls');
 
-// water
+// water: calibration popup, buttons only
 await tab(page, 'Water');
-await page.getByText('Sender ID').waitFor();
+await page.getByRole('button', { name: 'Change the sender' }).waitFor();
 await shot(page, '06-water');
+await page.getByRole('button', { name: 'Calibrate', exact: true }).click();
+await page.getByText('Quick: empty and full').click();
+await page.getByRole('button', { name: '100 L' }).click();
+await page.getByRole('button', { name: 'The tank is empty now' }).click();
+await page.getByRole('button', { name: 'The tank is full now' }).click();
+await page.getByRole('button', { name: 'Save', exact: true }).click();
+await page.locator('#toast', { hasText: 'Record empty first' }).waitFor();                // the test sender reports one fixed height
+check(true, 'water popup refuses a calibration whose full height is not above empty');
+await shot(page, '06a-water-calibrate');
+await page.getByRole('button', { name: 'Back' }).click();
+await page.getByText('Accurate: fill it in steps').click();
+await page.getByRole('button', { name: 'The tank is empty: start' }).click();
+await page.getByRole('button', { name: '+5 L' }).click();
+await page.getByRole('button', { name: 'Record this level' }).click();
+await page.locator('#toast', { hasText: 'did not rise' }).waitFor();
+check(true, 'step-by-step calibration waits for the water level to rise');
+await page.getByRole('button', { name: 'Close', exact: true }).last().click();
+await page.waitForTimeout(500);
 
 // battery
 await tab(page, 'Battery');
@@ -231,7 +262,28 @@ await page.locator('dialog pre', { hasText: 'INFO' }).waitFor();         // the 
 check((await page.locator('dialog pre').innerText()).includes('INFO fridge poll ok'), 'log viewer shows the log');
 await shot(page, '10-files-log');
 check(page.errors.length === 0, 'no console errors (unlocked): ' + page.errors.join(' | '));
-await page.context().close();
+
+// setup guide: scan, pick, add (this adds the sensor to the test setup)
+await page.keyboard.press('Escape');
+await page.getByRole('button', { name: 'Setup guide' }).click();
+await page.getByText('Pick what you want to add').waitFor();
+await shot(page, '08-setup-guide');
+await page.getByText('Gas bottle level').click();
+await page.getByText('ready to pair', { exact: true }).waitFor({ timeout: 30000 });
+check(true, 'the scan finds the gas sensor and says it is ready to pair');
+await shot(page, '08a-setup-gas-scan');
+await page.getByRole('button', { name: 'Use this' }).first().click();
+await page.getByText('Which bottle is it?').waitFor();
+await page.locator('#wiz .choice').first().click();
+await page.getByRole('button', { name: 'Add the sensor' }).click();
+await page.getByText('✓ Added').waitFor();
+await page.getByText('Where you will see it').waitFor();
+check(true, 'the guide adds the sensor and says where to find it in Venus OS');
+await shot(page, '08b-setup-gas-done');
+await page.getByRole('button', { name: 'Back to the list' }).click();
+await page.getByText('Where do I see it in Venus OS?').click();
+await page.getByText('the switches icon in the top bar').first().waitFor();
+await page.getByRole('button', { name: 'Close', exact: true }).last().click();
 
 // ---- 4. phone size
 page = await newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 }, { Authorization: auth });

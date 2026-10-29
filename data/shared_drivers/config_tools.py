@@ -210,6 +210,9 @@ SCHEMA = {
               min=10, max=86400, advanced=True),
             F('temperature_instance', 'int', 'Temperature VRM instance', '', min=0, max=999,
               advanced=True, default='20'),
+            F('level_table', 'text', 'Calibration table', 'height_mm:litres pairs made by the Calibrate button. Replaces the '
+              'sender\'s own table; clear it to go back to that one.', advanced=True),
+            F('capacity_l', 'float', 'Tank size', 'Litres; set by the Calibrate button.', unit='L', min=0, max=100000, advanced=True),
             F('fluid_type', 'select', 'Fluid type', '', options=FLUID_TYPES, advanced=True),
             F('service', 'text', 'Service name', 'D-Bus name; changing it creates a new device.',
               readonly=True, advanced=True),

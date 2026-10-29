@@ -1,5 +1,26 @@
 # Step-by-step installation guide
 
+## Quick start (most people stop here)
+
+1. Open an SSH session to the Pi as `root` (Termius on an iPad works) and paste:
+
+   ```sh
+   wget -qO- https://raw.githubusercontent.com/mich-crypto/Venusosmods/master/get.sh | sh
+   ```
+
+2. It prints the address of the settings page and a password. Open the address on your phone and press **Unlock**.
+3. The **setup guide** opens by itself the first time (later: the *Setup guide* button at the top). Pick what you want to add:
+   - **Gas bottle:** press the sensor's button, the guide finds it, press *Use this*, pick the bottle.
+   - **Fridge:** switch the fridge on, the guide finds it, press *Use this*.
+   - **Water tank:** the ESP32 sender is found the same way (build it with parts 2–4 below).
+   - **Starlink** and **Battery (JK BMS)** are one step each.
+4. Calibrate in the popup on the Gas or Water tab (*Calibrate*): press "empty" or "full" when the tank is, or move a slider
+   to what the Mopeka app shows. No numbers to type.
+5. *Where do I see it in Venus OS?* in the guide shows where each device appears on the Remote Console.
+
+Run the same command again to update; your settings are kept. Everything below is the manual way and the reference
+for building the water sensor.
+
 This guide takes you from parts on the table to tanks and the fridge on your
 Venus OS screen and in VRM. Work through it in order. Each part ends with a
 check, so you know it works before moving on.

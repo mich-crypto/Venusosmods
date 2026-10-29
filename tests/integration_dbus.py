@@ -195,6 +195,13 @@ class Root(dbus.service.Object):
     def GetManagedObjects(self):
         objs = {dbus.ObjectPath('/org/bluez/hci0'): {'org.bluez.Adapter1': {'Powered': True}}}
         objs.update(self.fridge.objects())
+        # what BlueZ has heard of the two broadcasting sensors, for the settings page's scan
+        mop = mopeka_packet([(19, 0), (9, 12)] + [(0, 0)] * 10, sync=True)
+        esp = proto.build(1, 50.0, 37.5, 75.0, 210, temperature=12.5, sequence=1)
+        for mac, company, payload in ((MOPEKA_MAC, 0x000D, mop), (ESP_MAC, 0xFFFF, esp)):
+            objs[dbus.ObjectPath(dev_path(mac))] = {DEV: {
+                'Address': mac, 'RSSI': dbus.Int16(-62),
+                'ManufacturerData': dbus.Dictionary({dbus.UInt16(company): dbus.Array(payload, signature='y')}, signature='qv')}}
         return objs
 
     @dbus.service.method('com.victronenergy.Settings', in_signature='aa{sv}', out_signature='aa{sv}')
@@ -285,6 +292,14 @@ def check_web_results(web, result):
     assert st == 200 and fr['available'] and [z['output'] for z in fr['zones']] == ['setpoint', 'setpoint2'], fr
     assert fr['zones'][1]['min'] == -20 and fr['zones'][1]['max'] == -12, fr['zones']
     assert res['fridge_set'][0] == 200 and res['fridge_bad'][0] == 400, (res['fridge_set'], res['fridge_bad'])
+    st, su = res['setup']
+    assert st == 200 and su['bluetooth'] and not su['first_run'] and su['gas']['configured'] and su['fridge']['mac'] == FRIDGE_MAC, su
+    assert su['gas']['connected'] and su['water']['connected'], su
+    assert res['scan_start'][0] == 200 and res['scan_start'][1]['seconds'] > 0, res['scan_start']
+    st, sc = res['scan']
+    kinds = dict((d['kind'], d) for d in sc['devices'])
+    assert st == 200 and set(kinds) >= {'gas', 'water', 'fridge'}, sc
+    assert kinds['gas']['sync'] and kinds['gas']['mac'] == MOPEKA_MAC and kinds['water']['device_id'] == 1, kinds
     st, mb = res['mopeka_battery']
     assert st == 200 and mb['available'] and mb['volts'] == 2.5, mb
     st, sl = res['starlink']
@@ -493,6 +508,9 @@ def main():
             http_call('fridge_set', 'POST', '/api/fridge_set', {'output': 'setpoint', 'value': '5'}, dict(auth, **csrf))
             http_call('fridge_bad', 'POST', '/api/fridge_set', {'output': 'setpoint', 'value': '30'}, dict(auth, **csrf))
             http_call('mopeka_battery', 'GET', '/api/mopeka_battery', headers=auth)
+            http_call('setup', 'GET', '/api/setup', headers=auth)
+            http_call('scan_start', 'POST', '/api/scan_start', {}, dict(auth, **csrf))
+            http_call('scan', 'GET', '/api/scan', headers=auth)
             http_call('raw_gas', 'GET', '/api/rawlog?source=gas', headers=auth)
             http_call('raw_fridge', 'GET', '/api/rawlog?source=fridge', headers=auth)
             http_call('log', 'GET', '/api/log?service=fridge', headers=auth)
@@ -589,7 +607,7 @@ def main():
     # drivers must have paused for it, and everyone resumed afterwards
     assert fridge_dev.disconnects >= 1 and fridge_dev.connects >= 1, fridge_dev.connects
     assert adapter.stops >= 3, 'not all drivers paused discovery: %d' % adapter.stops
-    assert len(sessions_running) == 3, 'discovery not resumed: %r' % sessions_running
+    assert len(sessions_running) >= 3, 'discovery not resumed: %r' % sessions_running   # the three scanners (+ the page's own scan)
     # GUI control: the commands reached the fridge and its read-back status
     # shows the new values
     c = result.get('control')

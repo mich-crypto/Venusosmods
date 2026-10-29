@@ -37,6 +37,7 @@ from gi.repository import GLib  # noqa: E402
 
 import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
+import devices  # noqa: E402
 import rawlog  # noqa: E402
 import netmon  # noqa: E402
 import starlink  # noqa: E402
@@ -326,6 +327,10 @@ class App(object):
             'POST /api/driver_config': self.api_driver_config_save,
             'GET /api/battery': self.api_battery,
             'GET /api/starlink': self.api_starlink,
+            'GET /api/setup': self.api_setup,
+            'POST /api/scan_start': self.api_scan_start,
+            'GET /api/scan': self.api_scan,
+            'POST /api/device_add': self.api_device_add,
             'GET /api/fridge': self.api_fridge,
             'POST /api/fridge_set': self.api_fridge_set,
             'GET /api/mopeka_battery': self.api_mopeka_battery,
@@ -562,6 +567,160 @@ class App(object):
         rows = self.starlink.store.data.get('series', {}).get('mopeka_battery', [])
         return jsonr({'ok': True, 'available': bool(v), 'volts': v.get('/BatteryVoltage'), 'percent': v.get('/Mopeka/BatteryPercent'),
                       'low_at': self.starlink.tg['sensor_pct'], 'series': rows[-1500:]})
+
+    # ------------------------------------------------------ setup guide
+    # kind -> (service folder and config section, config kind, default name)
+    KINDS = {'gas': ('mopeka_standard', 'mopeka', 'Gas bottle'), 'fridge': ('fridge', 'fridge', 'Fridge'),
+             'water': ('esp32_hydro', 'esp32', 'Fresh water')}
+    SCAN_SECONDS = 20
+    scan_until = 0.0
+
+    def managed_objects(self):
+        om = dbus.Interface(self.bus.get_object('org.bluez', '/'), 'org.freedesktop.DBus.ObjectManager')
+        return om.GetManagedObjects(timeout=4)
+
+    def adapter_path(self):
+        try:
+            for path, ifaces in self.managed_objects().items():
+                if 'org.bluez.Adapter1' in ifaces and str(path).endswith('/hci0'):
+                    return str(path)
+        except dbus.exceptions.DBusException:
+            pass
+        return None
+
+    def api_scan_start(self, req):
+        now = time.time()
+        if now < self.scan_until:
+            return jsonr({'ok': True, 'seconds': int(self.scan_until - now)})
+        path = self.adapter_path()
+        if not path:
+            return jsonr({'ok': False, 'error': 'No Bluetooth adapter found. Is Bluetooth switched on in Venus OS (Settings > General)?'}, 503)
+        try:
+            adapter = dbus.Interface(self.bus.get_object('org.bluez', path), 'org.bluez.Adapter1')
+            adapter.SetDiscoveryFilter({'Transport': dbus.String('le'), 'DuplicateData': dbus.Boolean(True)})
+            adapter.StartDiscovery()
+            self.scan_owned = True
+        except dbus.exceptions.DBusException as e:
+            if not (e.get_dbus_name() or '').endswith('InProgress'):
+                return jsonr({'ok': False, 'error': 'Bluetooth would not start scanning: %s' % e}, 503)
+            self.scan_owned = False                       # a driver is already scanning: its advertisements reach us too
+        self.scan_until = now + self.SCAN_SECONDS
+        GLib.timeout_add_seconds(self.SCAN_SECONDS, self._scan_stop, path)
+        return jsonr({'ok': True, 'seconds': self.SCAN_SECONDS})
+
+    def _scan_stop(self, path):
+        if getattr(self, 'scan_owned', False):
+            try:
+                dbus.Interface(self.bus.get_object('org.bluez', path), 'org.bluez.Adapter1').StopDiscovery()
+            except dbus.exceptions.DBusException:
+                pass
+        return False
+
+    def configured_macs(self):
+        out = {}
+        for sec in ct.read_driver_config(self.read_text(self.driver_config)):
+            mac = devices.normalize_mac(sec['values'].get('mac'))
+            if mac:
+                out[mac] = sec['section']
+        return out
+
+    def api_scan(self, req):
+        show_all = req.query.get('all') == '1'
+        known = self.configured_macs()
+        found, others = [], 0
+        try:
+            objects = self.managed_objects()
+        except dbus.exceptions.DBusException as e:
+            return jsonr({'ok': False, 'error': 'Bluetooth is not answering: %s' % e}, 503)
+        for path, ifaces in objects.items():
+            d = ifaces.get('org.bluez.Device1')
+            if not d or 'RSSI' not in d:                                      # not heard recently
+                continue
+            mfr = dict((int(k), bytes(bytearray(v))) for k, v in (d.get('ManufacturerData') or {}).items())
+            name = str(d.get('Name', d.get('Alias', '')))
+            info = devices.classify(name, [str(u).lower() for u in d.get('UUIDs', [])], mfr)
+            mac = str(d['Address']).upper()
+            rssi = int(d['RSSI'])
+            if info is None:
+                others += 1
+                if not show_all or mac.replace(':', '') == name.replace('-', ''):
+                    continue
+                info = {'kind': None, 'label': name or 'Unnamed device', 'name': name}
+            found.append(dict(info, mac=mac, rssi=rssi, bars=devices.bars(rssi), known=known.get(mac)))
+        found.sort(key=lambda x: -x['rssi'])
+        return jsonr({'ok': True, 'scanning': time.time() < self.scan_until, 'devices': found, 'others': others})
+
+    def api_setup(self, req):
+        sections = ct.read_driver_config(self.read_text(self.driver_config))
+        states = dict((s['name'], s) for s in self.service_states())
+        ours, batteries = self.devices()
+        live = set(d['service'].split('.')[-1] for d in ours)
+        out = {}
+        for kind, (service, ckind, label) in self.KINDS.items():
+            sec = next((x for x in sections if x['kind'] == ckind), None)
+            st = states.get(service, {})
+            out[kind] = {'configured': sec is not None, 'section': sec['section'] if sec else None,
+                         'mac': devices.normalize_mac(sec['values'].get('mac')) if sec else None,
+                         'name': (sec['values'].get('custom_name') or label) if sec else None,
+                         'enabled': bool(st.get('enabled')), 'running': st.get('state') == 'up',
+                         'connected': any(l.startswith(service) or l.startswith(sec['values'].get('service') or '-')
+                                          for l in live) if sec else False}
+        hub = self.starlink
+        sb = self.serialbattery_path()
+        out['starlink'] = dict(hub.summary(), venus=hub.venus_service)
+        out['battery'] = {'installed': bool(sb), 'found': len(batteries)}
+        out['first_run'] = not any(out[k]['configured'] for k in self.KINDS)
+        out['bluetooth'] = self.adapter_path() is not None
+        out['gas_presets'] = [{'label': p['label']} for p in ct.SCHEMA['mopeka']['presets']]
+        return jsonr(dict(out, ok=True))
+
+    def api_device_add(self, req):
+        f = req.form
+        kind = f.get('kind', '')
+        if kind not in self.KINDS:
+            return jsonr({'ok': False, 'error': 'unknown device type'}, 400)
+        service, ckind, label = self.KINDS[kind]
+        text = self.read_text(self.driver_config)
+        parsed = ct.parse_ini(text)
+        section = next((x for x in parsed if x.lower() == service), service)
+        values = {}
+        mac = f.get('mac', '').strip()
+        if mac:
+            values['mac'] = devices.normalize_mac(mac)
+            if not values['mac']:
+                return jsonr({'ok': False, 'error': 'that is not a Bluetooth address like AA:BB:CC:DD:EE:FF'}, 400)
+        elif kind == 'fridge':
+            return jsonr({'ok': False, 'error': 'the fridge needs its Bluetooth address: scan for it first'}, 400)
+        name = f.get('name', '').strip()
+        if kind == 'gas':
+            values['custom_name'] = name or label
+            preset = f.get('preset', '')
+            presets = ct.SCHEMA['mopeka']['presets']
+            if preset.isdigit() and int(preset) < len(presets):
+                values.update(presets[int(preset)]['values'])
+        elif kind == 'water':
+            values['custom_name'] = name or label
+            if f.get('device_id', '').isdigit():
+                values['device_id'] = f['device_id']
+        else:
+            values['zone1_name'], values['zone2_name'] = 'Fridge', 'Freezer'
+            values['control'] = 'yes'
+            values['poll_interval'] = {'fast': '60', 'normal': '300', 'slow': '900'}.get(f.get('speed', 'normal'), '300')
+            if section in parsed:                         # re-adding keeps the names and speed the user chose
+                values = {'mac': values['mac']}
+        clean, errors = ct.validate_section(ckind, values)
+        if errors:
+            return jsonr({'ok': False, 'errors': errors, 'error': 'Please check: ' + '; '.join(errors.values())}, 400)
+        new = ct.set_values(text, section, dict((k, v if v != '' else None) for k, v in clean.items()))
+        problem = ct.check_syntax(new)
+        if problem:
+            return jsonr({'ok': False, 'error': 'file would be invalid: ' + problem}, 400)
+        ct.write_file(self.driver_config, new)
+        was_running = self.set_service(service, 'enable')
+        if was_running:
+            self.restart_service(service)                 # pick up the new address
+        return jsonr({'ok': True, 'kind': kind, 'section': section, 'service': service, 'restarted': was_running,
+                      'message': '%s added. It shows up in Venus OS within a minute.' % label})
 
     # --------------------------------------------------------- fridge controls
     FRIDGE_OUTPUTS = ('power', 'eco', 'setpoint', 'setpoint2')
@@ -1012,6 +1171,25 @@ class App(object):
         return '[ -e %s ] || ln -s %s %s' % (self.link(name), os.path.join(self.init_dir, name),
                                              self.link(name))
 
+    def set_service(self, name, action):
+        """Link a service into /service (and /data/rc.local, so it survives reboots) or take it out again."""
+        line = self.rc_line(name)
+        rc = self.read_text(self.rc_local) or '#!/bin/sh\n'
+        lines = [l for l in rc.split('\n') if l.strip() != line]
+        was_linked = os.path.lexists(self.link(name))
+        if action == 'enable':
+            if not was_linked:
+                os.symlink(os.path.join(self.init_dir, name), self.link(name))
+            lines = [l for l in lines if l != ''] + [line]
+        else:
+            if was_linked:
+                subprocess.run(['svc', '-d', self.link(name), self.link(name) + '/log'], timeout=5)
+                os.remove(self.link(name))
+        with open(self.rc_local, 'w') as f:
+            f.write('\n'.join(lines).rstrip('\n') + '\n')
+        os.chmod(self.rc_local, 0o755)
+        return was_linked
+
     def api_service(self, req):
         name, action = req.form.get('name', ''), req.form.get('action', '')
         if name not in self.init_services() or action not in ('enable', 'disable'):
@@ -1019,20 +1197,7 @@ class App(object):
         if name == 'web_ui' and action == 'disable':
             return jsonr({'ok': False, 'error': 'Disable this page over SSH, it cannot be '
                           'switched back on from here'}, 400)
-        line = self.rc_line(name)
-        rc = self.read_text(self.rc_local) or '#!/bin/sh\n'
-        lines = [l for l in rc.split('\n') if l.strip() != line]
-        if action == 'enable':
-            if not os.path.lexists(self.link(name)):
-                os.symlink(os.path.join(self.init_dir, name), self.link(name))
-            lines = [l for l in lines if l != ''] + [line]
-        else:
-            if os.path.lexists(self.link(name)):
-                subprocess.run(['svc', '-d', self.link(name), self.link(name) + '/log'], timeout=5)
-                os.remove(self.link(name))
-        with open(self.rc_local, 'w') as f:
-            f.write('\n'.join(lines).rstrip('\n') + '\n')
-        os.chmod(self.rc_local, 0o755)
+        self.set_service(name, action)
         return jsonr({'ok': True, 'message': '%s %sd' % (name, action)})
 
     def settings_set(self, path, value):

@@ -173,6 +173,21 @@ table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-
 .sp { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .sp input[type=range] { width:min(320px,60vw); max-width:none; accent-color:#fff; padding:0; min-height:30px; border:0; background:none; }
 .sp .val { font-size:2rem; font-weight:600; min-width:4.2ch; text-align:center; font-variant-numeric:tabular-nums; }
 .sp .btn { min-width:46px; font-size:1.2rem; }
+dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hidden; } dialog#wiz[open] { display:flex; flex-direction:column; }
+.wiz-head { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--line); }
+.wiz-body { padding:16px 18px 20px; overflow:auto; min-height:200px; }
+.wiz-nav { margin-top:18px; justify-content:flex-end; }
+.wiz-body h4 { margin:0 0 10px; font-size:1rem; }
+.choices { display:grid; gap:10px; margin:10px 0; }
+.choice { text-align:left; background:var(--card); border:1px solid var(--line); border-radius:4px; padding:14px 16px; cursor:pointer; display:flex; flex-direction:column; gap:3px; }
+.choice:hover { border-color:var(--ink); } .choice .ct { font-weight:600; } .choice .cs { color:var(--muted); font-size:.85rem; }
+.steps { margin:0 0 12px; padding-left:20px; } .steps li { margin:4px 0; } .tips { margin:8px 0 0; padding-left:20px; color:var(--muted); font-size:.88rem; }
+.scanrow { display:flex; gap:12px; align-items:center; border:1px solid var(--line); border-radius:4px; padding:10px 12px; margin:8px 0; }
+.sr-main { flex:1; min-width:0; } .sr-title { font-weight:600; }
+.stepper { margin:10px 0; } .stepper .sp { justify-content:center; } .stepper input[type=range] { width:100%; max-width:none; accent-color:#fff; }
+.bigval { font-size:2.2rem; font-weight:600; font-variant-numeric:tabular-nums; min-width:5ch; text-align:center; }
+.livebox { text-align:center; border:1px solid var(--line); border-radius:4px; padding:12px; margin:0 0 12px; }
+.okbox { border:1px solid var(--ok); border-radius:4px; padding:14px 16px; margin:0 0 12px; } .okbox .big { color:var(--ok); }
 @media (max-width:700px) {
   .hero { grid-template-columns:1fr; } .hero .metric { border-right:0; border-bottom:1px solid var(--line); } .hero .metric:last-child { border-bottom:0; }
   .tile .v, .stat .v { font-size:1.3rem; } .two { grid-template-columns:1fr; } .big { font-size:1.8rem; } main { padding:12px; }
@@ -193,6 +208,7 @@ table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-
 <div class="savebar" id="savebar" hidden><div class="in" id="saveinner"></div></div>
 <div id="toast"></div>
 <dialog id="dlg"></dialog>
+<dialog id="wiz"></dialog>
 
 <script>
 'use strict';
@@ -266,7 +282,7 @@ function renderLock() {
   if (!st.password_set) {
     box.append(h('span', { class: 'chip warn', title: 'Set a password in config.ini ([web] password) to be able to change settings' }, 'Read-only'));
   } else if (st.authed) {
-    box.append(h('span', { class: 'chip ok' }, 'Unlocked'));
+    box.append(h('button', { type: 'button', class: 'btn small', style: 'margin-right:10px', onclick: () => openSetup() }, 'Setup guide'), h('span', { class: 'chip ok' }, 'Unlocked'));
   } else {
     box.append(h('a', { class: 'btn primary small', href: '/unlock' }, 'Unlock to edit'));
   }
@@ -294,8 +310,8 @@ function lockedNotice() {
 async function renderTab() {
   hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
   const main = clear($('#main'));
-  const f = { overview: tabOverview, fridge: () => tabDriver('fridge'), gas: () => tabDriver('mopeka'),
-              water: () => tabDriver('esp32'), battery: tabBattery, starlink: tabStarlink, raw: tabRaw, files: tabFiles }[S.tab];
+  const f = { overview: tabOverview, fridge: () => tabDevice('fridge'), gas: () => tabDevice('mopeka'),
+              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, raw: tabRaw, files: tabFiles }[S.tab];
   await f(main);
 }
 
@@ -344,6 +360,13 @@ function batteryCard(d) {
 
 async function tabOverview(main) {
   const st = S.state;
+  if (canEdit()) {
+    const su = await api('/api/setup');
+    const missing = su.ok ? ['gas', 'fridge', 'water'].filter(k => !su.data[k].configured) : [];
+    if (missing.length) main.append(h('div', { class: 'card', style: 'display:flex;gap:14px;align-items:center;flex-wrap:wrap' }, h('div', { style: 'flex:1;min-width:220px' },
+      h('h3', {}, su.data.first_run ? 'Welcome' : 'Add more devices'), h('div', {}, su.data.first_run ? 'Let\'s add your devices. The guide finds them over Bluetooth and puts them in Venus OS.' : 'Not added yet: ' + missing.map(k => ({ gas: 'gas sensor', fridge: 'fridge', water: 'water tank' })[k]).join(', ') + '.')),
+      primary(su.data.first_run ? 'Start the setup guide' : 'Open the setup guide', () => openSetup())));
+  }
   const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard), [starlinkCard(st.starlink)]).filter(Boolean);
   main.append(h('h2', {}, 'Now'));
   main.append(cards.length ? h('div', { class: 'grid' }, cards) :
@@ -600,54 +623,90 @@ async function mopekaBatteryCard() {
   return card;
 }
 
-async function tabDriver(kind) {
-  const main = $('#main');
+// ------------------------------------------------- fridge, gas and water tabs
+const DEV = {
+  mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['custom_name', 'temperature_service'] },
+  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['custom_name', 'temperature_service'] },
+  fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['zone1_name', 'zone2_name', 'poll_interval', 'control'] },
+};
+
+// a yes/no setting as a switch; the hidden select keeps the save bar working
+function toggleRow(form, f, section) {
+  const raw = section.values[f.key] || f.default || '';
+  const orig = raw === '' ? '' : (truthy(raw) ? 'yes' : 'no');
+  const select = h('select', { hidden: true }, h('option', { value: '' }, ''), h('option', { value: 'yes' }, 'yes'), h('option', { value: 'no' }, 'no'));
+  select.value = orig;
+  const box = h('input', { type: 'checkbox', checked: orig === 'yes', disabled: !canEdit() });
+  box.addEventListener('change', () => { select.value = box.checked ? 'yes' : 'no'; updateFormBar(); });
+  form.fields[f.key] = { input: select, orig, err: h('div'), def: f };
+  return h('div', { class: 'field' }, h('label', { class: 'switch' }, box, h('span', {}, f.label)), f.help ? h('div', { class: 'help' }, f.help) : null);
+}
+
+function emptyDevice(spec) {
+  return h('div', { class: 'card', style: 'text-align:center;padding:36px 18px' }, h('div', { class: 'big' }, 'Not set up yet'),
+    h('div', { class: 'muted', style: 'margin:8px 0 18px' }, 'No ' + spec.what + ' has been added. The setup guide finds it over Bluetooth and adds it to Venus OS.'),
+    h('button', { type: 'button', class: 'btn primary', disabled: !canEdit(), onclick: () => { const w = wizOpen(spec.title); spec.add(w); w.back = () => openSetup(); } }, 'Add the ' + spec.what));
+}
+
+function deviceHeader(kind, section) {
+  const st = S.state, spec = DEV[kind];
+  const dev = deviceOf(st, { mopeka: 'gas', esp32: 'water', fridge: 'fridge' }[kind]);
+  const v = dev ? dev.values : {};
+  const card = h('div', { class: 'card' });
+  const actions = h('div', { class: 'row', style: 'margin-top:12px' });
+  const open = (fn, back) => () => { const w = wizOpen(spec.title); fn(w); w.back = () => openSetup(); };
+  if (kind === 'mopeka') {
+    card.append(h('h3', {}, 'Gas bottle ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
+      h('div', { class: 'hero', style: 'grid-template-columns:repeat(3,1fr);margin:8px 0 0' },
+        metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L left'),
+        metric('Sensor reads', v['/Mopeka/DistanceMm'] == null ? '–' : String(Math.round(v['/Mopeka/DistanceMm'])), 'mm', 'echo quality ' + (v['/Mopeka/EchoQuality'] ?? '–')),
+        metric('Temperature', v['/Temperature'] == null ? '–' : v['/Temperature'].toFixed(0), '°C', 'at the sensor')));
+    actions.append(primary('Calibrate', () => flowGasCalibrate(), !canEdit()), plain('Change the sensor', open(flowGas)));
+  } else if (kind === 'esp32') {
+    card.append(h('h3', {}, 'Water tank ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
+      h('div', { class: 'hero', style: 'grid-template-columns:repeat(3,1fr);margin:8px 0 0' },
+        metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L of ' + (v['/Capacity'] == null ? '–' : (v['/Capacity'] * 1000).toFixed(0)) + ' L'),
+        metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sender\'s own table'),
+        metric('Water temperature', v['/Temperature'] == null ? '–' : v['/Temperature'].toFixed(1), '°C', '')));
+    actions.append(primary('Calibrate', () => flowWaterCalibrate(), !canEdit()), plain('Change the sender', open(flowWater)));
+  } else {
+    const zones = (st.devices || []).filter(d => d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values).sort((a, b) => a.service < b.service ? -1 : 1);
+    card.append(h('h3', {}, 'Fridge ', zones[0] ? statusChip(zones[0]) : h('span', { class: 'chip' }, 'no data yet')),
+      zones.length ? h('div', { class: 'hero', style: 'grid-template-columns:repeat(' + Math.min(3, zones.length + 1) + ',1fr);margin:8px 0 0' },
+        zones.map((z, i) => metric(i === 0 ? 'Fridge' : 'Freezer', z.values['/Temperature'] == null ? '–' : z.values['/Temperature'].toFixed(1), '°C', 'set to ' + (z.values['/Fridge/TargetTemperature'] == null ? '–' : z.values['/Fridge/TargetTemperature'].toFixed(0)) + ' °C')),
+        metric('Supply', zones[0].values['/Fridge/SupplyVoltage'] == null ? '–' : zones[0].values['/Fridge/SupplyVoltage'].toFixed(1), 'V', zones[0].values['/Fridge/PoweredOn'] ? 'running' : 'off')) :
+        h('div', { class: 'muted' }, 'No reading yet. The first one can take a minute. If it never comes, close the phone app and press "Change the fridge" to scan again.'));
+    actions.append(plain('Change the fridge', open(flowFridge)));
+  }
+  if (!dev && kind !== 'fridge') card.append(h('div', { class: 'muted', style: 'margin-top:8px' }, 'Waiting for the first reading. If nothing arrives within a minute, press "Change the ' + (kind === 'mopeka' ? 'sensor' : 'sender') + '" to scan again.'));
+  card.append(actions);
+  return card;
+}
+
+async function tabDevice(kind) {
+  const main = $('#main'), spec = DEV[kind];
   S.forms = {};
-  const live = liveDevice(kind);
   if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
   const r = await loadDriver();
   if (!r.ok) { main.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read config.ini')); return; }
-  const sections = S.driver.sections.filter(s => s.kind === kind);
+  const section = S.driver.sections.find(s => s.kind === kind);
+  if (!section) { if (!canEdit()) main.append(lockedNotice()); main.append(emptyDevice(spec)); return; }
+  if (!canEdit()) main.append(lockedNotice());
+  main.append(deviceHeader(kind, section));
   if (kind === 'fridge') main.append(fridgeControls());
   if (kind === 'mopeka') { const b = await mopekaBatteryCard(); if (b) main.append(b); }
-  if (!canEdit()) main.append(lockedNotice());
-  if (!sections.length) {
-    main.append(h('div', { class: 'banner' }, 'No [' + ({ fridge: 'fridge', mopeka: 'mopeka_standard', esp32: 'esp32_hydro', starlink: 'starlink' }[kind]) + '] section in config.ini yet. Add it on the Files & logs tab (see config.ini.example for a template).'));
-    return;
-  }
-  for (const section of sections) {
-    const { form, card, normal, adv } = formFor(section);
-    S.forms[section.section] = form;
-    // live panel with calibration helpers
-    const dev = live.find(d => (d.service.split('.').pop() === (section.values.service || section.section))) || live[0];
-    if (dev) card.append(livePanel(kind, dev, form));
-    if (kind === 'mopeka' && section.presets.length) card.append(presetPicker(form, section));
-    normal.forEach(f => card.append(fieldRow(form, f, section)));
-    if (adv.length) card.append(h('details', { class: 'adv' }, h('summary', {}, 'Advanced'), adv.map(f => fieldRow(form, f, section))));
-    if (kind === 'mopeka') card.append(h('div', { class: 'row' }, h('button', { class: 'btn small', disabled: !canEdit(), onclick: () =>
-      confirmThen('Forget the paired sensor? Then press the sync button on the sensor you want to use.', () => post('/api/pair_reset', { section: section.section })) }, 'Pair another sensor')));
-    if (kind === 'esp32') card.append(h('div', { class: 'muted' }, 'The height-to-litres table of the tank lives in the ESP32 itself (see docs/calibration.md); it is not part of this file.'));
-    main.append(card);
-  }
-}
 
-function livePanel(kind, dev, form) {
-  const v = dev.values, box = h('div', { class: 'banner' });
-  if (kind === 'mopeka') {
-    const dist = v['/Mopeka/DistanceMm'], pctInput = h('input', { type: 'number', value: '73', min: 1, max: 100, style: 'width:80px;min-height:34px' });
-    box.append(h('div', {}, h('b', {}, 'Now: '), num(v['/Level'], 0) + ' % · sensor reads ' + num(dist, 0) + ' mm · echo quality ' + (v['/Mopeka/EchoQuality'] ?? '–')),
-      h('div', { class: 'muted' }, 'Calibrate: with an empty bottle press "Use as empty", right after a refill press "Use as full", then save.'),
-      h('div', { class: 'row', style: 'margin-top:8px' },
-        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => setField(form, 'empty_mm', Math.round(dist)) }, 'Use as empty (' + num(dist, 0) + ' mm)'),
-        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => setField(form, 'full_mm', Math.round(dist)) }, 'Use as full (' + num(dist, 0) + ' mm)')),
-      h('div', { class: 'row', style: 'margin-top:8px' }, h('span', { class: 'muted' }, 'Right now the Mopeka app says'), pctInput, '%',
-        h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || dist == null, onclick: () => calibrateTo(form, parseFloat(pctInput.value), dist) }, 'Match it and save')));
-  } else if (kind === 'fridge') {
-    box.append(h('b', {}, 'Now: '), num(v['/Temperature'], 1) + ' °C · set to ' + num(v['/Fridge/TargetTemperature'], 0) + ' °C · supply ' + num(v['/Fridge/SupplyVoltage'], 1) + ' V');
-  } else {
-    box.append(h('b', {}, 'Now: '), num(v['/Level'], 0) + ' % · ' + num(v['/Remaining'] * 1000, 1) + ' L · height ' + num(v['/Hydro/HeightMm'], 0) + ' mm');
-  }
-  return box;
+  const form = { section, fields: {} };
+  S.forms[section.section] = form;
+  const byKey = {};
+  section.fields.forEach(f => { byKey[f.key] = f; });
+  const simple = spec.simple.map(k => byKey[k]).filter(Boolean), rest = section.fields.filter(f => !spec.simple.includes(f.key));
+  const row = f => f.type === 'bool' ? toggleRow(form, f, section) : fieldRow(form, f, section);
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'Settings'), simple.map(row)));
+  main.append(h('details', { class: 'group' }, h('summary', {}, 'More settings'), h('div', { class: 'body' },
+    h('div', { class: 'muted', style: 'margin:0 0 10px' }, 'Everything else. The defaults are right for most setups.'), rest.map(row),
+    kind === 'mopeka' ? h('div', { class: 'row' }, h('button', { class: 'btn small', disabled: !canEdit(), onclick: () =>
+      confirmThen('Forget the paired sensor? Then press the sync button on the sensor you want to use.', () => post('/api/pair_reset', { section: section.section })) }, 'Forget the paired sensor')) : null)));
 }
 
 // inverse of the "fraction:percent" bottle curve (no curve = straight line): how far up the bottle a level is
@@ -661,32 +720,374 @@ function curveFraction(text, pct) {
   return null;
 }
 
-// make the level read `pct` at the current sensor distance by choosing "Reading when full"
-async function calibrateTo(form, pct, dist) {
-  const f = form.fields;
-  if (f.level_table && f.level_table.input.value.trim()) { toast('A distance table is set, which overrides this. Clear "Distance table" first.', true); return; }
-  const raw = f.empty_mm.input.value.trim(), empty = raw === '' ? 38 : parseFloat(raw);
-  const x = curveFraction(f.level_curve ? f.level_curve.input.value : '', pct);
-  if (!(pct > 0 && pct <= 100) || x === null || !(x > 0.01)) { toast('Cannot work that out from ' + pct + ' %', true); return; }
-  if (!(dist > empty)) { toast('The sensor reads ' + dist + ' mm, which is not above "Reading when empty" (' + empty + ' mm)', true); return; }
-  setField(form, 'full_mm', Math.round(empty + (dist - empty) / x));
-  await saveForms(true);
-}
-
 function setField(form, key, value) {
   const f = form.fields[key]; if (!f) return;
   f.input.value = value; f.input.dispatchEvent(new Event('input'));
 }
 
-function presetPicker(form, section) {
-  const sel = h('select', {}, h('option', { value: '' }, 'Choose a bottle…'),
-    section.presets.map((p, i) => h('option', { value: i }, p.label)));
-  sel.addEventListener('change', () => {
-    if (sel.value === '') return;
-    for (const [k, v] of Object.entries(section.presets[+sel.value].values)) setField(form, k, v);
-    toast('Preset applied. Set "Reading when full" after the next refill, then save.');
-  });
-  return h('div', { class: 'field' }, h('label', {}, 'Bottle type'), sel, h('div', { class: 'help' }, 'Fills in volume and shape. You still calibrate empty/full once.'));
+// ============================================================ setup guide and popups
+// A popup (dialog) with a title, a body that a flow redraws step by step, and cleanups for its timers.
+function wizOpen(title) {
+  const dlg = $('#wiz');
+  clear(dlg);
+  const cleanups = [];
+  const titleEl = h('h3', { style: 'margin:0' }, title);
+  const body = h('div', { class: 'wiz-body' });
+  const close = () => { if (dlg.open) dlg.close(); };
+  dlg.append(h('div', { class: 'wiz-head' }, titleEl, h('span', { class: 'spacer' }), h('button', { type: 'button', class: 'btn small', onclick: close }, 'Close')), body);
+  const w = { body, close, title: t => { titleEl.textContent = t; }, onClose: fn => cleanups.push(fn),
+    every: (ms, fn) => { const id = setInterval(() => { if (dlg.open) fn(); }, ms); cleanups.push(() => clearInterval(id)); },
+    show: (...kids) => { clear(body).append(...kids); body.scrollTop = 0; } };
+  dlg.onclose = () => { cleanups.splice(0).forEach(fn => { try { fn(); } catch (e) { /* ignore */ } }); dlg.onclose = null; if (S.tab !== 'starlink' || S.slView !== 'settings') renderTab(); };
+  dlg.showModal();
+  return w;
+}
+
+const choice = (title, sub, onclick, chip) => h('button', { type: 'button', class: 'choice', onclick },
+  h('span', { class: 'ct' }, title, chip ? h('span', { class: 'chip ' + chip[1], style: 'margin-left:8px' }, chip[0]) : null), sub ? h('span', { class: 'cs' }, sub) : null);
+const nav = (...btns) => h('div', { class: 'row wiz-nav' }, btns.filter(Boolean));
+const primary = (label, fn, disabled) => h('button', { type: 'button', class: 'btn primary', disabled: !!disabled, onclick: fn }, label);
+const plain = (label, fn) => h('button', { type: 'button', class: 'btn', onclick: fn }, label);
+
+// - / + and a slider around a number: no typing
+function stepper(o) {
+  let v = o.value;
+  const clamp = x => Math.max(o.min, Math.min(o.max, Math.round(x / (o.step || 1)) * (o.step || 1)));
+  const num = h('span', { class: 'bigval' }), slider = h('input', { type: 'range', min: o.min, max: o.max, step: o.step || 1 });
+  const set = x => { v = clamp(x); num.textContent = (o.fmt ? o.fmt(v) : v) + (o.unit ? ' ' + o.unit : ''); slider.value = v; if (o.onchange) o.onchange(v); };
+  slider.addEventListener('input', () => set(Number(slider.value)));
+  set(v);
+  const node = h('div', { class: 'stepper' }, h('div', { class: 'sp' }, h('button', { type: 'button', class: 'btn', onclick: () => set(v - (o.step || 1)) }, '−'), num, h('button', { type: 'button', class: 'btn', onclick: () => set(v + (o.step || 1)) }, '+')), slider);
+  return { node, get: () => v, set };
+}
+
+async function freshState() { await refreshState(); return S.state; }
+const deviceOf = (st, kind) => (st.devices || []).find(d => ({ gas: d.kind === 'tank' && '/Mopeka/DistanceMm' in d.values, water: d.kind === 'tank' && '/Hydro/HeightMm' in d.values,
+  fridge: d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values })[kind]);
+const barsText = n => ['▁▁▁▁', '▃▁▁▁', '▃▅▁▁', '▃▅▇▁', '▃▅▇█'][Math.max(0, Math.min(4, n))];
+
+// ------------------------------------------------------------- bluetooth scan
+function scanPanel(w, o) {
+  const box = h('div', {}), list = h('div', {});
+  let last = null, started = Date.now(), showAll = false;
+  const draw = () => {
+    clear(list);
+    const rows = (last ? last.devices : []).filter(d => o.kinds.includes(d.kind) || (showAll && d.kind === null));
+    if (!rows.length) {
+      const waited = (Date.now() - started) / 1000;
+      list.append(h('div', { class: 'banner' }, h('div', {}, last && last.scanning !== false && waited < 25 ? 'Looking for ' + o.what + '…' : 'Nothing found yet.'),
+        waited >= 25 || !(last && last.scanning) ? h('ul', { class: 'tips' }, o.tips.map(t => h('li', {}, t))) : null));
+    }
+    rows.forEach(d => list.append(h('div', { class: 'scanrow' }, h('div', { class: 'sr-main' },
+      h('div', { class: 'sr-title' }, d.label + (d.kind === 'water' ? ' #' + d.device_id : ''), d.sync ? h('span', { class: 'chip ok', style: 'margin-left:8px' }, 'ready to pair') : null,
+        d.known ? h('span', { class: 'chip', style: 'margin-left:8px' }, 'already added') : null),
+      h('div', { class: 'muted' }, d.mac + ' · ' + barsText(d.bars) + (d.distance_mm != null ? ' · reads ' + d.distance_mm + ' mm' : '') + (d.height_mm != null ? ' · water ' + d.height_mm + ' mm' : '') + (d.battery_v ? ' · battery ' + d.battery_v.toFixed(2) + ' V' : ''))),
+    h('button', { type: 'button', class: 'btn primary small', onclick: () => o.onPick(d) }, 'Use this'))));
+    if (last && last.others) list.append(h('div', { class: 'muted', style: 'margin-top:8px' }, last.others + ' other Bluetooth device' + (last.others > 1 ? 's' : '') + ' nearby. ',
+      o.allowAll ? h('button', { type: 'button', class: 'link', onclick: () => { showAll = !showAll; poll(); } }, showAll ? 'Hide them' : 'Show them too') : null));
+  };
+  const poll = async () => { const r = await api('/api/scan' + (showAll ? '?all=1' : '')); if (r.ok) { last = r.data; draw(); } else { clear(list).append(h('div', { class: 'banner bad' }, r.data.error || 'The scan failed')); } };
+  const start = async () => {
+    started = Date.now();
+    const r = await api('/api/scan_start', {});
+    if (!r.ok) { clear(list).append(h('div', { class: 'banner bad' }, r.data.error || 'Could not start the scan')); return; }
+    poll();
+  };
+  box.append(list, h('div', { class: 'row', style: 'margin-top:10px' }, plain('Scan again', start)));
+  w.every(2000, poll);
+  start();
+  return box;
+}
+
+// ---------------------------------------------------------------- the guide
+const VENUS_WHERE = {
+  gas: 'Remote Console → the Levels page (tank icon) shows your gas bottle. More detail: Device list → "Gas bottle". The sensor temperature is under Device list → temperature sensors.',
+  water: 'Remote Console → the Levels page shows the water tank. The water temperature (if switched on) is in the Device list → temperature sensors.',
+  fridge: 'Remote Console → the switches icon in the top bar shows the Fridge card (power, eco mode, set points). The temperatures are in the Device list → "Fridge" and "Freezer".',
+  starlink: 'Remote Console → Device list → "Starlink connection". Its level is the quality of the connection (100 % = excellent). It is also on the Levels page.',
+  battery: 'Your JK BMS shows as a battery on the Overview page and in the Device list, as soon as dbus-serialbattery is connected to it.',
+};
+
+async function openSetup() {
+  const w = wizOpen('Set up your devices');
+  const draw = async () => {
+    const r = await api('/api/setup');
+    if (!r.ok) { w.show(h('div', { class: 'banner bad' }, r.data.error || 'Could not read the setup state')); return; }
+    const d = r.data;
+    const state = k => d[k].configured ? (d[k].connected ? ['working', 'ok'] : ['added, waiting for data', 'warn']) : ['not added', ''];
+    w.show(h('div', { class: 'muted', style: 'margin-bottom:12px' }, 'Pick what you want to add. Each step explains what to do. Added devices show up in Venus OS within a minute.'),
+      !d.bluetooth ? h('div', { class: 'banner warn' }, 'No Bluetooth adapter found. Switch Bluetooth on in Venus OS (Settings → General) or connect a USB Bluetooth adapter.') : null,
+      h('div', { class: 'choices' },
+        choice('Gas bottle level', 'Mopeka Check sensor under the bottle', () => flowGas(w), state('gas')),
+        choice('Fridge', 'Hyckes / Alpicool Bluetooth fridge', () => flowFridge(w), state('fridge')),
+        choice('Water tank', 'Self-built ESP32 water sender', () => flowWater(w), state('water')),
+        choice('Starlink', 'Connection quality and speed', () => flowStarlink(w), d.starlink.reachable ? ['dish found', 'ok'] : ['not reached', '']),
+        choice('Battery (JK BMS)', 'Needs the dbus-serialbattery driver', () => flowBattery(w), d.battery.found ? ['found', 'ok'] : (d.battery.installed ? ['installed', 'warn'] : ['not installed', ''])),
+        choice('Where do I see it in Venus OS?', 'A short tour of the Remote Console', () => flowWhere(w))),
+      nav(plain('Close', w.close)));
+  };
+  await draw();
+  w.back = draw;
+  return w;
+}
+
+function backNav(w, ...extra) { return nav(plain('Back', () => w.back()), ...extra); }
+
+// The generic "found it, now add it" step
+async function addDevice(w, kind, fields, after) {
+  const r = await api('/api/device_add', Object.assign({ kind }, fields));
+  if (!r.ok) { toast(r.data.error || 'Could not add it', true); return false; }
+  await freshState();
+  if (after) after(r.data);
+  return true;
+}
+
+function doneScreen(w, kind, text, next) {
+  w.show(h('div', { class: 'okbox' }, h('div', { class: 'big' }, '✓ Added'), h('div', {}, text)),
+    h('div', { class: 'card' }, h('h3', {}, 'Where you will see it'), h('div', {}, VENUS_WHERE[kind])),
+    nav(next || null, plain('Back to the list', () => w.back()), plain('Close', w.close)));
+}
+
+// ----------------------------------------------------------------- gas sensor
+async function flowGas(w) {
+  w.title('Gas bottle sensor');
+  const r = await api('/api/setup');
+  const presets = r.ok ? r.data.gas_presets : [];
+  const pick = { mac: null, preset: presets.length ? '0' : '', name: 'Gas bottle' };
+  const stepScan = () => {
+    w.show(h('div', {}, h('ol', { class: 'steps' }, h('li', {}, 'Put the Mopeka sensor under the gas bottle.'),
+      h('li', {}, 'Press its small button for about 2 seconds so it starts sending. A sensor that was just woken says "ready to pair".'))),
+    scanPanel(w, { kinds: ['gas'], what: 'a Mopeka sensor', onPick: d => { pick.mac = d.mac; stepBottle(); },
+      tips: ['Hold the sensor near the Pi and press its button again.', 'Check it is a Mopeka Check Standard or XL (the original, not Pro).', 'Remove the phone app from the picture: close it so it does not hold the sensor.'] }),
+    backNav(w));
+  };
+  const stepBottle = () => {
+    const picked = h('div', { class: 'choices' }, presets.map((p, i) => choice(p.label, p.hint || '', () => { pick.preset = String(i); stepName(); })));
+    w.show(h('h4', {}, 'Which bottle is it?'), picked, nav(plain('Back', stepScan)));
+  };
+  const stepName = () => {
+    const name = h('input', { type: 'text', value: pick.name, style: 'max-width:320px' });
+    w.show(h('h4', {}, 'What should it be called in Venus OS?'), name,
+      nav(plain('Back', stepBottle), primary('Add the sensor', async () => {
+        pick.name = name.value.trim() || 'Gas bottle';
+        if (await addDevice(w, 'gas', { mac: pick.mac, preset: pick.preset, name: pick.name }, () => finished())) { /* shown by finished() */ }
+      })));
+  };
+  const finished = () => doneScreen(w, 'gas', 'The sensor is added. The level is a first guess until you calibrate it.',
+    primary('Calibrate it now', () => flowGasCalibrate(w)));
+  stepScan();
+}
+
+// A popup that sets "empty", "full" or "matches the app" without typing a number.
+async function flowGasCalibrate(w) {
+  w = w || wizOpen('Calibrate the gas level');
+  w.title('Calibrate the gas level');
+  const d0 = await api('/api/driver_config');
+  if (!d0.ok) { w.show(h('div', { class: 'banner bad' }, 'Could not read the settings')); return; }
+  const section = d0.data.sections.find(s => s.kind === 'mopeka');
+  if (!section) { w.show(h('div', { class: 'banner warn' }, 'Add the gas sensor first.'), nav(plain('Close', w.close))); return; }
+  const save = async fields => {
+    const body = { section: section.section, restart: '1' };
+    for (const [k, v] of Object.entries(fields)) body['f.' + k] = String(v);
+    const r = await api('/api/driver_config', body);
+    if (!r.ok) { toast(r.data.error || 'Not saved', true); return false; }
+    section.values = Object.assign(section.values, fields);
+    return true;
+  };
+  const live = h('div', { class: 'livebox' });
+  let last = {};
+  const refresh = async () => {
+    const dev = deviceOf(await freshState(), 'gas');
+    const v = last = dev ? dev.values : {};
+    clear(live).append(h('div', { class: 'bigval' }, v['/Level'] == null ? '–' : Math.round(v['/Level']) + ' %'), h('div', { class: 'muted' }, 'The sensor reads ' + (v['/Mopeka/DistanceMm'] == null ? '–' : Math.round(v['/Mopeka/DistanceMm']) + ' mm') + ' · now shown as above'));
+    return v;
+  };
+  const home = async () => {
+    await refresh();
+    w.show(live, h('div', { class: 'choices' },
+      choice('The bottle is empty right now', 'Records this reading as 0 %', () => apply('empty')),
+      choice('The bottle is full right now', 'Right after a refill: records this reading as 100 % of what a fill reaches', () => apply('full')),
+      choice('Make it match the Mopeka app', 'Move the slider to what the app shows', matchApp),
+      choice('Change the bottle type', 'Sets the size and the shape of the bottle', bottleType)),
+    nav(plain('Close', w.close)));
+  };
+  w.every(2500, async () => { if ($('#wiz .livebox')) await refresh(); });
+  const apply = async which => {
+    const v = last, dist = v['/Mopeka/DistanceMm'];
+    if (dist == null) { toast('No reading from the sensor yet', true); return; }
+    if (which === 'empty' ? await save({ empty_mm: Math.round(dist) }) : await save({ full_mm: Math.round(dist) })) done(which === 'empty' ? 'Empty point saved.' : 'Full point saved.');
+  };
+  const matchApp = async () => {
+    const v = last, dist = v['/Mopeka/DistanceMm'];
+    if (dist == null) { toast('No reading from the sensor yet', true); return; }
+    const st = stepper({ value: Math.round(v['/Level'] || 50), min: 1, max: 100, step: 1, unit: '%' });
+    w.show(h('h4', {}, 'What does the Mopeka app show right now?'), st.node,
+      nav(plain('Back', home), primary('Match it', async () => {
+        const empty = section.values.empty_mm === '' || section.values.empty_mm == null ? 38 : parseFloat(section.values.empty_mm);
+        const x = curveFraction(section.values.level_curve, st.get());
+        if (!(x > 0.01) || !(dist > empty)) { toast('That cannot be worked out from this reading. Try "The bottle is full right now" after a refill.', true); return; }
+        if (await save({ full_mm: Math.round(empty + (dist - empty) / x) })) done('Now it shows ' + st.get() + ' %.');
+      })));
+  };
+  const bottleType = () => {
+    w.show(h('h4', {}, 'Which bottle is it?'), h('div', { class: 'choices' }, section.presets.map(p => choice(p.label, '', async () => {
+      if (await save(p.values)) done('Bottle set: ' + p.label + '. Calibrate empty or full next.');
+    }))), nav(plain('Back', home)));
+  };
+  const done = async text => {
+    w.show(h('div', { class: 'okbox' }, h('div', { class: 'big' }, '✓ Saved'), h('div', {}, text), h('div', { class: 'muted' }, 'The gas driver restarts; the new level shows in a few seconds.')), live,
+      nav(primary('Calibrate more', home), plain('Close', w.close)));
+    setTimeout(refresh, 4000);
+  };
+  home();
+}
+
+// ---------------------------------------------------------------------- fridge
+async function flowFridge(w) {
+  w.title('Fridge');
+  const pick = { mac: null, speed: 'normal' };
+  const stepScan = () => w.show(h('ol', { class: 'steps' }, h('li', {}, 'Switch the fridge on.'), h('li', {}, 'Close the fridge app on your phone (or turn the phone\'s Bluetooth off): the fridge talks to one device at a time.')),
+    scanPanel(w, { kinds: ['fridge'], what: 'the fridge', allowAll: true, onPick: d => { pick.mac = d.mac; stepSpeed(); },
+      tips: ['Close the phone app completely and wait half a minute.', 'Switch the fridge off and on again.', 'Stand close to the fridge with the Pi nearby.', 'Not listed? Tap "Show them too": some fridges send no name; pick the one with the strongest signal next to the fridge.'] }),
+    backNav(w));
+  const stepSpeed = () => w.show(h('h4', {}, 'How often should the Pi check the fridge?'), h('div', { class: 'muted' }, 'While the Pi talks to the fridge (a couple of seconds) the phone app cannot connect. Controls from Venus OS always work right away.'),
+    h('div', { class: 'choices' }, choice('Every 5 minutes (recommended)', 'Easy on the fridge and the phone app', () => add('normal')),
+      choice('Every minute', 'Fresher numbers, the phone app is blocked more often', () => add('fast')), choice('Every 15 minutes', 'Least interference', () => add('slow'))), nav(plain('Back', stepScan)));
+  const add = async speed => { if (await addDevice(w, 'fridge', { mac: pick.mac, speed }, () => doneScreen(w, 'fridge', 'The fridge is added. The first reading can take a minute; then the temperatures and the controls appear.'))) { /* done */ } };
+  stepScan();
+}
+
+// ----------------------------------------------------------------- water tank
+async function flowWater(w) {
+  w.title('Water tank');
+  const pick = { mac: null, id: '1', name: 'Fresh water' };
+  const stepScan = () => w.show(h('ol', { class: 'steps' }, h('li', {}, 'Power up the ESP32 water sender (USB or 5 V).'), h('li', {}, 'It sends every couple of seconds; the Pi will see it here.')),
+    scanPanel(w, { kinds: ['water'], what: 'the water sender', onPick: d => { pick.mac = d.mac; pick.id = String(d.device_id); stepName(); },
+      tips: ['Check the sender has power and its blue LED blinks.', 'Move the Pi closer for the first try.', 'The firmware has to be uploaded first (Part 3 of the guide).'] }), backNav(w));
+  const stepName = () => {
+    const name = h('input', { type: 'text', value: pick.name, style: 'max-width:320px' });
+    w.show(h('h4', {}, 'What should the tank be called in Venus OS?'), name, nav(plain('Back', stepScan), primary('Add the tank', async () => {
+      pick.name = name.value.trim() || 'Fresh water';
+      await addDevice(w, 'water', { mac: pick.mac, device_id: pick.id, name: pick.name }, () => doneScreen(w, 'water', 'The water tank is added. It uses the sender\'s own calibration until you calibrate it here.',
+        primary('Calibrate it now', () => flowWaterCalibrate(w))));
+    })));
+  };
+  stepScan();
+}
+
+// Quick (empty + full) or step by step (pour in known amounts). Buttons only.
+async function flowWaterCalibrate(w) {
+  w = w || wizOpen('Calibrate the water tank');
+  w.title('Calibrate the water tank');
+  const d0 = await api('/api/driver_config');
+  const section = d0.ok ? d0.data.sections.find(s => s.kind === 'esp32') : null;
+  if (!section) { w.show(h('div', { class: 'banner warn' }, 'Add the water tank first.'), nav(plain('Close', w.close))); return; }
+  const live = h('div', { class: 'livebox' });
+  let height = null;
+  const refresh = async () => {
+    const dev = deviceOf(await freshState(), 'water'), v = dev ? dev.values : {};
+    height = v['/Hydro/HeightMm'] == null ? null : v['/Hydro/HeightMm'];
+    clear(live).append(h('div', { class: 'bigval' }, height == null ? '–' : height + ' mm'), h('div', { class: 'muted' }, 'water height at the sender · shown as ' + (v['/Level'] == null ? '–' : Math.round(v['/Level']) + ' %')));
+    return height;
+  };
+  w.every(2000, async () => { if ($('#wiz .livebox')) await refresh(); });
+  const save = async (points, capacity) => {
+    const table = points.map(p => Math.round(p[0]) + ':' + (Math.round(p[1] * 10) / 10)).join(', ');
+    const r = await api('/api/driver_config', { section: section.section, restart: '1', 'f.level_table': table, 'f.capacity_l': String(capacity) });
+    if (!r.ok) { toast(r.data.error || 'Not saved', true); return false; }
+    return true;
+  };
+  const done = text => w.show(h('div', { class: 'okbox' }, h('div', { class: 'big' }, '✓ Saved'), h('div', {}, text)), live, nav(plain('Close', w.close)));
+  const home = async () => {
+    await refresh();
+    w.show(live, h('div', { class: 'choices' },
+      choice('Quick: empty and full', 'Pick the tank size, then press when empty and when full. Good for a straight-sided tank.', quick),
+      choice('Accurate: fill it in steps', 'Pour in known amounts and press each time. Best for tanks with an odd shape, like a wheel-arch tank.', stepwise),
+      choice('Use the sender\'s own table again', 'Removes the calibration made here', async () => { if (await api('/api/driver_config', { section: section.section, restart: '1', 'f.level_table': '', 'f.capacity_l': '' }).then(r => r.ok)) done('Back to the sender\'s own calibration.'); })),
+    nav(plain('Close', w.close)));
+  };
+  const quick = () => {
+    const size = stepper({ value: 100, min: 10, max: 500, step: 5, unit: 'L' }), pts = { empty: null, full: null };
+    const chips = h('div', { class: 'row', style: 'margin:6px 0 12px' }, [40, 60, 80, 100, 120, 150, 200].map(n => h('button', { type: 'button', class: 'btn small', onclick: () => size.set(n) }, n + ' L')));
+    const status = h('div', { class: 'muted' });
+    const draw = () => { clear(status).append('Empty: ' + (pts.empty == null ? 'not recorded' : pts.empty + ' mm') + ' · Full: ' + (pts.full == null ? 'not recorded' : pts.full + ' mm')); };
+    draw();
+    w.show(h('h4', {}, 'How big is the tank?'), chips, size.node, h('h4', { style: 'margin-top:18px' }, 'Record the two ends'), live, status,
+      h('div', { class: 'row', style: 'margin-top:8px' },
+        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sender', true); pts.empty = x; draw(); } }, 'The tank is empty now'),
+        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sender', true); pts.full = x; draw(); } }, 'The tank is full now')),
+      nav(plain('Back', home), primary('Save', async () => {
+        if (pts.empty == null || pts.full == null || !(pts.full > pts.empty)) return toast('Record empty first, then full (the full height must be higher).', true);
+        if (await save([[pts.empty, 0], [pts.full, size.get()]], size.get())) done('Saved: ' + size.get() + ' L between ' + pts.empty + ' and ' + pts.full + ' mm.');
+      })));
+  };
+  const stepwise = () => {
+    const points = [];                                   // [height, litres]
+    let total = 0, ready = false;
+    const list = h('div', {}), totalEl = h('div', { class: 'bigval' });
+    const draw = () => {
+      totalEl.textContent = total + ' L';
+      clear(list).append(points.length ? h('table', {}, h('thead', {}, h('tr', {}, ['#', 'Litres', 'Height'].map(x => h('th', {}, x)))), h('tbody', {}, points.map((p, i) => h('tr', {}, h('td', {}, i + 1), h('td', {}, p[1] + ' L'), h('td', {}, p[0] + ' mm'))))) : h('div', { class: 'muted' }, 'No points yet.'));
+    };
+    const start = () => w.show(h('h4', {}, 'Step 1: empty tank'), h('div', { class: 'muted' }, 'Drain the tank as far as it goes, then press the button.'), live,
+      nav(plain('Back', home), primary('The tank is empty: start', async () => {
+        const x = await refresh(); if (x == null) return toast('No reading from the sender', true);
+        points.length = 0; points.push([x, 0]); total = 0; ready = true; fill();
+      })));
+    const add = n => { total += n; draw(); };
+    const record = async () => {
+      const x = await refresh(); if (x == null) return toast('No reading from the sender', true);
+      const last = points[points.length - 1];
+      if (total === last[1]) return toast('Add some water first.', true);
+      if (x <= last[0]) return toast('The height did not rise yet. Wait for the water to settle and try again.', true);
+      points.push([x, total]); draw();
+    };
+    const fill = () => {
+      draw();
+      w.show(h('h4', {}, 'Step 2: add water in portions'), h('div', { class: 'muted' }, 'Pour in a known amount, tap how much you added, wait a few seconds for the reading to settle, then press "Record". Repeat. When the tank is full press "Finish".'),
+        live, h('div', { class: 'muted', style: 'margin-top:10px' }, 'Total added so far'), totalEl,
+        h('div', { class: 'row', style: 'margin:8px 0' }, [1, 2, 5, 10, 20].map(n => h('button', { type: 'button', class: 'btn', onclick: () => add(n) }, '+' + n + ' L')),
+          h('button', { type: 'button', class: 'btn', onclick: () => { total = Math.max(points[points.length - 1][1], total - 1); draw(); } }, '−1')),
+        h('div', { class: 'row' }, primary('Record this level', record)), list,
+        nav(plain('Start over', start), primary('Finish: the tank is full', async () => {
+          await record();
+          if (points.length < 3) return toast('Record at least two portions first.', true);
+          if (await save(points, points[points.length - 1][1])) done('Saved ' + points.length + ' points, ' + points[points.length - 1][1] + ' L in total.');
+        })));
+    };
+    start();
+  };
+  home();
+}
+
+// -------------------------------------------------------------------- starlink
+async function flowStarlink(w) {
+  w.title('Starlink');
+  const r = await api('/api/starlink');
+  const d = r.ok ? r.data : {}, st = d.status;
+  w.show(st ? h('div', { class: 'okbox' }, h('div', { class: 'big' }, '✓ Dish found'), h('div', {}, 'Status: ' + st.state + ' · ' + (d.quality == null ? '' : 'connection quality ' + d.quality + ' % (' + d.quality_label + ')'))) :
+    h('div', { class: 'banner warn' }, 'The Pi cannot reach the dish at ' + (d.host || '192.168.100.1') + '. The Pi has to be on the Starlink network (the Starlink router, or a router that passes the dish address through).'),
+  h('div', { class: 'card' }, h('h3', {}, 'What you get'), h('div', {}, 'The Starlink tab shows speed, ping, packet loss, obstruction, alerts, energy and data use, and outages. A "Starlink connection" device shows the quality in Venus OS.')),
+  h('div', { class: 'card' }, h('h3', {}, 'Where you will see it'), h('div', {}, VENUS_WHERE.starlink)),
+  nav(plain('Back to the list', () => w.back()), plain('Close', w.close)));
+}
+
+async function flowBattery(w) {
+  w.title('Battery (JK BMS)');
+  const r = await api('/api/setup');
+  const b = r.ok ? r.data.battery : {};
+  w.show(b.found ? h('div', { class: 'okbox' }, h('div', { class: 'big' }, '✓ Battery found'), h('div', {}, 'The Battery tab shows the cells, graphs and the limits.')) :
+    b.installed ? h('div', { class: 'banner warn' }, 'dbus-serialbattery is installed but no battery is connected yet. Open the Battery tab → All settings and add your BMS (the Bluetooth address of the JK BMS), then reboot.') :
+      h('div', { class: 'banner' }, 'The JK BMS is read by a separate, well-known driver: dbus-serialbattery (github.com/mr-manuel/venus-os_dbus-serialbattery). Install it by its own instructions, then come back: this page finds it and shows the cell data and all its settings.'),
+  h('div', { class: 'card' }, h('h3', {}, 'Where you will see it'), h('div', {}, VENUS_WHERE.battery)),
+  nav(plain('Back to the list', () => w.back()), plain('Close', w.close)));
+}
+
+function flowWhere(w) {
+  w.title('Where do I see it in Venus OS?');
+  w.show(h('div', { class: 'muted' }, 'Open the Remote Console of your Pi (or the screen) and look here:'),
+    ...['gas', 'fridge', 'water', 'starlink', 'battery'].map(k => h('div', { class: 'card' }, h('h3', {}, ({ gas: 'Gas bottle', fridge: 'Fridge', water: 'Water tank', starlink: 'Starlink', battery: 'Battery' })[k]), h('div', {}, VENUS_WHERE[k]))),
+    nav(plain('Back to the list', () => w.back()), plain('Close', w.close)));
 }
 
 // -------------------------------------------------- dbus-serialbattery tab
@@ -1880,11 +2281,21 @@ async function refreshState() {
   return r;
 }
 
+async function firstRunGuide() {
+  if (!S.state || !S.state.authed) return;
+  let seen = false;
+  try { seen = localStorage.getItem('wizSeen') === '1'; } catch (e) { /* private window: ask every time */ }
+  if (seen) return;
+  const r = await api('/api/setup');
+  if (r.ok && r.data.first_run) { try { localStorage.setItem('wizSeen', '1'); } catch (e) { /* ignore */ } openSetup(); }
+}
+
 async function boot() {
   renderTabs();
   const r = await refreshState();
   if (!r.ok) { $('#main').append(h('div', { class: 'banner bad' }, r.data.error || 'The Pi does not answer')); return; }
   await renderTab();
+  firstRunGuide();
   setInterval(async () => {
     if (document.hidden) return;
     await refreshState();

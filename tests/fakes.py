@@ -39,6 +39,13 @@ class FakeSettings(dict):
 
 
 class FakeBus(object):
+    def list_names(self):
+        return []
+
+    def get_object(self, *a, **kw):
+        import dbus
+        raise dbus.exceptions.DBusException('the fake bus has no such service')
+
     def add_signal_receiver(self, *a, **kw):
         return types.SimpleNamespace(remove=lambda: None)
 
@@ -56,7 +63,11 @@ def _install():
         MainLoop=None)
     dbus = types.ModuleType('dbus')
     dbus.SystemBus = lambda **kw: FakeBus()
-    dbus.exceptions = types.SimpleNamespace(DBusException=Exception)
+    class DBusException(Exception):
+        def get_dbus_name(self):
+            return getattr(self, 'name', '')
+    dbus.exceptions = types.SimpleNamespace(DBusException=DBusException)
+    dbus.Interface = lambda obj, iface=None: obj
     # the value types that unwrap() looks at; like the real ones they accept
     # variant_level= and signature=
     def value_type(name, base):

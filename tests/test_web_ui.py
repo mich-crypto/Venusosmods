@@ -11,6 +11,7 @@ import stat
 import sys
 import tempfile
 import time
+import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -528,6 +529,110 @@ def starlink_status(**kw):
     st = sl.decode_reply(sl.frame(tsl.status_message(latency=kw.pop('latency_ms', 31.5))))
     st.update(kw)
     return st
+
+
+class SetupGuideTests(AppTestCase):
+    def objects(self, devices):
+        out = {'/org/bluez/hci0': {'org.bluez.Adapter1': {}}}
+        for i, d in enumerate(devices):
+            out['/org/bluez/hci0/dev_%d' % i] = {'org.bluez.Device1': d}
+        return out
+
+    def test_scan_names_what_it_finds(self):
+        import test_drivers as td
+        import esp32_hydro_protocol as esp
+        gas = td.mopeka_packet(td.MopekaParserTests.PAIRS, sync=True)
+        self.app.managed_objects = lambda: self.objects([
+            {'Address': 'AA:BB:CC:DD:EE:01', 'RSSI': -60, 'ManufacturerData': {0x000D: list(gas)}},
+            {'Address': 'AA:BB:CC:DD:EE:02', 'RSSI': -80, 'ManufacturerData': {0xFFFF: list(esp.build(2, 50, 37.5, 75, 200))}},
+            {'Address': 'ED:67:39:CB:69:6C', 'RSSI': -50, 'Name': 'A1-0AD4', 'UUIDs': []},
+            {'Address': '11:22:33:44:55:66', 'RSSI': -40, 'Name': 'Someone\'s TV'},
+            {'Address': '11:22:33:44:55:77', 'Name': 'Not heard just now'}])
+        d = body_of(self.get('/api/scan'))
+        self.assertEqual([(x['kind'], x['mac'], x['bars']) for x in d['devices']],
+                         [('fridge', 'ED:67:39:CB:69:6C', 4), ('gas', 'AA:BB:CC:DD:EE:01', 3), ('water', 'AA:BB:CC:DD:EE:02', 1)])
+        self.assertEqual(d['others'], 1)                                          # the TV is only counted
+        gas_row = d['devices'][1]
+        self.assertTrue(gas_row['sync'] and gas_row['distance_mm'])
+        self.assertEqual(d['devices'][2]['device_id'], 2)
+        self.assertEqual(d['devices'][0]['known'], 'fridge')                      # the example config has this fridge's address
+        everything = body_of(self.get('/api/scan', query='all=1'))['devices']
+        self.assertIn('Someone\'s TV', [x['label'] for x in everything])
+        self.assertEqual(self.get('/api/scan', auth=False).status, 401)
+
+    def test_scan_start_is_not_repeated_while_running(self):
+        calls = []
+
+        class Adapter(object):
+            def SetDiscoveryFilter(self, f):
+                calls.append('filter')
+
+            def StartDiscovery(self):
+                calls.append('start')
+
+            def StopDiscovery(self):
+                calls.append('stop')
+
+        self.app.adapter_path = lambda: '/org/bluez/hci0'
+        self.app._bus = types.SimpleNamespace(get_object=lambda *a: Adapter())
+        first = body_of(self.post('/api/scan_start', {}))
+        second = body_of(self.post('/api/scan_start', {}))
+        self.assertEqual((first['ok'], first['seconds'], calls), (True, 20, ['filter', 'start']))
+        self.assertTrue(second['ok'] and second['seconds'] <= 20)
+        self.app.scan_until = 0
+        self.app.adapter_path = lambda: None
+        self.assertEqual(self.post('/api/scan_start', {}).status, 503)
+
+    def test_setup_status(self):
+        with open(self.config, 'w') as f:
+            f.write('[web]\npassword = %s\n' % self.PASSWORD)
+        self.app.adapter_path = lambda: '/org/bluez/hci0'
+        d = body_of(self.get('/api/setup'))
+        self.assertTrue(d['first_run'] and d['bluetooth'])
+        self.assertEqual((d['gas']['configured'], d['fridge']['configured']), (False, False))
+        self.assertEqual(d['starlink']['enabled'], True)
+        r = self.post('/api/device_add', {'kind': 'fridge', 'mac': 'ed:67:39:cb:69:6c', 'speed': 'fast'})
+        self.assertEqual(r.status, 200, r.body)
+        d = body_of(self.get('/api/setup'))
+        self.assertFalse(d['first_run'])
+        self.assertEqual((d['fridge']['configured'], d['fridge']['mac'], d['fridge']['enabled']), (True, 'ED:67:39:CB:69:6C', True))
+
+    def test_adding_a_gas_sensor_writes_config_and_switches_the_service_on(self):
+        with open(self.config, 'w') as f:
+            f.write('[web]\npassword = x\n')
+        os.remove(os.path.join(self.svc, 'fridge'))
+        r = self.post('/api/device_add', {'kind': 'gas', 'mac': 'AA:BB:CC:DD:EE:01', 'preset': '0', 'name': 'Camper gas'})
+        self.assertEqual(r.status, 200, r.body)
+        sec = ct.parse_ini(self.config_text())['mopeka_standard']
+        self.assertEqual((sec['mac'], sec['custom_name'], sec['capacity_l']), ('AA:BB:CC:DD:EE:01', 'Camper gas', '24'))
+        self.assertIn('0.194:13.9', sec['level_curve'])                           # the bottle's shape came with the preset
+        self.assertTrue(os.path.islink(os.path.join(self.svc, 'mopeka_standard')))
+        self.assertIn('mopeka_standard', open(self.rc).read())
+        self.assertEqual(self.svc_calls(), [])                                    # new service: svscan starts it, nothing to restart
+        r = self.post('/api/device_add', {'kind': 'gas', 'mac': 'AA:BB:CC:DD:EE:09'})                # a replacement sensor
+        self.assertTrue(body_of(r)['restarted'])
+        self.assertEqual(ct.parse_ini(self.config_text())['mopeka_standard']['mac'], 'AA:BB:CC:DD:EE:09')
+        self.assertTrue(any('mopeka_standard' in c for c in self.svc_calls()))
+
+    def test_adding_a_fridge_and_a_water_sender(self):
+        with open(self.config, 'w') as f:
+            f.write('[web]\npassword = x\n')
+        self.assertEqual(self.post('/api/device_add', {'kind': 'fridge'}).status, 400)               # needs an address
+        self.assertEqual(self.post('/api/device_add', {'kind': 'fridge', 'mac': 'nonsense'}).status, 400)
+        self.assertEqual(self.post('/api/device_add', {'kind': 'toaster', 'mac': 'AA:BB:CC:DD:EE:01'}).status, 400)
+        self.assertEqual(self.post('/api/device_add', {'kind': 'fridge', 'mac': 'ED:67:39:CB:69:6C', 'speed': 'slow'}).status, 200)
+        fr = ct.parse_ini(self.config_text())['fridge']
+        self.assertEqual((fr['poll_interval'], fr['control'], fr['zone2_name']), ('900', 'yes', 'Freezer'))
+        with open(self.config, 'a') as f:
+            pass
+        self.post('/api/driver_config', {'section': 'fridge', 'f.zone2_name': 'Deep freeze'})
+        self.post('/api/device_add', {'kind': 'fridge', 'mac': 'ED:67:39:CB:69:99', 'speed': 'fast'})     # replacing the fridge
+        fr = ct.parse_ini(self.config_text())['fridge']
+        self.assertEqual((fr['mac'], fr['zone2_name'], fr['poll_interval']), ('ED:67:39:CB:69:99', 'Deep freeze', '900'))
+        r = self.post('/api/device_add', {'kind': 'water', 'device_id': '3', 'name': 'Fresh water'})
+        self.assertEqual(r.status, 200, r.body)
+        self.assertEqual(ct.parse_ini(self.config_text())['esp32_hydro']['device_id'], '3')
+        self.assertEqual(self.post('/api/device_add', {'kind': 'water'}, csrf=False).status, 403)
 
 
 class SerialBatteryTests(AppTestCase):

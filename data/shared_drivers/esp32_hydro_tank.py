@@ -13,7 +13,7 @@ import logging
 
 import esp32_hydro_protocol as proto
 import rawlog
-from venus_service import (BleDriver, TankDevice, TemperatureDevice,
+from venus_service import (BleDriver, TankDevice, TemperatureDevice, interpolate, parse_table,
                            FLUID_FRESH_WATER, TEMPERATURE_TYPES)
 
 log = logging.getLogger('esp32_hydro')
@@ -25,6 +25,10 @@ class Esp32HydroDriver(BleDriver):
     def __init__(self, section, config):
         super(Esp32HydroDriver, self).__init__(section, config)
         self.device_id = config.getint('device_id', 1)
+        # Calibration done on the settings page (height_mm:litres pairs) replaces the sender's own table
+        table = config.get('level_table', '').strip()
+        self.level_table = parse_table(table) if table else None
+        self.capacity_l = config.getfloat('capacity_l', 0.0) or (self.level_table[-1][1] if self.level_table else 0.0)
         self._last_seq = None
         uid = config.get('service', 'esp32_hydro')
         connection = 'Bluetooth LE %s' % (self.mac or 'device id %d' % self.device_id)
@@ -63,10 +67,15 @@ class Esp32HydroDriver(BleDriver):
         log.debug('%s rssi=%s %r', mac, rssi, r)
         self.raw.write('adv', '%s rssi=%s data=%s -> %r' % (mac, rssi, rawlog.hexs(manufacturer_data.get(proto.COMPANY_ID)), r))
 
+        level, volume_l, capacity_l = r.level, r.volume_l, r.capacity_l
+        if self.level_table and self.capacity_l and r.height_mm is not None:
+            volume_l = max(0.0, interpolate(self.level_table, r.height_mm))
+            capacity_l = self.capacity_l
+            level = min(100.0, 100.0 * volume_l / capacity_l)
         self.tank.publish(
-            level=None if r.fault else r.level,
-            remaining_m3=None if r.fault else r.volume_l / 1000.0,
-            capacity_m3=r.capacity_l / 1000.0 if r.capacity_l else None,
+            level=None if r.fault else level,
+            remaining_m3=None if r.fault else volume_l / 1000.0,
+            capacity_m3=capacity_l / 1000.0 if capacity_l else None,
             temperature=r.temperature,
             raw_value=r.height_mm,
             raw_unit='mm',

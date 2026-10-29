@@ -40,7 +40,8 @@ data/                              -> copied to /data on the Pi
     mopeka_venus.py                driver: Mopeka  -> tank
     esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature)
     fridge_venus.py                driver: fridge  -> temperature per zone
-    web_ui.py + web/index.html     settings page on port 8088 (drivers + dbus-serialbattery)
+    web_ui.py + web/index.html     settings page on port 8088: setup guide, calibration popups, drivers, dbus-serialbattery
+    devices.py                     recognises Mopeka / fridge / ESP32 water senders in a Bluetooth scan
     rawlog.py                      rolling log of the raw sensor bytes (shown on the Raw data tab)
     starlink_hub.py                polls the dish, ping, speed tests, WAN IP, Telegram alerts
     netmon.py                      energy, data use, outage and test bookkeeping (JSON store)
