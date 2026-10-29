@@ -85,6 +85,12 @@ class StatusTests(unittest.TestCase):
         self.assertTrue(all(s['ready'].values()))
         self.assertIsNone(s['outage'])
 
+    def test_no_limit_is_not_throttling(self):
+        for reason, expected in ((0, None), (1, None), (2, 'policy limit'), (3, 'custom limit'), (5, 'overage limit'), (6, 'low-speed policy limit'), (4, None)):
+            msg = sub(2004, f32(1007, 1e6), vint(1044, reason), vint(1045, 1))
+            s = sl.decode_reply(sl.frame(msg))
+            self.assertEqual((s['limit_down'], s['limit_up']), (expected, None), reason)
+
     def test_outage_and_missing_latency(self):
         s = sl.decode_reply(sl.frame(status_message(outage=(6, 12.5), latency=None)))
         self.assertEqual(s['state'], 'Outage: obstructed')

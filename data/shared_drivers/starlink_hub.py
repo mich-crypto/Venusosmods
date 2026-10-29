@@ -484,7 +484,8 @@ class Hub(object):
                 'error': self.error, 'age': age, 'via': self.via, 'state': s.get('state'),
                 'down_bps': s.get('down_bps'), 'up_bps': s.get('up_bps'), 'latency_ms': s.get('latency_ms'),
                 'obstructed_pct': s.get('obstructed_pct'), 'alerts': s.get('alerts'),
-                'throttled': bool(s.get('throttled_down') or s.get('throttled_up'))}
+                'throttled': bool(s.get('limit_down') or s.get('limit_up')),
+                'limit': ', '.join(sorted(set(x for x in (s.get('limit_down'), s.get('limit_up')) if x))) or None}
 
     def icmp_view(self):
         out = []

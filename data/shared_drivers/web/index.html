@@ -1316,7 +1316,7 @@ async function slDashboard(box) {
   } }, run.running ? 'Testing: ' + run.step + '…' : 'Run speed test');
   const sm = d.summary || {};
   out.append(h('div', { class: 'row', style: 'margin-bottom:12px' }, h('b', {}, 'Starlink'),
-    sm.throttled ? h('span', { class: 'chip warn' }, 'throttled') : null,
+    sm.throttled ? h('span', { class: 'chip warn' }, 'throttled: ' + sm.limit) : null,
     h('span', { class: 'spacer' }), last ? h('span', { class: 'muted' }, 'Last test ' + ago(Math.round(Date.now() / 1000 - last.time)) + ' ago') : null, button));
   if (last) {
     out.append(h('div', { class: 'hero' },
@@ -1392,7 +1392,7 @@ async function starlinkView(box) {
     clear(box).append(out); return;
   }
   const controls = h('div', { class: 'row', style: 'margin-bottom:12px' }, h('b', {}, 'Dish'),
-    d.throttled ? h('span', { class: 'chip warn' }, 'throttled') : null, h('span', { class: 'spacer' }),
+    d.throttled ? h('span', { class: 'chip warn' }, 'throttled: ' + d.limit) : null, h('span', { class: 'spacer' }),
     [[900, '15 min'], [3600, '1 hour'], [7200, '2 hours']].map(([sec, label]) => h('button', { type: 'button', class: 'btn small' + ((S.slWindow || 3600) === sec ? ' primary' : ''), onclick: () => { S.slWindow = sec; starlinkView(box); } }, label)));
   out.append(controls);
   if (d.age > 30 || d.error) out.append(h('div', { class: 'banner warn' }, 'The last reading is ' + ago(d.age) + ' old' + (d.error ? ' (' + d.error + ')' : '') + '.'));
@@ -1428,7 +1428,7 @@ async function starlinkView(box) {
   else if (st.obstructed_pct != null && st.obstructed_pct > 3) add('warn', 'About ' + st.obstructed_pct.toFixed(1) + ' % of the sky is blocked. A few percent is normal; short dropouts come from this.');
   if (st.drop_rate != null && st.drop_rate > 0.01) add('warn', 'Packet loss is ' + (st.drop_rate * 100).toFixed(1) + ' %.');
   if (st.latency_ms != null && st.latency_ms > 100) add('warn', 'Ping to Starlink is high (' + st.latency_ms.toFixed(0) + ' ms).');
-  if (d.throttled) add('warn', 'The dish reports that your speed is being limited (policy or overage limit).');
+  if (d.throttled) add('warn', 'The dish says your speed is limited: ' + d.limit + '.');
   alerts.forEach(a => add(INFO_ALERT.includes(a) ? 'ok' : 'warn', 'Dish says: ' + a + '.'));
   if (st.update && !['idle', 'disabled', 'unknown'].includes(st.update)) add('ok', 'Software update: ' + st.update + '.');
   if (!items.length) add('ok', 'Nothing unusual.');
@@ -1666,7 +1666,7 @@ async function watchUpdate(body) {
 function starlinkCard(sl) {
   if (!sl || !sl.enabled || !sl.state) return null;
   const good = sl.state === 'Connected';
-  return h('div', { class: 'card' }, h('h3', {}, 'Starlink ', h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, sl.state), sl.throttled ? h('span', { class: 'chip warn' }, 'throttled') : null),
+  return h('div', { class: 'card' }, h('h3', {}, 'Starlink ', h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, sl.state), sl.throttled ? h('span', { class: 'chip warn' }, 'throttled: ' + sl.limit) : null),
     h('div', { class: 'big' }, fmtMbps(sl.down_bps), h('small', {}, ' Mbit/s down')),
     h('div', { class: 'muted' }, 'up ' + fmtMbps(sl.up_bps) + ' · ping ' + (sl.latency_ms == null ? '–' : sl.latency_ms.toFixed(0)) + ' ms · obstructed ' + (sl.obstructed_pct == null ? '–' : sl.obstructed_pct.toFixed(1)) + ' %'),
     (sl.alerts || []).length ? h('div', { class: 'muted' }, sl.alerts.join(', ')) : null);

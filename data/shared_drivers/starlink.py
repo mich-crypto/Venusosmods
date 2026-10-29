@@ -23,6 +23,9 @@ OUTAGE_CAUSES = {0: 'unknown', 1: 'booting', 2: 'stowed', 3: 'thermal shutdown',
                  14: 'RF inhibited'}
 UPDATE_STATES = {0: 'unknown', 1: 'idle', 2: 'fetching', 3: 'pre-check', 4: 'writing',
                  5: 'post-check', 6: 'reboot required', 7: 'disabled', 8: 'faulted'}
+# RateLimitReason (dl/ul_bandwidth_restricted_reason). 0 = unknown and 1 = no limit are both "not limited".
+LIMIT_REASONS = {2: 'policy limit', 3: 'custom limit', 5: 'overage limit', 6: 'low-speed policy limit'}
+
 # DishAlerts: field number -> name
 ALERTS = {1: 'motors stuck', 2: 'thermal shutdown', 3: 'thermal throttle', 4: 'unexpected location',
           5: 'mast not vertical', 6: 'slow ethernet speeds', 7: 'roaming', 8: 'install pending',
@@ -200,9 +203,8 @@ def decode_status(message):
                       enumerate(('cady', 'scp', 'l1l2', 'xphy', 'aap', 'rf'), 1)) if ready else None,
         'update': UPDATE_STATES.get(_int(st, 1021) or 0, 'unknown') if _first(st, 1021) is not None else None,
         'stow_requested': bool(_int(st, 1010)),
-        # RateLimitReason: 0 = none; the dish names POLICY_LIMIT, OVERAGE_LIMIT, LOW_SPEED_POLICY_LIMIT
-        'throttled_down': _int(st, 1044) or 0,
-        'throttled_up': _int(st, 1045) or 0,
+        'limit_down': LIMIT_REASONS.get(_int(st, 1044) or 0),
+        'limit_up': LIMIT_REASONS.get(_int(st, 1045) or 0),
     }
     if outage is not None:
         out['state'] = 'Outage: ' + out['outage']['cause']

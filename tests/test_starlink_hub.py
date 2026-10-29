@@ -68,6 +68,15 @@ class HubTests(unittest.TestCase):
         self.assertEqual((h.status['state'], h.via, h.error, h.busy), ('Connected', 'gRPC-web port 9201', None, False))
         self.assertEqual(h.summary()['alerts'], ['thermal throttle'])
 
+    def test_throttled_only_for_a_real_limit(self):
+        h = self.hub()
+        h.poll_status()
+        self.runner.answer(0, starlink.frame(ts.sub(2004, ts.f32(1007, 1e6), ts.vint(1044, 1), ts.vint(1045, 1))))      # "no limit"
+        self.assertEqual((h.summary()['throttled'], h.summary()['limit']), (False, None))
+        h.poll_status()
+        self.runner.answer(0, starlink.frame(ts.sub(2004, ts.f32(1007, 1e6), ts.vint(1044, 5))))
+        self.assertEqual((h.summary()['throttled'], h.summary()['limit']), (True, 'overage limit'))
+
     def test_falls_back_to_the_next_way_and_sticks_with_it(self):
         h = self.hub()
         h.poll_status()
