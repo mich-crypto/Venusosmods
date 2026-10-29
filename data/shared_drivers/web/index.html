@@ -3,147 +3,167 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
 <link rel="icon" href="data:,">
 <title>Venus settings</title>
 <style>
+/* Black-and-white dashboard: white on black, hairline borders, small spaced capitals for labels;
+   colour only for status (green good, amber degraded, red down). */
 :root {
-  --bg:#f4f5f7; --card:#fff; --ink:#1b2430; --muted:#5f6b7a; --line:#dde1e7; --soft:#eef1f5;
-  --accent:#0a6ebd; --accent-ink:#fff; --ok:#1c8a4c; --warn:#a96a00; --bad:#c0392b;
-  --ok-bg:#e3f4ea; --warn-bg:#fdf1d9; --bad-bg:#fbe4e1; --code:#eef1f5;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg:#12161c; --card:#1b222b; --ink:#e8ecf1; --muted:#9aa6b4; --line:#2c3643; --soft:#232c37;
-    --accent:#4aa3ea; --accent-ink:#0b1117; --ok:#4cc27f; --warn:#e5a93d; --bad:#f0746a;
-    --ok-bg:#16301f; --warn-bg:#35290f; --bad-bg:#3a1c19; --code:#232c37; }
+  color-scheme:dark;
+  --bg:#000; --card:#050505; --ink:#fff; --muted:#a0a0a0; --faint:#6e6e6e; --line:#2b2b2b; --line-soft:#1a1a1a; --soft:#121212;
+  --accent:#fff; --accent-ink:#000; --ok:#30d158; --warn:#ffb020; --bad:#ff3b30;
+  --ok-bg:rgba(48,209,88,.10); --warn-bg:rgba(255,176,32,.10); --bad-bg:rgba(255,59,48,.12); --code:#0c0c0c;
+  --font:"D-DIN","DIN Alternate","Bahnschrift","Helvetica Neue",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
 * { box-sizing:border-box; }
 html { font-size:16px; -webkit-text-size-adjust:100%; }
-body { margin:0; background:var(--bg); color:var(--ink);
-  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.4; }
-header { background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
-.bar { max-width:1100px; margin:0 auto; padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-.bar h1 { font-size:1.15rem; margin:0; }
-.bar .sub { color:var(--muted); font-size:.85rem; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--font); line-height:1.4; }
+header { background:rgba(0,0,0,.82); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+.bar { max-width:1100px; margin:0 auto; padding:12px 16px 6px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.bar h1 { font-size:.95rem; margin:0; font-weight:700; letter-spacing:.42em; text-transform:uppercase; }
+.bar .sub { color:var(--faint); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; }
 .spacer { flex:1; }
-nav { max-width:1100px; margin:0 auto; padding:0 12px; display:flex; gap:4px; overflow-x:auto; }
-nav button { background:none; border:0; border-bottom:3px solid transparent; padding:10px 14px; font-size:1rem;
-  color:var(--muted); cursor:pointer; white-space:nowrap; }
-nav button[aria-selected=true] { color:var(--accent); border-color:var(--accent); font-weight:600; }
-main { max-width:1100px; margin:0 auto; padding:16px; padding-bottom:110px; }
-h2 { font-size:1.05rem; margin:22px 0 10px; }
+nav { max-width:1100px; margin:0 auto; padding:0 10px; display:flex; gap:2px; overflow-x:auto; }
+nav button { background:none; border:0; border-bottom:2px solid transparent; padding:10px 12px; font:inherit; font-size:.72rem;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--muted); cursor:pointer; white-space:nowrap; }
+nav button:hover { color:var(--ink); }
+nav button[aria-selected=true] { color:var(--ink); border-color:var(--ink); }
+main { max-width:1100px; margin:0 auto; padding:18px 16px; padding-bottom:110px; }
+h2 { font-size:.72rem; margin:28px 0 10px; font-weight:600; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); }
 h2:first-child { margin-top:0; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:16px 18px; margin-bottom:12px; }
 .grid .card { margin:0; }
-.card h3 { font-size:.95rem; margin:0 0 4px; display:flex; align-items:center; gap:8px; }
-.big { font-size:2rem; font-weight:700; line-height:1.15; }
-.big small { font-size:1rem; font-weight:500; color:var(--muted); }
-.muted { color:var(--muted); font-size:.88rem; overflow-wrap:anywhere; }
-.chip { display:inline-block; font-size:.75rem; font-weight:600; padding:2px 9px; border-radius:99px; background:var(--soft); color:var(--muted); }
-.chip.ok { background:var(--ok-bg); color:var(--ok); } .chip.warn { background:var(--warn-bg); color:var(--warn); }
-.chip.bad { background:var(--bad-bg); color:var(--bad); }
-.bar-level { height:8px; background:var(--soft); border-radius:99px; overflow:hidden; margin:8px 0 6px; }
-.bar-level > i { display:block; height:100%; background:var(--accent); border-radius:99px; }
+.card h3, .chart h3 { font-size:.7rem; margin:0 0 6px; display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--muted); }
+.big { font-size:2.2rem; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
+.big small { font-size:.9rem; font-weight:400; color:var(--muted); }
+.muted { color:var(--muted); font-size:.85rem; overflow-wrap:anywhere; }
+.chip { display:inline-block; font-size:.66rem; font-weight:600; padding:2px 9px; border-radius:99px; border:1px solid var(--line);
+  color:var(--muted); letter-spacing:.1em; text-transform:uppercase; }
+.chip.ok { color:var(--ok); border-color:var(--ok); } .chip.warn { color:var(--warn); border-color:var(--warn); }
+.chip.bad { color:var(--bad); border-color:var(--bad); }
+.bar-level { height:3px; background:var(--line); overflow:hidden; margin:10px 0 8px; }
+.bar-level > i { display:block; height:100%; background:var(--ink); }
 button, select, input, textarea { font:inherit; color:inherit; }
-.btn { background:var(--soft); border:1px solid var(--line); border-radius:10px; padding:9px 14px; cursor:pointer; min-height:42px; }
-.btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
-.btn.danger { color:var(--bad); }
-.btn.small { padding:5px 10px; min-height:34px; font-size:.9rem; }
-.btn:disabled { opacity:.45; cursor:not-allowed; }
+.btn { background:transparent; border:1px solid #3d3d3d; border-radius:3px; padding:9px 14px; cursor:pointer; min-height:42px; }
+.btn:hover:not(:disabled) { border-color:var(--ink); }
+.btn.primary { background:var(--ink); border-color:var(--ink); color:#000; font-weight:600; }
+.btn.danger { color:var(--bad); border-color:#5a2420; }
+.btn.small { padding:5px 10px; min-height:34px; font-size:.85rem; }
+.btn:disabled { opacity:.35; cursor:not-allowed; }
 .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 table { width:100%; border-collapse:collapse; }
-td, th { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line); font-size:.95rem; }
-th { color:var(--muted); font-weight:600; font-size:.8rem; }
-.field { margin:0 0 14px; }
-.field > label, .field > .lbl { display:block; font-weight:600; margin-bottom:4px; }
-.field .help { color:var(--muted); font-size:.85rem; margin-top:3px; }
-.field .err { color:var(--bad); font-size:.85rem; margin-top:3px; }
+td, th { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line-soft); font-size:.92rem; }
+tbody tr:hover td { background:#0c0c0c; }
+th { color:var(--faint); font-weight:600; font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; }
+.field { margin:0 0 16px; }
+.field > label, .field > .lbl { display:block; font-weight:600; margin-bottom:5px; font-size:.78rem; letter-spacing:.06em; }
+.field .help { color:var(--muted); font-size:.82rem; margin-top:4px; }
+.field .err { color:var(--bad); font-size:.82rem; margin-top:3px; }
 input[type=text], input[type=number], input[type=password], input[type=search], select, textarea {
-  width:100%; max-width:520px; padding:9px 11px; min-height:42px; border:1px solid var(--line);
-  border-radius:10px; background:var(--card); }
-input.changed, select.changed, textarea.changed { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  width:100%; max-width:520px; padding:9px 11px; min-height:42px; border:1px solid var(--line); border-radius:3px; background:#0a0a0a; }
+input:focus, select:focus, textarea:focus { outline:none; border-color:var(--ink); }
+input.changed, select.changed, textarea.changed { border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); }
 input.bad, select.bad { border-color:var(--bad); }
 .with-unit { display:flex; gap:8px; align-items:center; max-width:520px; }
 .with-unit input { max-width:none; } .unit { color:var(--muted); min-width:24px; }
 textarea { max-width:100%; box-sizing:border-box; min-height:300px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85rem; }
 details.adv { margin:6px 0 0; } details.adv > summary { cursor:pointer; color:var(--muted); padding:6px 0; }
 .switch { display:inline-flex; align-items:center; gap:10px; cursor:pointer; }
-.switch input { width:46px; height:26px; appearance:none; -webkit-appearance:none; background:var(--line);
+.switch input { width:46px; height:26px; appearance:none; -webkit-appearance:none; background:#262626; border:1px solid var(--line);
   border-radius:99px; position:relative; transition:.15s; margin:0; cursor:pointer; flex:none; }
-.switch input::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%;
-  background:#fff; transition:.15s; }
-.switch input:checked { background:var(--ok); } .switch input:checked::after { left:23px; }
-.switch input:disabled { opacity:.5; }
-.entry { padding:12px 0; border-bottom:1px solid var(--line); }
+.switch input::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#888; transition:.15s; }
+.switch input:checked { background:var(--ink); border-color:var(--ink); } .switch input:checked::after { left:23px; background:#000; }
+.switch input:disabled { opacity:.4; }
+.entry { padding:12px 0; border-bottom:1px solid var(--line-soft); }
 .entry:last-child { border-bottom:0; }
 .entry .top { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin-bottom:6px; }
-.entry .name { font-weight:600; } .entry code { font-size:.75rem; color:var(--muted); background:var(--code);
-  padding:1px 6px; border-radius:6px; }
-.entry pre { white-space:pre-wrap; background:var(--code); border-radius:10px; padding:10px 12px; font-size:.82rem;
+.entry .name { font-weight:600; } .entry code { font-size:.72rem; color:var(--muted); background:var(--code); padding:1px 6px; border-radius:3px; border:1px solid var(--line-soft); }
+.entry pre { white-space:pre-wrap; background:var(--code); border:1px solid var(--line-soft); border-radius:3px; padding:10px 12px; font-size:.8rem;
   margin:8px 0 0; font-family:ui-monospace,Menlo,Consolas,monospace; overflow-x:auto; }
-.entry.modified .name::after { content:" \25CF"; color:var(--accent); }
-.entry .meta { color:var(--muted); font-size:.82rem; margin-top:5px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.link { background:none; border:0; color:var(--accent); cursor:pointer; padding:0; font-size:inherit; }
-details.group { background:var(--card); border:1px solid var(--line); border-radius:14px; margin-bottom:10px; }
-details.group > summary { cursor:pointer; padding:14px 16px; font-weight:600; list-style:none; display:flex; gap:8px; align-items:center; }
+.entry.modified .name::after { content:" \25CF"; color:var(--ink); }
+.entry .meta { color:var(--muted); font-size:.8rem; margin-top:5px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.link { background:none; border:0; color:var(--ink); text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--faint); cursor:pointer; padding:0; font-size:inherit; }
+a { color:var(--ink); text-underline-offset:3px; }
+details.group { background:var(--card); border:1px solid var(--line); border-radius:4px; margin-bottom:10px; }
+details.group > summary { cursor:pointer; padding:14px 16px; font-weight:600; list-style:none; display:flex; gap:8px; align-items:center;
+  font-size:.74rem; letter-spacing:.14em; text-transform:uppercase; }
 details.group > summary::-webkit-details-marker { display:none; }
 details.group > summary::before { content:"\25B8"; color:var(--muted); transition:.15s; }
 details.group[open] > summary::before { transform:rotate(90deg); }
 details.group > .body { padding:0 16px 8px; }
-.savebar { position:fixed; left:0; right:0; bottom:0; background:var(--card); border-top:1px solid var(--line);
-  padding:10px 16px; z-index:6; }
+.savebar { position:fixed; left:0; right:0; bottom:0; background:rgba(0,0,0,.92); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  border-top:1px solid var(--line); padding:10px 16px; z-index:6; }
 .savebar .in { max-width:1100px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.banner { border-radius:12px; padding:12px 14px; margin:0 0 14px; background:var(--soft); }
-.banner.warn { background:var(--warn-bg); color:var(--warn); } .banner.ok { background:var(--ok-bg); color:var(--ok); }
-.banner.bad { background:var(--bad-bg); color:var(--bad); }
-#toast { position:fixed; left:50%; bottom:80px; transform:translateX(-50%); z-index:20; max-width:90vw;
-  background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:12px; opacity:0; pointer-events:none;
-  transition:opacity .2s; font-size:.95rem; }
+.banner { border:1px solid var(--line); border-left:3px solid var(--muted); border-radius:3px; padding:12px 14px; margin:0 0 14px; background:var(--card); }
+.banner.warn { border-left-color:var(--warn); } .banner.ok { border-left-color:var(--ok); } .banner.bad { border-left-color:var(--bad); }
+#toast { position:fixed; left:50%; bottom:80px; transform:translateX(-50%); z-index:20; max-width:90vw; background:var(--ink); color:#000;
+  padding:10px 16px; border-radius:3px; opacity:0; pointer-events:none; transition:opacity .2s; font-size:.92rem; }
 #toast.show { opacity:1; } #toast.bad { background:var(--bad); color:#fff; }
-dialog { border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--ink);
-  max-width:min(900px,94vw); width:100%; padding:16px; }
-dialog::backdrop { background:rgba(0,0,0,.45); }
-dialog pre { background:var(--code); border-radius:10px; padding:10px; max-height:60vh; overflow:auto; font-size:.8rem;
+dialog { border:1px solid var(--line); border-radius:4px; background:#080808; color:var(--ink); max-width:min(900px,94vw); width:100%; padding:16px; }
+dialog::backdrop { background:rgba(0,0,0,.7); }
+dialog pre { background:var(--code); border:1px solid var(--line-soft); border-radius:3px; padding:10px; max-height:60vh; overflow:auto; font-size:.8rem;
   white-space:pre-wrap; word-break:break-word; }
 .cells { display:flex; align-items:flex-end; gap:3px; height:44px; margin-top:8px; }
-.cells i { flex:1; background:var(--accent); border-radius:3px 3px 0 0; min-height:3px; }
-.pills { display:flex; gap:6px; margin:0 0 14px; flex-wrap:wrap; }
-.pills button { background:var(--soft); border:1px solid var(--line); border-radius:99px; padding:7px 14px; cursor:pointer; }
-.pills button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
-.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-bottom:12px; }
-.tile { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 14px; }
-.tile .k { color:var(--muted); font-size:.8rem; } .tile .v { font-size:1.45rem; font-weight:700; line-height:1.2; }
-.tile .v small { font-size:.85rem; font-weight:500; color:var(--muted); } .tile .s { color:var(--muted); font-size:.82rem; }
-.find { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line); }
-.find:last-child { border-bottom:0; } .dot { flex:none; width:12px; height:12px; border-radius:50%; margin-top:5px; background:var(--muted); }
+.cells i { flex:1; background:var(--ink); min-height:3px; }
+.pills { display:flex; gap:0; margin:0 0 16px; flex-wrap:wrap; border:1px solid var(--line); border-radius:3px; width:max-content; max-width:100%; }
+.pills button { background:none; border:0; border-right:1px solid var(--line); padding:8px 16px; cursor:pointer; font-size:.72rem; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--muted); }
+.pills button:last-child { border-right:0; }
+.pills button[aria-pressed=true] { background:var(--ink); color:#000; font-weight:700; }
+/* hero numbers and hairline stat grids, as in Stardashy */
+.hero { display:grid; grid-template-columns:repeat(3,1fr); border:1px solid var(--line); border-radius:4px; margin-bottom:12px; }
+.hero .metric { padding:22px 20px; border-right:1px solid var(--line); min-width:0; }
+.hero .metric:last-child { border-right:0; }
+.metric .label, .tile .k, .stat .k { color:var(--muted); font-size:.64rem; letter-spacing:.18em; text-transform:uppercase; font-weight:600; }
+.metric .num { font-size:clamp(40px,7vw,76px); font-weight:600; line-height:1.05; font-variant-numeric:tabular-nums; letter-spacing:-.02em; margin:6px 0 2px; }
+.metric .num small { font-size:.28em; font-weight:400; color:var(--muted); letter-spacing:.1em; margin-left:6px; text-transform:uppercase; }
+.metric .sub { color:var(--muted); font-size:.8rem; }
+.tiles, .stats { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line);
+  border-radius:4px; overflow:hidden; margin-bottom:12px; }
+.tile, .stat { background:var(--bg); padding:14px 16px; min-width:0; }
+.tile .v, .stat .v { font-size:1.6rem; font-weight:600; line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.tile .v small, .stat .v small { font-size:.75rem; font-weight:400; color:var(--muted); }
+.tile .s, .stat .s { color:var(--muted); font-size:.78rem; }
+.metaline { color:var(--muted); font-size:.8rem; margin:2px 0 14px; display:flex; flex-wrap:wrap; gap:4px 18px; }
+.metaline b { color:var(--ink); font-weight:600; }
+.live { display:inline-block; font-size:.6rem; letter-spacing:.16em; padding:1px 7px; border:1px solid var(--ok); color:var(--ok); border-radius:99px; }
+.live::before { content:""; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--ok); margin-right:5px; animation:pulse 1.6s infinite; }
+@keyframes pulse { 50% { opacity:.25; } }
+.find { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line-soft); }
+.find:last-child { border-bottom:0; } .dot { flex:none; width:9px; height:9px; border-radius:50%; margin-top:7px; background:var(--muted); }
 .dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); } .dot.bad { background:var(--bad); }
 .chart { position:relative; } .chart svg { display:block; width:100%; }
-.chart .legend { display:flex; gap:4px 10px; flex-wrap:wrap; margin:4px 0 2px; font-size:.8rem; }
+.chart .legend { display:flex; gap:4px 10px; flex-wrap:wrap; margin:4px 0 2px; font-size:.78rem; }
 .chart .legend button { background:none; border:0; padding:2px 4px; cursor:pointer; color:var(--ink); display:inline-flex; gap:5px; align-items:center; }
 .chart .legend button.off { opacity:.35; text-decoration:line-through; }
-.chart .legend i { width:10px; height:10px; border-radius:3px; display:inline-block; }
-.chart .tt { position:absolute; top:0; pointer-events:none; background:var(--card); border:1px solid var(--line);
-  border-radius:8px; padding:6px 8px; font-size:.78rem; box-shadow:0 2px 8px rgba(0,0,0,.2); white-space:nowrap; z-index:2; }
+.chart .legend i { width:10px; height:3px; border-radius:2px; display:inline-block; }
+.chart .tt { position:absolute; top:0; pointer-events:none; background:#0a0a0a; border:1px solid #444; border-radius:3px; padding:6px 8px;
+  font-size:.76rem; white-space:nowrap; z-index:2; }
 .chart text, .gauge text { fill:var(--muted); font-size:11px; }
-.chart .grid line, .gauge .grid line { stroke:var(--line); }
+.chart .grid line, .gauge .grid line { stroke:var(--line-soft); }
 .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
 .two .card { margin:0; }
-.pill-on { background:var(--ok-bg); color:var(--ok); } .pill-off { background:var(--bad-bg); color:var(--bad); }
+.pill-on { color:var(--ok); border-color:var(--ok); } .pill-off { color:var(--bad); border-color:var(--bad); }
 td code { overflow-wrap:anywhere; }
-table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-size:.78rem; }
-@media (max-width:600px) { .tile .v { font-size:1.25rem; } .two { grid-template-columns:1fr; } }
-#main .rawbox { background:var(--code); border-radius:10px; padding:10px; font:.76rem/1.45 ui-monospace,Menlo,Consolas,monospace;
+table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-size:.76rem; }
+#main .rawbox { background:var(--code); border:1px solid var(--line-soft); border-radius:3px; padding:10px; font:.76rem/1.45 ui-monospace,Menlo,Consolas,monospace;
   height:52vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
-.rawbox .ts { color:var(--muted); } .rawbox .k { font-weight:700; } .k-tx { color:var(--accent); } .k-rx { color:var(--ok); }
-.k-error { color:var(--bad); } .k-status { color:#8e44ad; } .k-adv { color:var(--ok); }
-@media (max-width:600px) { .big { font-size:1.7rem; } main { padding:12px; } }
+.rawbox .ts { color:var(--faint); } .rawbox .k { font-weight:700; } .k-tx { color:#fff; } .k-rx { color:var(--ok); }
+.k-error { color:var(--bad); } .k-status { color:var(--warn); } .k-adv { color:var(--ok); }
+@media (max-width:700px) {
+  .hero { grid-template-columns:1fr; } .hero .metric { border-right:0; border-bottom:1px solid var(--line); } .hero .metric:last-child { border-bottom:0; }
+  .tile .v, .stat .v { font-size:1.3rem; } .two { grid-template-columns:1fr; } .big { font-size:1.8rem; } main { padding:12px; }
+}
 </style>
 </head>
 <body>
 <header>
   <div class="bar">
-    <h1>Venus settings</h1>
+    <h1>Venus OS mods</h1>
     <span class="sub" id="hostline"></span>
     <span class="spacer"></span>
     <span id="lockchip"></span>
@@ -764,7 +784,7 @@ function timeChart(o) {
       legend.append(b);
     });
   }
-  box.append(h('h3', { style: 'margin:0' }, o.title, o.note ? h('span', { class: 'muted', style: 'font-weight:400' }, ' ' + o.note) : null), legend, holder, tip);
+  box.append(h('h3', { style: 'margin:0 0 4px' }, o.title, o.badge || null, o.note ? h('span', { class: 'muted', style: 'font-weight:400;text-transform:none;letter-spacing:0' }, ' ' + o.note) : null), legend, holder, tip);
   let width = 0;
   const H = o.height || 190, L = 48, R = 10, T = 8, B = 22;
   function redraw() {
@@ -806,7 +826,7 @@ function timeChart(o) {
         pen = true; if (first === null) first = X(t[i]); lastx = X(t[i]);
       });
       if (!d) continue;
-      if (o.area && vis.length === 1) root.append(svg('path', { d: d + 'L' + lastx.toFixed(1) + ' ' + Y(Math.max(lo, Math.min(hi, 0))).toFixed(1) + 'L' + first.toFixed(1) + ' ' + Y(Math.max(lo, Math.min(hi, 0))).toFixed(1) + 'Z', fill: s.color, opacity: 0.14 }));
+      if ((s.area || (o.area && vis.length === 1)) && first !== null) root.append(svg('path', { d: d + 'L' + lastx.toFixed(1) + ' ' + Y(Math.max(lo, Math.min(hi, 0))).toFixed(1) + 'L' + first.toFixed(1) + ' ' + Y(Math.max(lo, Math.min(hi, 0))).toFixed(1) + 'Z', fill: s.color, opacity: 0.10 }));
       root.append(svg('path', { d, fill: 'none', stroke: s.color, 'stroke-width': s.w || 1.6, 'stroke-linejoin': 'round', 'stroke-dasharray': s.dash || null }));
     }
     const cursor = svg('line', { y1: T, y2: H - B, stroke: 'var(--muted)', 'stroke-width': 1, visibility: 'hidden' });
@@ -952,9 +972,9 @@ async function liveView(box) {
   }
 
   const t = hist.t, s = hist.series, charts = [];
-  if (s.i) charts.push(timeChart({ title: 'Current', unit: 'A', t, area: true, dec: 1, note: '(+ charging, − discharging)', series: [{ id: 'i', name: 'Current', color: 'var(--accent)', vals: s.i }] }));
+  if (s.i) charts.push(timeChart({ title: 'Current', unit: 'A', t, area: true, dec: 1, note: '(+ charging, − discharging)', series: [{ id: 'i', name: 'Current', color: 'var(--ink)', vals: s.i }] }));
   if (s.soc) charts.push(timeChart({ title: 'State of charge', unit: '%', t, min: Math.max(0, Math.min(...s.soc.filter(x => x != null)) - 5), max: 100, dec: 0, series: [{ id: 'soc', name: 'SOC', color: 'var(--ok)', vals: s.soc }] }));
-  if (s.v) charts.push(timeChart({ title: 'Pack voltage', unit: 'V', t, dec: 2, series: [{ id: 'v', name: 'Voltage', color: '#8e44ad', vals: s.v }] }));
+  if (s.v) charts.push(timeChart({ title: 'Pack voltage', unit: 'V', t, dec: 2, series: [{ id: 'v', name: 'Voltage', color: 'var(--ink)', vals: s.v }] }));
   if (s.diff) charts.push(timeChart({ title: 'Cell spread (highest − lowest)', unit: 'mV', t, dec: 0, min: 0, include: [30], lines: [{ y: 30, label: '30 mV' }], series: [{ id: 'diff', name: 'Spread', color: 'var(--warn)', vals: s.diff }] }));
   if (charts.length) out.append(h('div', { class: 'two' }, charts.map(c => h('div', { class: 'card' }, c))));
 
@@ -968,7 +988,7 @@ async function liveView(box) {
     out.append(h('div', { class: 'card' }, timeChart({ title: 'Cell difference from the average', unit: 'mV', t, dec: 1, height: 220, note: '(a cell that stays far from 0 is the odd one out)', series: devSeries })));
     out.append(tbl);
   }
-  const temps = [['temp', 'Battery', '#e67e22'], ['t1', 'Probe 1', '#c0392b'], ['t2', 'Probe 2', '#d35400'], ['t3', 'Probe 3', '#f39c12'], ['t4', 'Probe 4', '#a04000'], ['mos', 'MOSFET', '#16a085']]
+  const temps = [['temp', 'Battery', 'var(--ink)'], ['t1', 'Probe 1', '#c8c8c8'], ['t2', 'Probe 2', '#8f8f8f'], ['t3', 'Probe 3', 'var(--warn)'], ['t4', 'Probe 4', '#ff8a3d'], ['mos', 'MOSFET', 'var(--ok)']]
     .filter(([k]) => s[k]).map(([k, name, color]) => ({ id: k, name, color, vals: s[k] }));
   const lim = [['ccl', 'Charge limit (A)', 'var(--ok)'], ['dcl', 'Discharge limit (A)', 'var(--bad)']].filter(([k]) => s[k]).map(([k, name, color]) => ({ id: k, name, color, vals: s[k] }));
   const more = [];
@@ -1105,7 +1125,7 @@ const CURVES = [
 function goSetting(key) { S.sbView = 'settings'; S.sbSearch = key; renderTab(); }
 
 function voltageWindow(eff, live, cells) {
-  const marks = [['MIN_CELL_VOLTAGE', 'empty (min)', 'var(--bad)'], ['FLOAT_CELL_VOLTAGE', 'float', 'var(--ok)'], ['MAX_CELL_VOLTAGE', 'full (max)', 'var(--accent)'], ['SOC_RESET_CELL_VOLTAGE', 'SOC reset', '#8e44ad']]
+  const marks = [['MIN_CELL_VOLTAGE', 'empty (min)', 'var(--bad)'], ['FLOAT_CELL_VOLTAGE', 'float', 'var(--ok)'], ['MAX_CELL_VOLTAGE', 'full (max)', 'var(--accent)'], ['SOC_RESET_CELL_VOLTAGE', 'SOC reset', 'var(--warn)']]
     .map(([k, label, color]) => ({ k, label, color, v: parseFloat(eff(k)) })).filter(m => !isNaN(m.v)).sort((a, b) => a.v - b.v);
   const box = h('div', { class: 'gauge' });
   if (!marks.length) return box;
@@ -1256,17 +1276,32 @@ async function starlinkView(box) {
   out.append(controls);
   if (d.age > 30 || d.error) out.append(h('div', { class: 'banner warn' }, 'The last reading is ' + ago(d.age) + ' old' + (d.error ? ' (' + d.error + ')' : '') + '.'));
 
-  const good = st.state === 'Connected';
-  out.append(h('div', { class: 'tiles' },
-    h('div', { class: 'tile' }, h('div', { class: 'k' }, 'State'), h('div', { class: 'v', style: 'font-size:1.2rem' }, h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, st.state)),
-      h('div', { class: 's' }, 'up ' + fmtDuration(st.uptime_s))),
-    tile('Download', fmtMbps(st.down_bps), 'Mbit/s', ''),
-    tile('Upload', fmtMbps(st.up_bps), 'Mbit/s', ''),
-    tile('Ping', st.latency_ms == null ? '–' : st.latency_ms.toFixed(0), 'ms', 'to Starlink'),
-    tile('Packet loss', st.drop_rate == null ? '–' : (st.drop_rate * 100).toFixed(1), '%', ''),
-    tile('Obstructed', st.obstructed_pct == null ? '–' : st.obstructed_pct.toFixed(1), '%', st.currently_obstructed ? 'right now' : 'of the sky view'),
-    tile('GPS', st.gps_sats == null ? '–' : String(st.gps_sats), 'satellites', st.gps_valid === false ? 'no fix' : ''),
-    tile('Ethernet', st.eth_mbps == null ? '–' : String(st.eth_mbps), 'Mbit/s', '')));
+  const good = st.state === 'Connected', hs = d.history.series, win = (S.slWindow || 3600) >= 3600 ? (S.slWindow || 3600) / 3600 + ' h' : '15 min';
+  const avg = (k, dec) => { const a = (hs[k] || []).filter(x => x != null); return a.length ? (a.reduce((x, y) => x + y, 0) / a.length).toFixed(dec) : '–'; };
+  const metric = (label, value, unit, sub) => h('div', { class: 'metric' }, h('div', { class: 'label' }, label),
+    h('div', { class: 'num' }, value, h('small', {}, unit)), h('div', { class: 'sub' }, sub));
+  out.append(h('div', { class: 'hero' },
+    metric('Downlink', fmtMbps(st.down_bps), 'Mbps', 'average ' + avg('down_mbps', 0) + ' Mbps over ' + win),
+    metric('Uplink', fmtMbps(st.up_bps), 'Mbps', 'average ' + avg('up_mbps', 1) + ' Mbps over ' + win),
+    metric('PoP latency', st.latency_ms == null ? '–' : st.latency_ms.toFixed(0), 'ms', 'average ' + avg('latency_ms', 0) + ' ms over ' + win)));
+  const alerts = st.alerts || [];
+  out.append(h('div', { class: 'row', style: 'margin:0 0 8px' }, h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, st.state),
+    alerts.length ? alerts.map(a => h('span', { class: 'chip ' + (INFO_ALERT.includes(a) ? '' : 'warn') }, a)) : h('span', { class: 'chip' }, 'no alerts')));
+  out.append(h('div', { class: 'metaline' }, h('span', {}, 'Uptime ', h('b', {}, fmtDuration(st.uptime_s))),
+    h('span', {}, 'GPS ', h('b', {}, st.gps_sats == null ? '–' : st.gps_sats + ' sats')),
+    h('span', {}, 'Ethernet ', h('b', {}, st.eth_mbps == null ? '–' : st.eth_mbps + ' Mbps')),
+    h('span', {}, 'Obstruction ', h('b', {}, st.obstructed_pct == null ? '–' : st.obstructed_pct.toFixed(1) + ' %')),
+    st.tilt == null ? null : h('span', {}, 'Tilt ', h('b', {}, st.tilt.toFixed(0) + '°')),
+    h('span', {}, 'Firmware ', h('b', {}, st.software || '–'))));
+
+  const t = d.history.t, s = hs, charts = [];
+  const live = h('span', { class: 'live' }, 'LIVE');
+  if (s.down_mbps || s.up_mbps) out.append(h('div', { class: 'card' }, timeChart({ title: 'Live throughput', badge: live, unit: 'Mbps', t, dec: 1, min: 0,
+    series: [s.down_mbps && { id: 'down', name: 'Download', color: 'var(--ink)', vals: s.down_mbps, area: true }, s.up_mbps && { id: 'up', name: 'Upload', color: 'var(--muted)', vals: s.up_mbps }].filter(Boolean) })));
+  if (s.latency_ms) charts.push(timeChart({ title: 'PoP latency', unit: 'ms', t, dec: 0, min: 0, series: [{ id: 'lat', name: 'PoP latency', color: 'var(--ink)', vals: s.latency_ms }] }));
+  if (s.drop_pct) charts.push(timeChart({ title: 'Drop rate', unit: '%', t, dec: 1, min: 0, series: [{ id: 'drop', name: 'Drop rate', color: 'var(--bad)', vals: s.drop_pct }] }));
+  if (s.obstructed_pct) charts.push(timeChart({ title: 'Obstruction', unit: '%', t, dec: 1, min: 0, series: [{ id: 'obs', name: 'Obstructed', color: 'var(--warn)', vals: s.obstructed_pct }] }));
+  if (charts.length) out.append(h('div', { class: 'two' }, charts.map(c => h('div', { class: 'card' }, c))));
 
   const items = [], add = (level, text) => items.push({ level, text });
   if (st.outage) add('bad', 'Outage: ' + st.outage.cause + (st.outage.seconds ? ' (' + Math.round(st.outage.seconds) + ' s so far)' : '') + '.');
@@ -1274,24 +1309,24 @@ async function starlinkView(box) {
   else if (st.obstructed_pct != null && st.obstructed_pct > 3) add('warn', 'About ' + st.obstructed_pct.toFixed(1) + ' % of the sky is blocked. A few percent is normal; short dropouts come from this.');
   if (st.drop_rate != null && st.drop_rate > 0.01) add('warn', 'Packet loss is ' + (st.drop_rate * 100).toFixed(1) + ' %.');
   if (st.latency_ms != null && st.latency_ms > 100) add('warn', 'Ping to Starlink is high (' + st.latency_ms.toFixed(0) + ' ms).');
-  (st.alerts || []).forEach(a => add(INFO_ALERT.includes(a) ? 'ok' : 'warn', 'Dish says: ' + a + '.'));
+  alerts.forEach(a => add(INFO_ALERT.includes(a) ? 'ok' : 'warn', 'Dish says: ' + a + '.'));
   if (st.update && !['idle', 'disabled', 'unknown'].includes(st.update)) add('ok', 'Software update: ' + st.update + '.');
   if (!items.length) add('ok', 'Nothing unusual.');
   out.append(h('div', { class: 'card' }, h('h3', {}, 'What I notice'), items.map(i => h('div', { class: 'find' }, h('span', { class: 'dot ' + i.level }), h('div', {}, i.text)))));
 
-  const t = d.history.t, s = d.history.series, charts = [];
-  if (s.down_mbps || s.up_mbps) charts.push(timeChart({ title: 'Speed', unit: 'Mbit/s', t, dec: 1, min: 0, area: false,
-    series: [s.down_mbps && { id: 'down', name: 'Download', color: 'var(--accent)', vals: s.down_mbps }, s.up_mbps && { id: 'up', name: 'Upload', color: 'var(--ok)', vals: s.up_mbps }].filter(Boolean) }));
-  if (s.latency_ms) charts.push(timeChart({ title: 'Ping', unit: 'ms', t, dec: 0, min: 0, series: [{ id: 'lat', name: 'Ping', color: '#8e44ad', vals: s.latency_ms }] }));
-  if (s.drop_pct) charts.push(timeChart({ title: 'Packet loss', unit: '%', t, dec: 1, min: 0, series: [{ id: 'drop', name: 'Loss', color: 'var(--warn)', vals: s.drop_pct }] }));
-  if (s.obstructed_pct) charts.push(timeChart({ title: 'Obstruction', unit: '%', t, dec: 1, min: 0, series: [{ id: 'obs', name: 'Obstructed', color: 'var(--bad)', vals: s.obstructed_pct }] }));
-  if (charts.length) out.append(h('div', { class: 'two' }, charts.map(c => h('div', { class: 'card' }, c))));
-
-  const rows = [['Dish ID', st.id], ['Hardware', st.hardware], ['Software', st.software], ['Country', st.country], ['Generation', st.generation],
-    ['Pointing', st.azimuth == null ? null : 'azimuth ' + st.azimuth.toFixed(0) + '°, elevation ' + (st.elevation == null ? '–' : st.elevation.toFixed(0)) + '°' + (st.tilt == null ? '' : ', tilt ' + st.tilt.toFixed(0) + '°')],
-    ['Ready', st.ready ? Object.entries(st.ready).map(([k, v]) => k + (v ? ' ✓' : ' ✗')).join('  ') : null],
-    ['Read via', d.via + ' at ' + d.host]].filter(x => x[1] !== null && x[1] !== undefined && x[1] !== '');
-  out.append(h('details', { class: 'group' }, h('summary', {}, 'Dish details'), h('div', { class: 'body' }, h('table', { class: 'kv' }, rows.map(([k, v]) => h('tr', {}, h('td', {}, k), h('td', {}, String(v))))))));
+  const stat = (k, v, sub, small) => h('div', { class: 'stat' }, h('div', { class: 'k' }, k), h('div', { class: 'v', style: small ? 'font-size:1rem' : '' }, v), sub ? h('div', { class: 's' }, sub) : null);
+  out.append(h('h2', {}, 'Dish statistics'), h('div', { class: 'stats' },
+    stat('State', st.state), stat('Uptime', fmtDuration(st.uptime_s)),
+    stat('Obstructed', st.obstructed_pct == null ? '–' : st.obstructed_pct.toFixed(2) + ' %', st.currently_obstructed ? 'right now' : ''),
+    stat('Drop rate', st.drop_rate == null ? '–' : (st.drop_rate * 100).toFixed(2) + ' %'),
+    stat('GPS', st.gps_sats == null ? '–' : st.gps_sats + ' satellites', st.gps_valid === false ? 'no fix' : ''),
+    stat('Ethernet', st.eth_mbps == null ? '–' : st.eth_mbps + ' Mbps'),
+    st.azimuth == null ? null : stat('Azimuth', st.azimuth.toFixed(0) + '°'), st.elevation == null ? null : stat('Elevation', st.elevation.toFixed(0) + '°'),
+    st.tilt == null ? null : stat('Tilt', st.tilt.toFixed(1) + '°'),
+    stat('Software', st.software || '–', '', true), stat('Hardware', st.hardware || '–', st.generation == null ? '' : 'generation ' + st.generation, true),
+    stat('Dish ID', st.id || '–', '', true), st.update ? stat('Update', st.update, '', true) : null,
+    st.ready ? stat('Ready', Object.entries(st.ready).map(([k, v]) => k + (v ? ' ✓' : ' ✗')).join(' '), '', true) : null,
+    stat('Read via', d.via || '–', d.host, true)));
   out.append(h('div', { class: 'muted', style: 'margin-top:8px' }, 'Read every ' + d.interval + ' s from the dish. Starlink does not publish this interface, so a dish update can change what is shown. History is kept in memory for 2 hours.'));
   clear(box).append(out);
 }

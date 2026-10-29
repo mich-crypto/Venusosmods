@@ -150,7 +150,9 @@ await page.getByText('Only changed').first().isVisible().catch(() => {});
 // starlink
 await tab(page, 'Starlink');
 await page.getByText('Dish says: roaming').waitFor();
-check(await page.locator('.tile', { hasText: 'Download' }).locator('.v').innerText().then(t => /^\d+/.test(t)), 'Starlink shows the download speed');
+check(await page.locator('.metric', { hasText: 'Downlink' }).locator('.num').innerText().then(t => /^\d+/.test(t)), 'Starlink shows the downlink speed in the hero');
+check((await page.locator('.hero .metric').count()) === 3, 'Starlink hero has three metrics');
+check((await page.locator('.stats .stat').count()) >= 10, 'Starlink statistics grid is filled');
 await page.locator('.chart path[stroke]').first().waitFor({ state: 'attached' });   // a flat line has no height: never "visible"
 check((await page.locator('.chart').count()) >= 3, 'Starlink graphs are drawn');
 await shot(page, '07c-starlink');
