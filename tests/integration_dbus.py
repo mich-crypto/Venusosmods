@@ -63,6 +63,11 @@ class Adapter(dbus.service.Object):
     def StartDiscovery(self):
         self.discovering = True
 
+    @dbus.service.method('org.bluez.Adapter1')
+    def StopDiscovery(self):
+        self.discovering = False
+        self.stops = getattr(self, 'stops', 0) + 1
+
 
 def dual_zone_status():
     data = bytearray(30)
@@ -116,6 +121,10 @@ class Fridge(Device):
     @dbus.service.method(DEV)
     def Connect(self):
         self.connects += 1
+        if self.connects == 1:
+            # what a Raspberry Pi controller does when it gives up mid-scan
+            raise dbus.exceptions.DBusException('le-connection-abort-by-local',
+                                                name='org.bluez.Error.Failed')
         self.connected = True
         # BlueZ signals ServicesResolved after the Connect reply
         GLib.idle_add(self.PropertiesChanged, DEV, {'Connected': True}, [])
@@ -203,7 +212,7 @@ def main():
     fridge_dev = Fridge(bus)
     Root(bus, fridge_dev)
     SettingsTree(bus, '/Settings')
-    Adapter(bus, '/org/bluez/hci0')
+    adapter = Adapter(bus, '/org/bluez/hci0')
     devices = {'mopeka': Device(bus, dev_path(MOPEKA_MAC)), 'esp': Device(bus, dev_path(ESP_MAC))}
 
     cfg = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'venus_it_config.ini')
@@ -271,8 +280,10 @@ def main():
     assert z1['/Fridge/SupplyVoltage'] == 12.8 and z1['/Fridge/TargetTemperature'] == 3
     assert z2['/Temperature'] == -17 and z2['/TemperatureType'] == 6
     assert z2['/CustomName'] == 'Freezer'
-    # poll mode: connected once, disconnected again so the phone app can connect
-    assert fridge_dev.connects == 1 and fridge_dev.disconnects >= 1, fridge_dev.connects
+    # first connect aborted, retried with scanning paused, then disconnected
+    # again so the phone app can connect
+    assert fridge_dev.connects == 2 and fridge_dev.disconnects >= 1, fridge_dev.connects
+    assert getattr(adapter, 'stops', 0) >= 1, 'discovery was not paused'
     # Mopeka paired via the sync button and stored the MAC in localsettings
     assert SettingsTree.stored.get('/Settings/Devices/mopeka_standard/Mac') == MOPEKA_MAC, \
         SettingsTree.stored

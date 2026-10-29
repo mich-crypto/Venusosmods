@@ -59,6 +59,7 @@ class BlueZScanner(object):
         self._mac_filter = set(m.upper() for m in mac_filter) if mac_filter else None
         self._adapter_path = None
         self._rssi = {}
+        self._paused = False
 
     def start(self):
         self._bus.add_signal_receiver(
@@ -117,8 +118,29 @@ class BlueZScanner(object):
             self._adapter_path = None
 
     def _watchdog(self):
-        self._ensure_discovery()
+        if not self._paused:
+            self._ensure_discovery()
         return True
+
+    def pause(self):
+        """
+        Stop our discovery session while a GATT connection is being made. The
+        Raspberry Pi's built-in controller often aborts LE connections
+        (le-connection-abort-by-local) while it is also scanning.
+        """
+        self._paused = True
+        if self._adapter_path is None:
+            return
+        try:
+            obj = self._bus.get_object(BLUEZ, self._adapter_path)
+            dbus.Interface(obj, ADAPTER_IFACE).StopDiscovery()
+        except dbus.exceptions.DBusException:
+            pass   # not running, or not ours
+
+    def resume(self):
+        if self._paused:
+            self._paused = False
+            self._ensure_discovery(force=True)
 
     # ------------------------------------------------------------------ signals
 

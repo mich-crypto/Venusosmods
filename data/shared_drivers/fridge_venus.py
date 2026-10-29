@@ -74,6 +74,7 @@ class FridgeDriver(BleDriver):
     # ---------------------------------------------------------------- poll
 
     def start(self):
+        self.gatt.scanner = self.scanner    # pause scanning while connecting
         GLib.timeout_add_seconds(3, self._poll_once)          # first poll soon
         GLib.timeout_add_seconds(self.poll_s, self._poll)
 

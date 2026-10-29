@@ -22,8 +22,13 @@ OM_IFACE = 'org.freedesktop.DBus.ObjectManager'
 
 
 class GattClient(object):
+    # BlueZ errors worth another attempt: the controller gave up, or the
+    # peripheral did not answer this time
+    RETRYABLE = ('abort', 'timeout', 'timed out', 'In Progress', 'Software caused')
+
     def __init__(self, bus, mac, write_uuid, notify_uuid, on_notify,
-                 adapter='hci0', timeout_s=25, keep_connected=False):
+                 adapter='hci0', timeout_s=45, keep_connected=False,
+                 scanner=None, connect_attempts=3):
         self._bus = bus
         self.mac = mac.upper()
         self._write_uuid = write_uuid.lower()
@@ -31,6 +36,9 @@ class GattClient(object):
         self._on_notify = on_notify
         self._timeout_s = timeout_s
         self.keep_connected = keep_connected
+        self.scanner = scanner                  # paused while connecting
+        self.connect_attempts = connect_attempts
+        self._attempt = 0
         self.dev_path = '/org/bluez/%s/dev_%s' % (adapter, self.mac.replace(':', '_'))
 
         self.busy = False
@@ -74,11 +82,32 @@ class GattClient(object):
         if connected:
             self._after_connect()
         else:
-            log.debug('connecting to %s', self.mac)
-            dbus.Interface(obj, DEVICE_IFACE).Connect(
-                reply_handler=self._after_connect,
-                error_handler=lambda e: self._fail('connect failed: %s' % e),
-                timeout=self._timeout_s)
+            self._attempt = 0
+            self._connect()
+
+    def _connect(self):
+        if not self.busy:
+            return False
+        self._attempt += 1
+        if self.scanner is not None:
+            self.scanner.pause()
+        log.debug('connecting to %s (attempt %d)', self.mac, self._attempt)
+        obj = self._bus.get_object(BLUEZ, self.dev_path)
+        dbus.Interface(obj, DEVICE_IFACE).Connect(
+            reply_handler=self._after_connect,
+            error_handler=self._on_connect_error,
+            timeout=self._timeout_s)
+        return False
+
+    def _on_connect_error(self, e):
+        if not self.busy:
+            return
+        text = str(e)
+        if self._attempt < self.connect_attempts and any(r in text for r in self.RETRYABLE):
+            log.debug('connect attempt %d failed (%s), retrying', self._attempt, text)
+            GLib.timeout_add_seconds(2, self._connect)
+            return
+        self._fail('connect failed after %d attempt(s): %s' % (self._attempt, text))
 
     def finish(self):
         """Caller has what it needs: end the exchange successfully."""
@@ -185,6 +214,8 @@ class GattClient(object):
             self._timer = None
         if not ok or not self.keep_connected:
             self._teardown()
+        if self.scanner is not None:
+            self.scanner.resume()
         cb, self._done_cb = self._done_cb, None
         if cb:
             cb(ok, error)
