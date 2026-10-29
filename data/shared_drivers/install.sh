@@ -1,38 +1,35 @@
 #!/bin/sh
 # Install / re-enable the custom drivers on Venus OS.
 #
-# Run ON THE GX/RASPBERRY PI after copying this repo's data/ folder to /data:
-#   scp -r data/shared_drivers data/etc root@venus.local:/data/
-#   ssh root@venus.local sh /data/shared_drivers/install.sh mopeka_standard esp32_hydro fridge web_ui
+# Normally started by get.sh (see README). By hand, on the GX/Raspberry Pi:
+#   sh /data/shared_drivers/install.sh                 # the settings page only (the default)
+#   sh /data/shared_drivers/install.sh fridge web_ui   # or name the services to enable
 #
-# Arguments: the services to enable (folders in /data/etc/init.d).
+# The gas sensor, fridge, water tank and Starlink are added from the settings page, which
+# enables their services itself. Arguments: services to enable (folders in /data/etc/init.d).
 #   --force   enable even if the pre-flight diagnostics report a FAIL
 # Safe to run repeatedly. Firmware updates wipe /service, but /data/rc.local
 # (run by Venus OS at every boot) re-creates the links.
 
 set -e
 
-DRIVERS=/data/shared_drivers
-SERVICES=/data/etc/init.d
-RCLOCAL=/data/rc.local
+DATA=${VENUS_DATA:-/data}                  # the overrides are for the tests
+SVC=${VENUS_SERVICE_DIR:-/service}
+DRIVERS=$DATA/shared_drivers
+SERVICES=$DATA/etc/init.d
+RCLOCAL=$DATA/rc.local
 
 [ -d "$DRIVERS" ] || { echo "$DRIVERS missing - copy the files first"; exit 1; }
 chmod +x "$DRIVERS"/*.py "$DRIVERS"/*.sh "$DRIVERS"/diagnostics/*.py
 
 if [ ! -f "$DRIVERS/config.ini" ]; then
-    cp "$DRIVERS/config.ini.example" "$DRIVERS/config.ini"
-    echo "Created $DRIVERS/config.ini - edit it (MAC addresses!) and run this again."
-    exit 0
+    printf '# Settings of the Venus OS mods. The settings page edits this file; config.ini.example lists every option.\n' > "$DRIVERS/config.ini"
 fi
 
 FORCE=0
 if [ "$1" = "--force" ]; then FORCE=1; shift; fi
 
-if [ $# -eq 0 ]; then
-    echo "Usage: $0 [--force] <service> [<service> ...]"
-    echo "Available: $(ls "$SERVICES" | tr '\n' ' ')"
-    exit 1
-fi
+[ $# -gt 0 ] || set -- web_ui                        # the settings page: it adds everything else
 
 echo "Running pre-flight diagnostics..."
 if ! python3 "$DRIVERS/diagnostics/test_venus_compatibility.py"; then
@@ -63,22 +60,33 @@ for name in "$@"; do
     [ -f "$dir/run" ] || { echo "No service $dir, skipping"; continue; }
     chmod +x "$dir/run" "$dir/log/run"
 
-    line="[ -e /service/$name ] || ln -s $dir /service/$name"
+    line="[ -e $SVC/$name ] || ln -s $dir $SVC/$name"
     grep -qxF "$line" "$RCLOCAL" || echo "$line" >> "$RCLOCAL"
 
-    if [ -e "/service/$name" ]; then
-        svc -t "/service/$name"
+    if [ -e "$SVC/$name" ]; then
+        svc -t "$SVC/$name"
         echo "Restarted $name"
     else
-        ln -s "$dir" "/service/$name"
+        ln -s "$dir" "$SVC/$name"
         echo "Enabled $name (svscan starts it within ~5 s)"
     fi
 done
 
-if [ "$NEWPW" = 1 ] || grep -q web_ui "$RCLOCAL"; then
-    IP=$(ip -4 addr show 2>/dev/null | sed -n 's/.*inet \(192\.168\.[0-9.]*\|10\.[0-9.]*\).*/\1/p' | head -n 1)
+if grep -q web_ui "$RCLOCAL"; then
+    ADDRS=$(ip -4 addr show 2>/dev/null | sed -n 's/.*inet \(192\.168\.[0-9.]*\|10\.[0-9.]*\|172\.\(1[6-9]\|2[0-9]\|3[01]\)\.[0-9.]*\|100\.[0-9.]*\)[/ ].*/\1/p')
+    PORT=$(sed -n '/^\[web\]/,/^\[/s/^port *= *\([0-9]*\).*/\1/p' "$DRIVERS/config.ini" | head -n 1)
     echo
-    echo "Settings page: http://${IP:-<pi-ip>}:8088"
+    echo "=============================================================="
+    echo " Done. Open the settings page on your phone or computer:"
+    for a in $ADDRS; do echo "     http://$a:${PORT:-8088}"; done
+    [ -n "$ADDRS" ] || echo "     http://<ip of this device>:${PORT:-8088}"
+    if [ -n "$PW" ]; then
+        echo " Password: $PW   (any user name; it is saved in config.ini)"
+    else
+        echo " Password: see [web] in $DRIVERS/config.ini"
+    fi
+    echo " Press 'Unlock', then follow the setup guide to add your devices."
+    echo "=============================================================="
 fi
 
 echo

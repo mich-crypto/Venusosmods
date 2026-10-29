@@ -10,13 +10,21 @@ on Modbus-TCP/MQTT):
 | Self-built **ESP32-S3 hydrostatic** water sensor | `com.victronenergy.tank.esp32_hydro` (+ `.temperature.esp32_hydro_temp`) | fresh-water tank (+ water temperature) |
 | 12 V compressor **fridge** with the Alpicool Bluetooth controller (confirmed with a Hyckes dual-zone fridge) | `com.victronenergy.temperature.fridge_zone1` / `_zone2` | fridge / freezer temperature |
 
-**→ Start with the [step-by-step guide](docs/GUIDE.md)**, also as a printable
-**[PDF](docs/Venus-OS-Mods-Guide.pdf)** (guide + wiring + calibration in one file).
+## Install (one command)
 
-**Settings page:** after installing, `install.sh web_ui` gives you a browser page on the Pi (`http://<pi-ip>:8088`) to see everything live and change the fridge, gas, water and dbus-serialbattery (JK BMS etc.) settings without editing files. See Part 8 of the guide.
-Also: [wiring](docs/wiring.md) · [tank calibration](docs/calibration.md) · [filling chart of the wheel-arch tank](docs/tank-filling-chart.md)
+Open an SSH session to the Pi as `root` (the Termius app on an iPad works) and paste:
 
-The PDF is generated from the Markdown files: `cd tools/pdf && npm install && npm run build`.
+```sh
+wget -qO- https://raw.githubusercontent.com/mich-crypto/Venusosmods/master/get.sh | sh
+```
+
+It downloads the mods, checks the Pi, switches on the **settings page** and prints its address and
+password. Open that address on your phone, press **Unlock** and follow the **setup guide**: it finds your
+gas sensor, fridge and water sender over Bluetooth, adds them to Venus OS and tells you where to find them.
+Run the same command again any time to update; your settings are kept.
+
+More: the [step-by-step guide](docs/GUIDE.md) (building the water sensor, wiring, manual setup), also as a
+printable **[PDF](docs/Venus-OS-Mods-Guide.pdf)**.
 
 ## Layout
 
