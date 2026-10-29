@@ -145,6 +145,10 @@ def check_config(path):
     except configparser.Error as e:
         report('FAIL', 'config.ini', 'syntax error: %s' % e)
         return None
+    if not cp.sections():
+        report('FAIL', 'config.ini', '%s has no [sections] - empty or not saved? '
+               'See config.ini.example' % path)
+        return None
     report('PASS', 'config.ini', '%s, sections: %s' % (path, ', '.join(cp.sections())))
 
     seen = {}
