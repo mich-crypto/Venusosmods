@@ -402,7 +402,9 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(sw.name, 'com.victronenergy.switch.fridge_controls')
         self.assertEqual(sw['/SwitchableOutput/power/Settings/Type'], 1)      # toggle
         self.assertEqual(sw['/SwitchableOutput/setpoint/Settings/Type'], 3)   # temp setpoint
-        self.assertEqual(sw['/SwitchableOutput/setpoint2/Name'], 'Freezer set point')
+        self.assertEqual(sw['/SwitchableOutput/setpoint2/Name'], 'Set point 2: Freezer')
+        names = sorted((sw['/SwitchableOutput/%s/Name' % c], c) for c in ('power', 'eco', 'setpoint', 'setpoint2'))
+        self.assertEqual([c for _, c in names], ['eco', 'power', 'setpoint', 'setpoint2'])   # switches first, then temperatures
         self.assertIn('/SwitchableOutput/eco/State', sw.paths_at_register)
         self.assertNotIn('/SwitchableOutput/power/State', d.zones[0].service.paths_at_register)
         self.assertEqual((sw['/SwitchableOutput/setpoint2/Settings/DimmingMin'],

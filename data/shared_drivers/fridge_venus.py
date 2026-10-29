@@ -119,7 +119,8 @@ class FridgeDriver(BleDriver):
         self._add_channel(svc, 'eco', 'Fridge eco mode', self.TYPE_TOGGLE, 'State',
                           lambda p, v: self._request('eco_mode', bool(int(v))))
         for zone in range(zones):
-            self._add_channel(svc, self.channel(zone), '%s set point' % self.zone_names[zone],
+            # The switch pane sorts outputs by name: "Fridge eco mode", "Fridge power", then "Set point ..."
+            self._add_channel(svc, self.channel(zone), 'Set point %d: %s' % (zone + 1, self.zone_names[zone]),
                               self.TYPE_SETPOINT, 'Dimming',
                               lambda p, v, z=zone: self._request_setpoint(z, v))
 
