@@ -6,6 +6,7 @@ D-Bus, GLib and velib_python are replaced by small fakes, so this runs on any PC
 import configparser
 import os
 import sys
+import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -409,6 +410,72 @@ class DriverTests(unittest.TestCase):
     def test_fridge_requires_mac(self):
         with self.assertRaises(SystemExit):
             FridgeDriver('s', section('poll_interval = 30\n'))
+
+
+class StuckAdapterTests(unittest.TestCase):
+    """BlueZ saying "in progress" while the adapter is not scanning must not stay that way."""
+
+    class BusError(Exception):
+        def __init__(self, name):
+            super().__init__(name)
+            self.name = name
+
+        def get_dbus_name(self):
+            return self.name
+
+    def make(self, discovering_after_restart):
+        import ble_scanner
+        test = self
+        state = {'powered': True, 'discovering': False, 'starts': 0, 'stops': 0, 'sets': []}
+
+        class Adapter(object):
+            def Get(self, iface, prop):
+                return state['powered'] if prop == 'Powered' else state['discovering']
+
+            def Set(self, iface, prop, value):
+                state['sets'].append((prop, bool(value)))
+                state['powered'] = bool(value)
+
+            def SetDiscoveryFilter(self, f):
+                pass
+
+            def StartDiscovery(self):
+                state['starts'] += 1
+                if state['starts'] == 1 or not discovering_after_restart:
+                    raise test.BusError('org.bluez.Error.InProgress')
+                state['discovering'] = True
+
+            def StopDiscovery(self):
+                state['stops'] += 1
+
+        bus = types.SimpleNamespace(get_object=lambda *a: Adapter(), add_signal_receiver=lambda *a, **k: None)
+        ble_scanner.dbus.Interface = lambda obj, iface: obj
+        self.addCleanup(lambda: delattr(ble_scanner.dbus, 'Interface'))
+        sc = ble_scanner.BlueZScanner(bus, lambda *a: None)
+        sc._adapter_path = '/org/bluez/hci0'
+        return sc, state
+
+    def test_stop_and_start_unsticks_it(self):
+        sc, st = self.make(discovering_after_restart=True)
+        sc._ensure_discovery(force=True)            # first StartDiscovery says "in progress"
+        self.assertEqual((st['stops'], st['starts'], st['discovering'], sc._stuck), (1, 2, True, 0))
+        self.assertEqual(st['sets'], [])
+
+    def test_power_cycle_when_that_does_not_help(self):
+        sc, st = self.make(discovering_after_restart=False)
+        sc._ensure_discovery(force=True)
+        self.assertEqual(sc._stuck, 1)
+        sc._ensure_discovery()                      # the watchdog tries again 30 s later
+        self.assertEqual(st['sets'], [('Powered', False)])
+        sc._power_on()
+        self.assertEqual(st['sets'][-1], ('Powered', True))
+        self.assertEqual(sc._stuck, 0)
+
+    def test_own_session_is_not_a_problem(self):
+        sc, st = self.make(discovering_after_restart=True)
+        st['discovering'] = True
+        sc._ensure_discovery(force=True)
+        self.assertEqual((st['stops'], st['sets'], sc._stuck), (0, [], 0))
 
 
 class GlobalPauseTests(unittest.TestCase):

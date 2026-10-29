@@ -94,6 +94,7 @@ class BlueZScanner(object):
         self._rssi = {}
         self._paused = False         # paused by our own GATT client
         self._ext_paused = False     # paused because another process connects
+        self._stuck = 0              # checks in a row where BlueZ said "in progress" but was not scanning
 
     def start(self):
         self._bus.add_signal_receiver(
@@ -148,9 +149,54 @@ class BlueZScanner(object):
         except dbus.exceptions.DBusException as e:
             name = e.get_dbus_name() or ''
             if name.endswith('InProgress'):
-                return  # our session is already running
+                self._in_progress()
+                return
             log.warning('Could not start BLE discovery: %s', e)
             self._adapter_path = None
+
+    def _in_progress(self):
+        """
+        StartDiscovery said "in progress". Normally that is our own session. But BlueZ can also get
+        stuck (a scan it believes is pending while the adapter does nothing, after many stop/start
+        cycles): then no advertisement ever arrives. Try stop+start, then power-cycle the adapter.
+        """
+        try:
+            obj = self._bus.get_object(BLUEZ, self._adapter_path)
+            props = dbus.Interface(obj, PROPS_IFACE)
+            if props.Get(ADAPTER_IFACE, 'Discovering'):
+                self._stuck = 0
+                return
+            self._stuck += 1
+            log.warning('BlueZ reports a scan in progress but the adapter is not scanning (%d)', self._stuck)
+            adapter = dbus.Interface(obj, ADAPTER_IFACE)
+            if self._stuck == 1:
+                try:
+                    adapter.StopDiscovery()
+                except dbus.exceptions.DBusException:
+                    pass
+                adapter.StartDiscovery()
+                self._stuck = 0
+                log.info('BLE discovery restarted on %s', self._adapter_path)
+            else:
+                log.warning('Power-cycling Bluetooth adapter %s to unstick it', self._adapter_name)
+                props.Set(ADAPTER_IFACE, 'Powered', dbus.Boolean(False))
+                GLib.timeout_add_seconds(2, self._power_on)
+        except dbus.exceptions.DBusException as e:
+            log.warning('Could not unstick BLE discovery: %s', e)
+
+    def _power_on(self):
+        try:
+            obj = self._bus.get_object(BLUEZ, self._adapter_path)
+            dbus.Interface(obj, PROPS_IFACE).Set(ADAPTER_IFACE, 'Powered', dbus.Boolean(True))
+            self._stuck = 0
+            GLib.timeout_add_seconds(2, self._rearm)
+        except dbus.exceptions.DBusException as e:
+            log.warning('Could not power the adapter back on: %s', e)
+        return False
+
+    def _rearm(self):
+        self._ensure_discovery(force=True)
+        return False
 
     def _watchdog(self):
         if not (self._paused or self._ext_paused):
