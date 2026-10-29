@@ -22,6 +22,7 @@ values age out after `timeout` seconds.
 import logging
 
 import alpicool_protocol as proto
+import rawlog
 from ble_gatt import GattClient
 from gi.repository import GLib
 from venus_service import (BleDriver, SwitchDevice, TemperatureDevice, TEMP_FREEZER,
@@ -54,6 +55,7 @@ class FridgeDriver(BleDriver):
         self.control = config.getboolean('control', True)
         self.control_group = config.get('control_group', 'Fridge')
         self._logged_ranges = set()
+        self.raw = rawlog.RawLog('fridge')
         self.switch = None       # SwitchDevice with the controls, made after the first status
         self._status = None      # last FridgeStatus, needed to build commands
         self._want = {}          # pending changes: powered_on, eco_mode, 0/1 = set point C
@@ -199,6 +201,8 @@ class FridgeDriver(BleDriver):
         self._want = {}
         self._send_tries += 1
         self._assembler = proto.FrameAssembler()
+        for f in frames:
+            self.raw.write('tx', 'command %s' % rawlog.hexs(f))
         chunks = [c for f in frames for c in proto.chunks(f)]
         self.gatt.exchange(chunks, lambda ok, err: self._on_sent(ok, err, sent))
         return False
@@ -230,6 +234,7 @@ class FridgeDriver(BleDriver):
     def _poll(self):
         if not self.gatt.busy:
             self._assembler = proto.FrameAssembler()
+            self.raw.write('tx', 'query %s' % rawlog.hexs(proto.query_frame()))
             self.gatt.exchange(proto.chunks(proto.query_frame()), self._on_done)
         return True
 
@@ -238,19 +243,24 @@ class FridgeDriver(BleDriver):
             self._failures = 0
             return
         self._failures += 1
+        self.raw.write('error', 'poll failed (%d in a row): %s' % (self._failures, error))
         # The phone app being connected is the normal reason; don't spam the log
         level = logging.WARNING if self._failures in (1, 10) or self._failures % 60 == 0 else logging.DEBUG
         log.log(level, 'fridge poll failed (%d in a row): %s', self._failures, error)
 
     def _on_notify(self, data):
+        self.raw.write('rx', 'chunk %s' % rawlog.hexs(data))
         for cmd, payload in self._assembler.feed(data):
             if cmd not in (proto.CMD_QUERY, proto.CMD_SET_OTHERS):
+                self.raw.write('other', 'cmd=%d payload=%s' % (cmd, rawlog.hexs(payload)))
                 continue
             status = proto.parse_status(payload)
             if status is None:
                 log.warning('short status frame: %s', payload.hex())
                 continue
             log.debug('%r', status)
+            self.raw.write('status', 'cmd=%d payload=%s -> zones %s power=%s eco=%s volts=%s' % (
+                cmd, rawlog.hexs(payload), status.zones, status.powered_on, status.eco_mode, status.supply_voltage))
             self._status = status
             self._publish(status)
             self.gatt.finish()

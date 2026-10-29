@@ -12,6 +12,7 @@ temperature_service = yes, com.victronenergy.temperature.<service>_temp
 import logging
 
 import esp32_hydro_protocol as proto
+import rawlog
 from venus_service import (BleDriver, TankDevice, TemperatureDevice,
                            FLUID_FRESH_WATER, TEMPERATURE_TYPES)
 
@@ -39,6 +40,7 @@ class Esp32HydroDriver(BleDriver):
             extra_paths=('/Hydro/HeightMm', '/Hydro/Filling', '/Hydro/Draining',
                          '/Hydro/Sloshing', '/Hydro/Fault'))
         self.devices.append(self.tank)
+        self.raw = rawlog.RawLog('water')
 
         self.temp = None
         if config.getboolean('temperature_service', False):
@@ -59,6 +61,7 @@ class Esp32HydroDriver(BleDriver):
             return  # same packet seen again, nothing new
         self._last_seq = r.sequence
         log.debug('%s rssi=%s %r', mac, rssi, r)
+        self.raw.write('adv', '%s rssi=%s data=%s -> %r' % (mac, rssi, rawlog.hexs(manufacturer_data.get(proto.COMPANY_ID)), r))
 
         self.tank.publish(
             level=None if r.fault else r.level,

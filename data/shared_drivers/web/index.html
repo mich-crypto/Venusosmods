@@ -133,6 +133,10 @@ dialog pre { background:var(--code); border-radius:10px; padding:10px; max-heigh
 td code { overflow-wrap:anywhere; }
 table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-size:.78rem; }
 @media (max-width:600px) { .tile .v { font-size:1.25rem; } .two { grid-template-columns:1fr; } }
+#main .rawbox { background:var(--code); border-radius:10px; padding:10px; font:.76rem/1.45 ui-monospace,Menlo,Consolas,monospace;
+  height:52vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.rawbox .ts { color:var(--muted); } .rawbox .k { font-weight:700; } .k-tx { color:var(--accent); } .k-rx { color:var(--ok); }
+.k-error { color:var(--bad); } .k-status { color:#8e44ad; } .k-adv { color:var(--ok); }
 @media (max-width:600px) { .big { font-size:1.7rem; } main { padding:12px; } }
 </style>
 </head>
@@ -156,7 +160,7 @@ table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-
 // ---------------------------------------------------------------- helpers
 const S = { tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
 const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
-              ['battery', 'Battery'], ['starlink', 'Starlink'], ['files', 'Files & logs']];
+              ['battery', 'Battery'], ['starlink', 'Starlink'], ['raw', 'Raw data'], ['files', 'Files & logs']];
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -166,7 +170,7 @@ function h(tag, attrs, ...kids) {
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else if (k === 'value') el.value = v;
     else if (['checked', 'disabled', 'selected', 'open', 'hidden'].includes(k)) el[k] = !!v;
-    else el.setAttribute(k, v === true ? '' : v);
+    else el.setAttribute(k, v === true ? (k.startsWith('aria-') ? 'true' : '') : v);   // aria-pressed="true", not an empty attribute
   }
   for (const kid of kids.flat(Infinity)) {
     if (kid === null || kid === undefined || kid === false) continue;
@@ -251,7 +255,7 @@ async function renderTab() {
   hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
   const main = clear($('#main'));
   const f = { overview: tabOverview, fridge: () => tabDriver('fridge'), gas: () => tabDriver('mopeka'),
-              water: () => tabDriver('esp32'), battery: tabBattery, starlink: tabStarlink, files: tabFiles }[S.tab];
+              water: () => tabDriver('esp32'), battery: tabBattery, starlink: tabStarlink, raw: tabRaw, files: tabFiles }[S.tab];
   await f(main);
 }
 
@@ -879,7 +883,7 @@ function cellBars(cells, bal) {
 
 // ------------------------------------------------------ battery: the page
 const BAT_WINDOWS = [[900, '15 min'], [3600, '1 hour'], [21600, '6 hours']];
-function stopBattery() { clearInterval(S.bTimer); S.bTimer = null; clearInterval(S.slTimer); S.slTimer = null; }
+function stopBattery() { clearInterval(S.bTimer); S.bTimer = null; clearInterval(S.slTimer); S.slTimer = null; clearInterval(S.rawTimer); S.rawTimer = null; }
 
 async function tabBattery(main) {
   stopBattery();
@@ -1299,6 +1303,68 @@ function starlinkCard(sl) {
     h('div', { class: 'big' }, fmtMbps(sl.down_bps), h('small', {}, ' Mbit/s down')),
     h('div', { class: 'muted' }, 'up ' + fmtMbps(sl.up_bps) + ' · ping ' + (sl.latency_ms == null ? '–' : sl.latency_ms.toFixed(0)) + ' ms · obstructed ' + (sl.obstructed_pct == null ? '–' : sl.obstructed_pct.toFixed(1)) + ' %'),
     (sl.alerts || []).length ? h('div', { class: 'muted' }, sl.alerts.join(', ')) : null);
+}
+
+// ------------------------------------------------------------- raw data
+const RAW_SOURCES = [['gas', 'Gas (Mopeka)'], ['fridge', 'Fridge'], ['water', 'Water (ESP32)']];
+const FRIDGE_BYTES = { 0: 'locked', 1: 'power on', 2: 'eco mode', 3: 'battery saver', 4: 'left set point', 5: 'left highest set point',
+  6: 'left lowest set point', 9: 'unit (0 °C, 1 °F)', 14: 'left temperature', 15: 'battery % (127 = none)', 16: 'supply volts', 17: 'supply volts, tenths',
+  18: 'right set point', 19: 'right highest set point', 20: 'right lowest set point', 26: 'right temperature', 27: 'running status', 28: 'model' };
+
+async function tabRaw(main) {
+  stopBattery();
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  S.rawSource = S.rawSource || 'gas';
+  main.append(h('div', { class: 'pills', role: 'group' }, RAW_SOURCES.map(([id, label]) =>
+    h('button', { type: 'button', 'aria-pressed': S.rawSource === id, onclick: () => { S.rawSource = id; renderTab(); } }, label))));
+  const box = h('div', {});
+  main.append(box);
+  await rawView(box);
+  S.rawTimer = setInterval(() => { if (!document.hidden && S.tab === 'raw' && !S.rawPaused && !$('#dlg').open) rawView(box); }, 3000);
+}
+
+function rawLine(text) {
+  const m = /^(\S+ \S+) (\S+)\s+(.*)$/.exec(text);
+  if (!m) return h('div', {}, text);
+  return h('div', {}, h('span', { class: 'ts' }, m[1].slice(11) + ' '), h('span', { class: 'k k-' + m[2] }, m[2].padEnd(6)), ' ', m[3]);
+}
+
+async function rawView(box) {
+  const r = await api('/api/rawlog?source=' + S.rawSource + '&lines=300');
+  if (S.tab !== 'raw') return;
+  const out = h('div', {});
+  if (!r.ok) { clear(box).append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read the log')); return; }
+  const lines = r.data.lines, old = $('.rawbox'), stick = !old || old.scrollTop + old.clientHeight >= old.scrollHeight - 30;
+  const note = { gas: 'Every Mopeka advertisement of your sensor: the raw bytes (data=), what they decode to, and the level that was published.',
+    fridge: 'What the Pi sends to the fridge (tx) and what comes back (rx), with the decoded status. A status payload is a row of bytes; the table below names them.',
+    water: 'Every new ESP32 advertisement with its raw bytes and what they decode to.' }[S.rawSource];
+  out.append(h('div', { class: 'row', style: 'margin-bottom:8px' }, h('div', { class: 'muted' }, note), h('span', { class: 'spacer' }),
+    h('button', { type: 'button', class: 'btn small', onclick: () => { S.rawPaused = !S.rawPaused; renderTab(); } }, S.rawPaused ? 'Resume' : 'Pause'),
+    h('button', { type: 'button', class: 'btn small', onclick: () => copyText(lines.join('\n')) }, 'Copy'),
+    h('button', { type: 'button', class: 'btn small danger', disabled: !canEdit(), onclick: async () => { await api('/api/rawlog_clear', { source: S.rawSource }); rawView(box); } }, 'Clear')));
+  const view = h('div', { class: 'rawbox' }, lines.length ? lines.map(rawLine) : h('div', { class: 'muted' }, 'Nothing logged yet. The log lives in ' + r.data.dir + ' on the Pi (lost at a reboot) and fills as the sensor sends data. Update the drivers and restart them if it stays empty.'));
+  out.append(view);
+  if (S.rawSource === 'fridge') {
+    const last = lines.slice().reverse().map(l => /payload=([0-9a-f]+)/.exec(l)).find(Boolean);
+    if (last) {
+      const bytes = last[1].match(/../g).map(x => parseInt(x, 16));
+      out.append(h('details', { class: 'group', open: true, style: 'margin-top:12px' }, h('summary', {}, 'Last status payload, byte by byte'),
+        h('div', { class: 'body', style: 'overflow-x:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['Byte', 'Hex', 'Value', 'Meaning'].map(x => h('th', {}, x)))),
+          h('tbody', {}, bytes.map((b, i) => h('tr', {}, h('td', {}, i), h('td', {}, h('code', {}, b.toString(16).padStart(2, '0'))), h('td', {}, b > 127 ? b + ' (' + (b - 256) + ')' : b), h('td', {}, FRIDGE_BYTES[i] || ''))))))));
+    }
+  }
+  clear(box).append(out);
+  const nv = $('.rawbox');
+  if (nv && stick) nv.scrollTop = nv.scrollHeight;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copied'); return; } catch (e) { /* plain http: not allowed */ }
+  const ta = h('textarea', { style: 'position:fixed;left:-1000px' }, text);
+  document.body.append(ta); ta.value = text; ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch (e) { /* ignore */ }
+  ta.remove();
+  toast(ok ? 'Copied' : 'Copy is blocked here: press and hold the text to select it', !ok);
 }
 
 // ------------------------------------------------------------ files & logs

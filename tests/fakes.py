@@ -3,8 +3,12 @@ Stand-ins for dbus, GLib and Victron's velib so the drivers can be imported
 and tested on any PC. Importing this module installs them in sys.modules.
 """
 
+import os
 import sys
+import tempfile
 import types
+
+os.environ.setdefault('VENUSOSMODS_RAWLOG_DIR', tempfile.mkdtemp(prefix='rawlog_'))
 
 
 class FakeService(dict):

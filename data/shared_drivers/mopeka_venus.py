@@ -18,6 +18,7 @@ import collections
 import logging
 
 import mopeka_std_parser
+import rawlog
 from venus_service import (BleDriver, SettingsDevice, TankDevice, TemperatureDevice, FLUID_LPG,
                            TEMPERATURE_TYPES, interpolate, parse_table)
 
@@ -47,6 +48,7 @@ class MopekaStandardDriver(BleDriver):
             else:
                 log.info('No MAC configured: press the sync button on the Mopeka to pair')
         self._announced = set()
+        self.raw = rawlog.RawLog('gas')
         self.propane_ratio = config.getfloat('propane_ratio', 1.0)
         self.empty_mm = config.getfloat('empty_mm', 38.0)
         self.full_mm = config.getfloat('full_mm', 254.0)
@@ -112,6 +114,7 @@ class MopekaStandardDriver(BleDriver):
         elif mac != self.mac:
             return
         log.debug('%s rssi=%s %r', mac, rssi, r)
+        raw_hex = rawlog.hexs(payload)
 
         if r.quality_ok:
             self._distances.append(r.distance_mm)
@@ -123,6 +126,10 @@ class MopekaStandardDriver(BleDriver):
             distance = None
             log.debug('poor read quality, keeping last level %s', self._level)
 
+        self.raw.write('adv', '%s rssi=%s data=%s dist=%s temp=%s batt=%sV quality=%s sync=%d -> %s' % (
+            mac, rssi, raw_hex, None if r.distance_mm is None else round(r.distance_mm, 2), r.temperature, r.battery_voltage, r.best_amplitude,
+            int(r.sync_pressed), 'level %.1f %% (median %s mm)' % (self._level, None if distance is None else round(distance, 1))
+            if self._level is not None else 'no level (poor echo)'))
         self.tank.publish(
             level=self._level,
             temperature=float(r.temperature),

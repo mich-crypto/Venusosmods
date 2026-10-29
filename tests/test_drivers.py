@@ -240,6 +240,10 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(s['/Temperature'], 19.0)
         self.assertEqual(s['/Rssi'], -70)
 
+        import rawlog
+        line = [l for l in rawlog.read_tail('gas', 20) if ' adv ' in l][-1]
+        self.assertIn('data=' + pkt.hex(), line)
+        self.assertIn('dist=232.75 ', line)
         # the temperature is also its own environment sensor
         t = d.temp.service
         self.assertEqual(t.name, 'com.victronenergy.temperature.mopeka_standard_temp')
@@ -389,6 +393,24 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(d2._range(1, d2._status.zones[1]), (-20.0, -12.0))
         d2._status.zones = d2._status.zones[:1]                    # single-compartment fridge
         self.assertEqual(d2._range(0, d2._status.zones[0]), (-20.0, 20.0))
+
+    def test_fridge_raw_log(self):
+        import rawlog
+        rawlog.clear('fridge')
+        d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\n'))
+        frame = dual_zone_status()
+        d._poll()
+        for part in fridge.chunks(frame):
+            d._on_notify(part)
+        d._on_done(False, 'device disconnected')
+        lines = rawlog.read_tail('fridge', 50)
+        kinds = [l.split()[2] for l in lines]
+        self.assertEqual(kinds.count('tx'), 1)
+        self.assertIn('rx', kinds)
+        status = [l for l in lines if ' status ' in l][0]
+        self.assertIn('payload=', status)
+        self.assertIn('Zone(target=3.0', status)
+        self.assertRegex(lines[-1], r'poll failed \(\d+ in a row\): device disconnected')
 
     def test_fridge_controls(self):
         d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\n'))

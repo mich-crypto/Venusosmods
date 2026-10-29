@@ -155,6 +155,18 @@ await page.locator('.chart path[stroke]').first().waitFor({ state: 'attached' })
 check((await page.locator('.chart').count()) >= 3, 'Starlink graphs are drawn');
 await shot(page, '07c-starlink');
 
+// raw data
+await tab(page, 'Raw data');
+await page.locator('.rawbox', { hasText: 'data=' }).waitFor();
+check((await page.locator('.rawbox .k-adv').count()) >= 1, 'raw log shows the Mopeka advertisements with their bytes');
+check((await page.getByRole('tab', { name: 'Raw data', selected: true }).count()) === 1, 'the open tab is marked as selected');
+await shot(page, '07d-raw-gas');
+await page.getByRole('button', { name: 'Fridge', exact: true }).click();
+await page.getByText('Last status payload, byte by byte').waitFor();
+check((await page.locator('.rawbox .k-tx').count()) >= 1 && (await page.locator('.rawbox .k-rx').count()) >= 1, 'raw log shows what is sent to and received from the fridge');
+check((await page.locator('details.group tbody tr').count()) >= 20, 'fridge payload is listed byte by byte');
+await shot(page, '07e-raw-fridge');
+
 // files & logs
 await tab(page, 'Files & logs');
 await page.getByText('Drivers: config.ini').waitFor();

@@ -262,6 +262,11 @@ def check_web_results(web):
     assert 'exception' not in res, res
     st, page = res['page']
     assert st == 200 and b'<title>Venus settings' in page, (st, page[:80])
+    st, raw = res['raw_gas']
+    assert st == 200 and any(' adv ' in l and 'data=' in l and 'dist=232.75' in l for l in raw['lines']), raw
+    st, raw = res['raw_fridge']
+    assert st == 200 and any(' tx ' in l and 'query' in l for l in raw['lines']), raw
+    assert any(' status ' in l and 'payload=' in l and 'Zone(target=3.0' in l for l in raw['lines']), raw['lines'][-5:]
     st, sl = res['starlink']
     assert st == 200 and sl['state'] == 'Connected' and sl['via'].startswith('gRPC-web port'), sl
     assert sl['status']['alerts'] == ['roaming'] and sl['status']['down_bps'] > 1e8 and sl['history']['t'], sl
@@ -358,7 +363,7 @@ def main():
     with open(os.path.join(W, 'log', 'fridge', 'current'), 'w') as f:
         f.write('@40000000%08x%08x INFO fridge poll ok\n' % (int(time.time()) + 10, 0))
 
-    env = dict(os.environ, PYTHONPATH=velib)
+    env = dict(os.environ, PYTHONPATH=velib, VENUSOSMODS_RAWLOG_DIR=os.path.join(W, 'raw'))
     procs = [subprocess.Popen([sys.executable, os.path.join(DRIVERS, script),
                                '--config', cfg, '--section', section], env=env)
              for script, section in (('mopeka_venus.py', 'mopeka_standard'),
@@ -455,6 +460,8 @@ def main():
                       {'s.MAX_BATTERY_CHARGE_CURRENT': '40', 'restart': '1'}, dict(auth, **csrf))
             time.sleep(3)                                  # the page asks the dish every 2 s
             http_call('starlink', 'GET', '/api/starlink', headers=auth)
+            http_call('raw_gas', 'GET', '/api/rawlog?source=gas', headers=auth)
+            http_call('raw_fridge', 'GET', '/api/rawlog?source=fridge', headers=auth)
             http_call('log', 'GET', '/api/log?service=fridge', headers=auth)
             http_call('pair', 'POST', '/api/pair_reset', {'section': 'mopeka_standard'}, dict(auth, **csrf))
             http_call('reboot', 'POST', '/api/reboot', {}, dict(auth, **csrf))

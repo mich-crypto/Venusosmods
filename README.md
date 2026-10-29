@@ -33,6 +33,7 @@ data/                              -> copied to /data on the Pi
     esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature)
     fridge_venus.py                driver: fridge  -> temperature per zone
     web_ui.py + web/index.html     settings page on port 8088 (drivers + dbus-serialbattery)
+    rawlog.py                      rolling log of the raw sensor bytes (shown on the Raw data tab)
     starlink.py                    Starlink dish status (gRPC-web, hand-made protobuf reader)
     battery_debug.py               battery history for the graphs (cells, current, temperatures)
     config_tools.py                config.ini parsing, validation and safe writing for the page

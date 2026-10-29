@@ -37,6 +37,7 @@ from gi.repository import GLib  # noqa: E402
 
 import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
+import rawlog  # noqa: E402
 import starlink  # noqa: E402
 
 log = logging.getLogger('web_ui')
@@ -333,6 +334,7 @@ class App(object):
         self._bus = None
         self.recorder = battery_debug.Recorder(interval=opts.get('sample_s', 10))
         self.starlink = StarlinkMonitor(opts.get('starlink') or {})
+        self.rawlog_dir = opts.get('rawlog_dir') or rawlog.DEFAULT_DIR
 
     # ---------------------------------------------------------- plumbing
 
@@ -421,6 +423,8 @@ class App(object):
             'POST /api/driver_config': self.api_driver_config_save,
             'GET /api/battery': self.api_battery,
             'GET /api/starlink': self.api_starlink,
+            'GET /api/rawlog': self.api_rawlog,
+            'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
             'POST /api/serialbattery': self.api_serialbattery_save,
             'GET /api/raw': self.api_raw,
@@ -539,6 +543,29 @@ class App(object):
             out['info'] = self.recorder.info(service)
             out['history'] = self.recorder.history(service, window)
         return jsonr(out)
+
+    def api_rawlog(self, req):
+        source = req.query.get('source', '')
+        if source not in rawlog.SOURCES:
+            source = rawlog.SOURCES[0]
+        raw = req.query.get('lines', '')
+        count = max(10, min(1000, int(raw))) if raw.isdigit() else 200
+        sources = []
+        for name in rawlog.SOURCES:
+            try:
+                size = os.path.getsize(os.path.join(self.rawlog_dir, name + '.log'))
+            except OSError:
+                size = 0
+            sources.append({'name': name, 'bytes': size})
+        return jsonr({'ok': True, 'source': source, 'sources': sources, 'dir': self.rawlog_dir,
+                      'lines': rawlog.read_tail(source, count, self.rawlog_dir)})
+
+    def api_rawlog_clear(self, req):
+        source = req.form.get('source', '')
+        if source not in rawlog.SOURCES:
+            return jsonr({'ok': False, 'error': 'unknown source'}, 400)
+        rawlog.clear(source, self.rawlog_dir)
+        return jsonr({'ok': True})
 
     def api_starlink(self, req):
         raw = req.query.get('window', '')
@@ -1030,6 +1057,7 @@ def main():
     ap.add_argument('--port', type=int, default=None)
     ap.add_argument('--bind', default=None)
     ap.add_argument('--no-firewall', action='store_true')
+    ap.add_argument('--rawlog-dir', default=None)
     ap.add_argument('--sample-s', type=int, default=10, help='seconds between battery samples')
     ap.add_argument('--debug', action='store_true')
     args = ap.parse_args()
@@ -1052,7 +1080,7 @@ def main():
     app = App({'driver_config': args.config, 'init_dir': args.init_dir, 'service_dir': args.service_dir,
                'log_dir': args.log_dir, 'rc_local': args.rc_local, 'password': password,
                'serialbattery_dir': args.serialbattery_dir, 'sample_s': max(1, args.sample_s),
-               'starlink': starlink_cfg})
+               'starlink': starlink_cfg, 'rawlog_dir': args.rawlog_dir})
     server = Server(app, host, port)
     log.info('Settings page on http://%s:%d/', host, server.port)
     if not args.no_firewall and get('open_firewall', 'yes').lower() in ct.TRUE:

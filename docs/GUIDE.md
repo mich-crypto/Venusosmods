@@ -404,6 +404,15 @@ if you forget it. Open the address in Safari and add it to the home screen.
   `python3 /data/shared_drivers/diagnostics/starlink_probe.py` and send the
   output. Settings (`[starlink]` in `config.ini`): `enabled`, `host`,
   `interval`, `port`.
+* **Raw data** – what the sensors really send, for debugging. *Gas* shows
+  every Mopeka advertisement with its raw bytes (`data=`), the decoded
+  distance, temperature, battery and echo quality, and the level that was
+  published. *Fridge* shows what the Pi sends (`tx`) and receives (`rx`), the
+  decoded status, and the last status payload byte by byte with the meaning of
+  each byte (set points, ranges, temperatures, voltage). *Water* shows the
+  ESP32 advertisements. The log lives in `/tmp/venusosmods-raw/` on the Pi, so
+  it starts empty after a reboot and never wears the SD card. Use *Copy* to
+  paste it into a message.
 * **Files & logs** – the raw config files as a fallback, and the log of every
   service.
 
