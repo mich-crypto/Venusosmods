@@ -33,11 +33,13 @@ data/                              -> copied to /data on the Pi
     esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature)
     fridge_venus.py                driver: fridge  -> temperature per zone
     web_ui.py + web/index.html     settings page on port 8088 (drivers + dbus-serialbattery)
+    starlink.py                    Starlink dish status (gRPC-web, hand-made protobuf reader)
     battery_debug.py               battery history for the graphs (cells, current, temperatures)
     config_tools.py                config.ini parsing, validation and safe writing for the page
     diagnostics/
       test_venus_compatibility.py  read-only pre-flight check, PASS/WARN/FAIL, optional BLE scan
       fridge_probe.py              does my fridge speak the supported protocol?
+      starlink_probe.py            does the Starlink dish answer, and do we understand it?
     config.ini.example
     install.sh / uninstall.sh
   etc/init.d/<service>/run         daemontools services (+ log/run)

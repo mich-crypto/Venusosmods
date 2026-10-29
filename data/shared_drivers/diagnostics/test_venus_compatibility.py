@@ -130,7 +130,7 @@ def check_bluetooth(bus, names):
 
 def driver_of(section, cfg):
     kind = cfg.get('driver', '') or section
-    for prefix in ('mopeka', 'esp32', 'fridge', 'web'):
+    for prefix in ('mopeka', 'esp32', 'fridge', 'starlink', 'web'):
         if kind.startswith(prefix):
             return prefix
     return None
@@ -158,6 +158,17 @@ def check_config(path):
         if kind is None:
             report('WARN', '[%s]' % name, 'unknown driver - name the section mopeka_*, '
                    'esp32_*, fridge_* or web, or add driver = ...')
+            continue
+        if kind == 'starlink':
+            try:
+                cfg.getboolean('enabled', True)
+                if not 2 <= cfg.getint('interval', 5) <= 300:
+                    report('FAIL', '[%s] interval' % name, 'use 2-300 seconds')
+                cfg.getint('port', 9201)
+            except ValueError as e:
+                report('FAIL', '[%s]' % name, 'bad value: %s' % e)
+                continue
+            report('PASS', '[%s]' % name, 'Starlink dish at %s' % cfg.get('host', '192.168.100.1'))
             continue
         if kind == 'web':
             try:

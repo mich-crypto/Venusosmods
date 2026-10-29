@@ -394,6 +394,16 @@ if you forget it. Open the address in Safari and add it to the home screen.
     `config.ini`; the file with the defaults is never touched. Changes to
     Bluetooth BMS, the USB Bluetooth option or the CAN port need a reboot of
     the Pi (the page offers a *Reboot now* button).
+* **Starlink** – status of the dish, read over the network: state (connected,
+  outage and its cause), download and upload speed, ping, packet loss,
+  obstruction, GPS satellites, uptime, alerts and graphs of speed, ping, loss
+  and obstruction (2 hours in memory). It also appears on the *Overview*. The Pi must reach the dish at
+  `192.168.100.1` (check: `curl http://192.168.100.1/`). Starlink does not
+  publish this interface and it was not tested against a real dish by the
+  author, so if the tab shows an error run
+  `python3 /data/shared_drivers/diagnostics/starlink_probe.py` and send the
+  output. Settings (`[starlink]` in `config.ini`): `enabled`, `host`,
+  `interval`, `port`.
 * **Files & logs** – the raw config files as a fallback, and the log of every
   service.
 

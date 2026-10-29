@@ -246,6 +246,20 @@ SCHEMA = {
         ] + COMMON,
         'presets': [],
     },
+    'starlink': {
+        'title': 'Starlink dish',
+        'fields': [
+            F('enabled', 'bool', 'Read the dish', 'Shows the Starlink tab. Turn off if you have no dish.',
+              options=YES_NO, default='yes'),
+            F('host', 'text', 'Dish address', 'Usually 192.168.100.1; the Pi must be able to reach it.',
+              default='192.168.100.1'),
+            F('interval', 'int', 'Read every', 'Seconds between readings.', unit='s', min=2, max=300,
+              default='5'),
+            F('port', 'int', 'gRPC-web port', 'Normally 9201.', min=1, max=65535, advanced=True,
+              default='9201'),
+        ],
+        'presets': [],
+    },
     'web': {
         'title': 'This settings page',
         'fields': [
@@ -266,7 +280,7 @@ SCHEMA = {
 def kind_of(section, values=None):
     """Which driver a config section belongs to, by its `driver =` key or its name."""
     name = ((values or {}).get('driver') or section).lower()
-    for prefix in ('mopeka', 'esp32', 'fridge', 'web'):
+    for prefix in ('mopeka', 'esp32', 'fridge', 'starlink', 'web'):
         if name.startswith(prefix):
             return prefix
     return None

@@ -351,6 +351,70 @@ class BatteryDebugTests(AppTestCase):
         self.assertEqual((d['ok'], d['batteries'], d['service']), (True, [], ''))
 
 
+class StarlinkTests(AppTestCase):
+    def reply(self, **kw):
+        import test_starlink as ts
+        return web_ui.starlink.frame(ts.status_message(**kw))
+
+    def monitor(self, **cfg):
+        m = web_ui.StarlinkMonitor(dict({'host': '10.9.9.9', 'port': '9201'}, **cfg))
+        m._try = lambda tried: self.tries.append(tried)           # no real curl in the tests
+        return m
+
+    def setUp(self):
+        super().setUp()
+        self.tries = []
+
+    def test_candidates(self):
+        m = self.monitor()
+        names = [c[0] for c in m.candidates()]
+        self.assertEqual(names, ['gRPC-web port 9201', 'gRPC-web port 80', 'gRPC port 9200'])
+        self.assertTrue(m.candidates()[0][2].startswith('http://10.9.9.9:9201/SpaceX.API.Device.Device/Handle'))
+
+    def test_good_answer_is_stored_and_remembered(self):
+        m = self.monitor()
+        m.busy = True
+        m._finish(1, 1, 'gRPC-web port 80', self.reply(), None)
+        self.assertEqual((m.method, m.via, m.error, m.busy, m.fails), (1, 'gRPC-web port 80', None, False, 0))
+        self.assertEqual(m.summary()['state'], 'Connected')
+        self.assertEqual(len(m.history.rows), 1)
+
+    def test_failure_tries_the_next_way_then_gives_up_and_backs_off(self):
+        m = self.monitor()
+        m.busy = True
+        m._finish(0, 0, 'gRPC-web port 9201', b'', 'curl exit code 7')
+        self.assertEqual(self.tries, [1])
+        m._finish(1, 1, 'gRPC-web port 80', b'garbage', None)
+        self.assertEqual(self.tries, [1, 2])
+        m._finish(2, 2, 'gRPC port 9200', None, 'curl exit code 7')
+        self.assertEqual((m.busy, m.fails), (False, 1))
+        self.assertIn('9200', m.error)
+        self.assertFalse(m.summary()['reachable'])
+        for _ in range(4):
+            m.busy = True
+            m._finish(2, 2, 'gRPC port 9200', None, 'x')
+        self.assertGreater(m.skip_until, web_ui.time.time() + 30)
+        self.tries.clear()
+        m.poll()                                                   # inside the quiet minute
+        self.assertEqual(self.tries, [])
+
+    def test_disabled_never_polls(self):
+        m = self.monitor(enabled='no')
+        self.assertFalse(m.enabled)
+        m.poll()
+        self.assertEqual(self.tries, [])
+
+    def test_api(self):
+        m = self.app.starlink
+        m._finish(0, 0, 'gRPC-web port 9201', self.reply(alerts=(7,)), None)
+        d = body_of(self.get('/api/starlink', query='window=900'))
+        self.assertEqual((d['ok'], d['state'], d['window']), (True, 'Connected', 900))
+        self.assertEqual(d['status']['alerts'], ['roaming'])
+        self.assertEqual(len(d['history']['t']), 1)
+        self.assertEqual(self.get('/api/starlink', auth=False).status, 401)
+        self.assertEqual(body_of(self.get('/api/state', auth=False))['starlink']['state'], 'Connected')
+
+
 class SerialBatteryTests(AppTestCase):
     def user_text(self):
         try:

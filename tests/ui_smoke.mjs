@@ -107,8 +107,8 @@ await page.waitForTimeout(8000);                                  // let the Pi 
 await page.getByRole('button', { name: '1 hour' }).click();
 await page.getByText('Cell 7 is the lowest cell').waitFor();
 check(true, 'findings name the weak cell');
-await page.locator('.chart path[stroke]').nth(9).waitFor();           // charts draw once they have a width
-check((await page.locator('.chart path[stroke]').count()) >= 10, 'graphs are drawn');
+await page.waitForFunction(() => document.querySelectorAll('.chart path[stroke]').length >= 10);   // charts draw once they have a width
+check(true, 'graphs are drawn');
 await page.locator('.chart .legend button', { hasText: 'Cell 7' }).first().click();
 check((await page.locator('.chart .legend button.off').count()) >= 1, 'legend hides a cell line');
 const cellsChart = page.locator('.chart', { hasText: 'Cell voltages' }).first();
@@ -118,6 +118,7 @@ check(await cellsChart.locator('.tt').isVisible(), 'hover shows a tooltip');
 await shot(page, '07a-battery-live');
 await page.getByRole('button', { name: 'Limits & curves' }).click();
 await page.getByText('Cell voltage limits').waitFor();
+await page.locator('.chart svg path').nth(1).waitFor();
 check((await page.locator('.chart svg path').count()) >= 2, 'limit curves drawn');
 await page.getByText('What you changed from the defaults').waitFor();
 await shot(page, '07b-battery-limits');
@@ -146,6 +147,14 @@ check(true, 'Bluetooth change asks for a reboot');
 await shot(page, '09-battery-reboot');
 await page.getByText('Only changed').first().isVisible().catch(() => {});
 
+// starlink
+await tab(page, 'Starlink');
+await page.getByText('Dish says: roaming').waitFor();
+check(await page.locator('.tile', { hasText: 'Download' }).locator('.v').innerText().then(t => /^\d+/.test(t)), 'Starlink shows the download speed');
+await page.locator('.chart path[stroke]').first().waitFor({ state: 'attached' });   // a flat line has no height: never "visible"
+check((await page.locator('.chart').count()) >= 3, 'Starlink graphs are drawn');
+await shot(page, '07c-starlink');
+
 // files & logs
 await tab(page, 'Files & logs');
 await page.getByText('Drivers: config.ini').waitFor();
@@ -172,6 +181,12 @@ await page.getByRole('button', { name: 'Limits & curves' }).click();
 await page.getByText('Cell voltage limits').waitFor();
 await shot(page, '12b-phone-limits');
 check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scrolling on the limits view');
+await tab(page, 'Starlink');
+await page.getByText('Dish says: roaming').waitFor();
+await page.waitForTimeout(1200);
+await shot(page, '12c-phone-starlink');
+check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scrolling on the Starlink tab');
+await tab(page, 'Battery');
 await page.getByRole('button', { name: 'All settings' }).click();
 await page.getByText('Most used settings').waitFor();
 check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scrolling on a phone');

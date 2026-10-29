@@ -37,6 +37,7 @@ from gi.repository import GLib  # noqa: E402
 
 import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
+import starlink  # noqa: E402
 
 log = logging.getLogger('web_ui')
 
@@ -195,6 +196,108 @@ def unwrap(v):
     return v
 
 
+# ------------------------------------------------------------- starlink dish
+
+class StarlinkMonitor(object):
+    """
+    Asks the dish for its status every few seconds. The request goes out with curl (no HTTP or gRPC
+    libraries on Venus OS) and is watched from the main loop, so a dish that does not answer never
+    blocks the page. Tries gRPC-web on the configured port, on port 80 and plain gRPC on 9200, and
+    sticks with whichever answered last.
+    """
+
+    def __init__(self, cfg):
+        self.enabled = str(cfg.get('enabled', 'yes')).strip().lower() in ct.TRUE
+        self.host = cfg.get('host') or '192.168.100.1'
+        self.interval = max(2, int(cfg.get('interval') or 5))
+        self.port = int(cfg.get('port') or 9201)
+        self.status = None            # last decoded status
+        self.time = None              # when it was read
+        self.error = None
+        self.via = None
+        self.fails = 0
+        self.method = 0
+        self.busy = False
+        self.skip_until = 0
+        self.history = starlink.History(interval=self.interval)
+
+    def candidates(self):
+        web = ['--http1.1', '-H', 'Content-Type: application/grpc-web+proto', '-H', 'X-Grpc-Web: 1',
+               '-H', 'Accept: application/grpc-web+proto']
+        native = ['--http2-prior-knowledge', '-H', 'Content-Type: application/grpc', '-H', 'TE: trailers']
+        path = starlink.SERVICE_PATH
+        return [('gRPC-web port %d' % self.port, web, 'http://%s:%d%s' % (self.host, self.port, path)),
+                ('gRPC-web port 80', web, 'http://%s%s' % (self.host, path)),
+                ('gRPC port 9200', native, 'http://%s:9200%s' % (self.host, path))]
+
+    def summary(self):
+        age = None if self.time is None else int(time.time() - self.time)
+        s = self.status or {}
+        return {'enabled': self.enabled, 'reachable': self.error is None and self.status is not None,
+                'error': self.error, 'age': age, 'via': self.via, 'state': s.get('state'),
+                'down_bps': s.get('down_bps'), 'up_bps': s.get('up_bps'), 'latency_ms': s.get('latency_ms'),
+                'obstructed_pct': s.get('obstructed_pct'), 'alerts': s.get('alerts')}
+
+    # -- polling
+    def poll(self):
+        """Timer callback (returns True to stay armed)."""
+        if not self.enabled or self.busy or time.time() < self.skip_until:
+            return True
+        self.busy = True
+        self._try(0)
+        return True
+
+    def _try(self, tried):
+        cands = self.candidates()
+        idx = (self.method + tried) % len(cands)
+        name, args, url = cands[idx]
+        try:
+            proc = subprocess.Popen(['curl', '-s', '-m', '4', '-X', 'POST'] + args + ['--data-binary', '@-', url],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            proc.stdin.write(starlink.status_request())
+            proc.stdin.close()
+        except OSError as e:
+            self._finish(tried, idx, name, None, 'could not run curl: %s' % e)
+            return
+        deadline = time.time() + 6
+        GLib.timeout_add(100, self._check, proc, tried, idx, name, deadline)
+
+    def _check(self, proc, tried, idx, name, deadline):
+        if proc.poll() is None and time.time() < deadline:
+            return True
+        if proc.poll() is None:
+            proc.kill()
+        data = proc.stdout.read()
+        proc.stdout.close()
+        proc.wait()
+        self._finish(tried, idx, name, data, None if proc.returncode == 0 else 'curl exit code %s' % proc.returncode)
+        return False
+
+    def _finish(self, tried, idx, name, data, failure):
+        """Handle one answer (or its absence); also called directly by the tests."""
+        error = failure
+        status = None
+        if error is None:
+            try:
+                status = starlink.decode_reply(data)
+            except ValueError as e:
+                error = str(e)
+        if status is not None:
+            self.status, self.time, self.error, self.via = status, time.time(), None, name
+            self.method, self.fails, self.busy = idx, 0, False
+            self.history.add(status)
+            return
+        self.error = '%s: %s' % (name, error)
+        if tried + 1 < len(self.candidates()):
+            self._try(tried + 1)
+            return
+        self.fails += 1
+        self.busy = False
+        if self.fails >= 5:
+            self.skip_until = time.time() + 60          # nobody home: only look once a minute
+        log.debug('Starlink dish not read: %s', self.error)
+
+
 # ---------------------------------------------------------------- the app
 
 class Response(object):
@@ -229,6 +332,7 @@ class App(object):
         self.failures = {}                  # ip -> [count, first time]
         self._bus = None
         self.recorder = battery_debug.Recorder(interval=opts.get('sample_s', 10))
+        self.starlink = StarlinkMonitor(opts.get('starlink') or {})
 
     # ---------------------------------------------------------- plumbing
 
@@ -316,6 +420,7 @@ class App(object):
             'GET /api/driver_config': self.api_driver_config,
             'POST /api/driver_config': self.api_driver_config_save,
             'GET /api/battery': self.api_battery,
+            'GET /api/starlink': self.api_starlink,
             'GET /api/serialbattery': self.api_serialbattery,
             'POST /api/serialbattery': self.api_serialbattery_save,
             'GET /api/raw': self.api_raw,
@@ -435,6 +540,15 @@ class App(object):
             out['history'] = self.recorder.history(service, window)
         return jsonr(out)
 
+    def api_starlink(self, req):
+        raw = req.query.get('window', '')
+        window = max(60, min(2 * 3600, int(raw))) if raw.isdigit() else 3600
+        m = self.starlink
+        out = dict(m.summary(), ok=True, window=window, interval=m.interval, host=m.host)
+        out['status'] = m.status
+        out['history'] = m.history.history(window)
+        return jsonr(out)
+
     def venus_version(self):
         try:
             with open('/opt/victronenergy/version') as f:
@@ -449,7 +563,7 @@ class App(object):
             'time': int(time.time()), 'host': socket.gethostname(), 'venus': self.venus_version(),
             'version': VERSION, 'password_set': bool(self.password), 'authed': self.authed(req),
             'services': self.service_states(), 'devices': ours, 'batteries': batteries,
-            'serialbattery': bool(sb),
+            'serialbattery': bool(sb), 'starlink': self.starlink.summary(),
         })
 
     # ------------------------------------------------------ driver config
@@ -505,7 +619,7 @@ class App(object):
         ct.write_file(self.driver_config, new)
         result = {'ok': True, 'message': 'Saved', 'restarted': False}
         if form.get('restart') == '1':
-            if kind == 'web':
+            if kind in ('web', 'starlink'):
                 GLib.timeout_add(800, self._restart_self)
                 result.update(restarted=True, message='Saved. This page restarts in a moment.')
             elif self.restart_service(section):
@@ -907,6 +1021,7 @@ def main():
     ap = argparse.ArgumentParser(description='Venus OS mods settings page')
     ap.add_argument('--config', default=os.path.join(HERE, 'config.ini'))
     ap.add_argument('--section', default='web')
+    ap.add_argument('--starlink-section', default='starlink')
     ap.add_argument('--init-dir', default='/data/etc/init.d')
     ap.add_argument('--service-dir', default='/service')
     ap.add_argument('--log-dir', default='/var/log')
@@ -931,16 +1046,22 @@ def main():
     if not password:
         log.warning('No password in [%s] of %s: the page is read-only', args.section, args.config)
 
+    starlink_cfg = dict(parser[args.starlink_section]) if parser.has_section(args.starlink_section) else {}
+
     DBusGMainLoop(set_as_default=True)
     app = App({'driver_config': args.config, 'init_dir': args.init_dir, 'service_dir': args.service_dir,
                'log_dir': args.log_dir, 'rc_local': args.rc_local, 'password': password,
-               'serialbattery_dir': args.serialbattery_dir, 'sample_s': max(1, args.sample_s)})
+               'serialbattery_dir': args.serialbattery_dir, 'sample_s': max(1, args.sample_s),
+               'starlink': starlink_cfg})
     server = Server(app, host, port)
     log.info('Settings page on http://%s:%d/', host, server.port)
     if not args.no_firewall and get('open_firewall', 'yes').lower() in ct.TRUE:
         open_firewall(server.port)
 
     app.sample_batteries()
+    if app.starlink.enabled:
+        app.starlink.poll()
+        GLib.timeout_add_seconds(app.starlink.interval, app.starlink.poll)
     GLib.timeout_add_seconds(app.recorder.interval, app.sample_batteries)
     loop = GLib.MainLoop()
     for sig in (signal.SIGTERM, signal.SIGINT):

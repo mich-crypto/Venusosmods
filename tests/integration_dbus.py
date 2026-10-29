@@ -262,6 +262,10 @@ def check_web_results(web):
     assert 'exception' not in res, res
     st, page = res['page']
     assert st == 200 and b'<title>Venus settings' in page, (st, page[:80])
+    st, sl = res['starlink']
+    assert st == 200 and sl['state'] == 'Connected' and sl['via'].startswith('gRPC-web port'), sl
+    assert sl['status']['alerts'] == ['roaming'] and sl['status']['down_bps'] > 1e8 and sl['history']['t'], sl
+    assert any(p == '/SpaceX.API.Device.Device/Handle' for p, _, _ in web['dish'].RequestHandlerClass.requests)
     st, state = res['state']
     assert st == 200 and state['password_set'] and not state['authed'] and state['serialbattery'], state
     services = set(d['service'] for d in state['devices'])
@@ -278,7 +282,7 @@ def check_web_results(web):
     assert st == 401 and locked['locked'], (st, locked)
     st, cfg = res['config']
     assert st == 200 and sorted(s['section'] for s in cfg['sections']) == [
-        'esp32_hydro', 'fridge', 'mopeka_standard', 'web'], cfg
+        'esp32_hydro', 'fridge', 'mopeka_standard', 'starlink', 'web'], cfg
     assert 'pw-XYZ-123' not in str(cfg), 'password leaked'
     assert res['no_csrf'][0] == 403, res['no_csrf']
     st, saved = res['save']
@@ -324,12 +328,16 @@ def main():
 
     W = tempfile.mkdtemp(prefix='venus_web_', dir=os.environ.get('TMPDIR', '/tmp'))
     web = {'dir': W, 'port': int(os.environ.get('WEB_PORT') or free_port()), 'password': 'pw-XYZ-123'}
+    import fake_starlink
+    dish_port = free_port()
+    web['dish'] = fake_starlink.serve(dish_port)
     cfg = os.path.join(W, 'config.ini')
     with open(cfg, 'w') as f:
         f.write('[mopeka_standard]\ncapacity_l = 27\n'
                 '[esp32_hydro]\ndevice_id = 1\ntemperature_service = yes\n'
                 '[fridge]\nmac = %s\npoll_interval = 10\n'
-                '[web]\npassword = %s\nopen_firewall = no\n' % (FRIDGE_MAC, web['password']))
+                '[web]\npassword = %s\nopen_firewall = no\n'
+                '[starlink]\nhost = 127.0.0.1\nport = %d\ninterval = 2\n' % (FRIDGE_MAC, web['password'], dish_port))
     # folders the page looks at: services, logs, dbus-serialbattery, fake svc/svstat
     shutil.copytree(os.path.join(DRIVERS, '..', 'etc', 'init.d'), os.path.join(W, 'init.d'))
     for d in ('service', 'log/fridge', 'sb', 'bin'):
@@ -445,6 +453,8 @@ def main():
             http_call('sb_get', 'GET', '/api/serialbattery', headers=auth)
             http_call('sb_save', 'POST', '/api/serialbattery',
                       {'s.MAX_BATTERY_CHARGE_CURRENT': '40', 'restart': '1'}, dict(auth, **csrf))
+            time.sleep(3)                                  # the page asks the dish every 2 s
+            http_call('starlink', 'GET', '/api/starlink', headers=auth)
             http_call('log', 'GET', '/api/log?service=fridge', headers=auth)
             http_call('pair', 'POST', '/api/pair_reset', {'section': 'mopeka_standard'}, dict(auth, **csrf))
             http_call('reboot', 'POST', '/api/reboot', {}, dict(auth, **csrf))

@@ -103,3 +103,13 @@ port = 8088
 bind = 0.0.0.0
 # Open the port in the Pi's firewall for the local network (not the internet)
 open_firewall = yes
+
+[starlink]
+# Starlink dish status on the settings page (Starlink tab): speed, ping, obstructions, alerts.
+# The Pi must reach the dish, normally at 192.168.100.1 (check: curl http://192.168.100.1/).
+enabled = yes
+host = 192.168.100.1
+# Seconds between readings (after 5 failures in a row it only tries once a minute)
+interval = 5
+# gRPC-web port of the dish
+port = 9201

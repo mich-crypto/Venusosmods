@@ -156,7 +156,7 @@ table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-
 // ---------------------------------------------------------------- helpers
 const S = { tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
 const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
-              ['battery', 'Battery'], ['files', 'Files & logs']];
+              ['battery', 'Battery'], ['starlink', 'Starlink'], ['files', 'Files & logs']];
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -251,7 +251,7 @@ async function renderTab() {
   hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
   const main = clear($('#main'));
   const f = { overview: tabOverview, fridge: () => tabDriver('fridge'), gas: () => tabDriver('mopeka'),
-              water: () => tabDriver('esp32'), battery: tabBattery, files: tabFiles }[S.tab];
+              water: () => tabDriver('esp32'), battery: tabBattery, starlink: tabStarlink, files: tabFiles }[S.tab];
   await f(main);
 }
 
@@ -300,7 +300,7 @@ function batteryCard(d) {
 
 async function tabOverview(main) {
   const st = S.state;
-  const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard));
+  const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard), [starlinkCard(st.starlink)]).filter(Boolean);
   main.append(h('h2', {}, 'Now'));
   main.append(cards.length ? h('div', { class: 'grid' }, cards) :
     h('div', { class: 'banner' }, 'No device is reporting yet. Enable the drivers below and give them a minute.'));
@@ -496,7 +496,7 @@ async function tabDriver(kind) {
   const sections = S.driver.sections.filter(s => s.kind === kind);
   if (!canEdit()) main.append(lockedNotice());
   if (!sections.length) {
-    main.append(h('div', { class: 'banner' }, 'No [' + ({ fridge: 'fridge', mopeka: 'mopeka_standard', esp32: 'esp32_hydro' }[kind]) + '] section in config.ini yet. Add it on the Files & logs tab (see config.ini.example for a template).'));
+    main.append(h('div', { class: 'banner' }, 'No [' + ({ fridge: 'fridge', mopeka: 'mopeka_standard', esp32: 'esp32_hydro', starlink: 'starlink' }[kind]) + '] section in config.ini yet. Add it on the Files & logs tab (see config.ini.example for a template).'));
     return;
   }
   for (const section of sections) {
@@ -879,7 +879,7 @@ function cellBars(cells, bal) {
 
 // ------------------------------------------------------ battery: the page
 const BAT_WINDOWS = [[900, '15 min'], [3600, '1 hour'], [21600, '6 hours']];
-function stopBattery() { clearInterval(S.bTimer); S.bTimer = null; }
+function stopBattery() { clearInterval(S.bTimer); S.bTimer = null; clearInterval(S.slTimer); S.slTimer = null; }
 
 async function tabBattery(main) {
   stopBattery();
@@ -1194,6 +1194,111 @@ async function tabBatteryLimits(box) {
 
 function link(key, label) {
   return h('button', { type: 'button', class: 'link', style: 'margin-left:8px', onclick: () => goSetting(key) }, label || 'edit');
+}
+
+// ------------------------------------------------------------ starlink
+const fmtMbps = bps => bps == null ? '–' : (bps / 1e6).toFixed(bps >= 1e7 ? 0 : 1);
+function fmtDuration(s) {
+  if (s == null) return '–';
+  const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? d + ' d ' + hh + ' h' : (hh ? hh + ' h ' + m + ' min' : m + ' min');
+}
+const INFO_ALERT = ['heating', 'roaming', 'install pending', 'power save idle', 'obstruction map reset'];
+
+async function tabStarlink(main) {
+  stopBattery();
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  const box = h('div', {});
+  main.append(box);
+  await starlinkView(box);
+  S.slTimer = setInterval(() => {
+    if (document.hidden || S.tab !== 'starlink' || $('#dlg').open) return;
+    starlinkView(box);
+  }, 5000);
+  const form = h('div', { style: 'margin-top:16px' });
+  main.append(form);
+  const r = await api('/api/driver_config');
+  const section = r.ok ? r.data.sections.find(s => s.kind === 'starlink') : null;
+  if (section) {
+    S.forms = {};
+    const { form: f, card, normal, adv } = formFor(section);
+    S.forms[section.section] = f;
+    normal.forEach(x => card.append(fieldRow(f, x, section)));
+    if (adv.length) card.append(h('details', { class: 'adv' }, h('summary', {}, 'Advanced'), adv.map(x => fieldRow(f, x, section))));
+    card.append(h('div', { class: 'muted' }, 'A change is applied when this page restarts ("Save & restart driver").'));
+    form.append(card);
+  } else {
+    form.append(h('div', { class: 'muted' }, 'Using the defaults (dish at 192.168.100.1, every 5 s). To change them add a [starlink] section to config.ini on the Files & logs tab (see config.ini.example).'));
+  }
+}
+
+async function starlinkView(box) {
+  const r = await api('/api/starlink?window=' + (S.slWindow || 3600));
+  if (S.tab !== 'starlink') return;
+  const out = h('div', {});
+  if (!r.ok) { clear(box).append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read the Starlink data')); return; }
+  const d = r.data, st = d.status;
+  if (!d.enabled) {
+    out.append(h('div', { class: 'banner' }, 'Reading the dish is switched off ([starlink] enabled = no).'));
+    clear(box).append(out); return;
+  }
+  if (!st) {
+    out.append(h('div', { class: 'banner warn' }, 'No answer from the dish at ' + d.host + (d.error ? ' (' + d.error + ')' : '') + '. Check on the Pi: ',
+      h('code', {}, 'curl -s -m 5 -o /dev/null -w "%{http_code}" http://' + d.host + '/'), '. The Pi has to be on the same network as the dish (the Starlink router, or a router that passes 192.168.100.1 through).'));
+    clear(box).append(out); return;
+  }
+  const controls = h('div', { class: 'row', style: 'margin-bottom:12px' }, h('b', {}, 'Starlink'), h('span', { class: 'spacer' }),
+    [[900, '15 min'], [3600, '1 hour'], [7200, '2 hours']].map(([sec, label]) => h('button', { type: 'button', class: 'btn small' + ((S.slWindow || 3600) === sec ? ' primary' : ''), onclick: () => { S.slWindow = sec; starlinkView(box); } }, label)));
+  out.append(controls);
+  if (d.age > 30 || d.error) out.append(h('div', { class: 'banner warn' }, 'The last reading is ' + ago(d.age) + ' old' + (d.error ? ' (' + d.error + ')' : '') + '.'));
+
+  const good = st.state === 'Connected';
+  out.append(h('div', { class: 'tiles' },
+    h('div', { class: 'tile' }, h('div', { class: 'k' }, 'State'), h('div', { class: 'v', style: 'font-size:1.2rem' }, h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, st.state)),
+      h('div', { class: 's' }, 'up ' + fmtDuration(st.uptime_s))),
+    tile('Download', fmtMbps(st.down_bps), 'Mbit/s', ''),
+    tile('Upload', fmtMbps(st.up_bps), 'Mbit/s', ''),
+    tile('Ping', st.latency_ms == null ? '–' : st.latency_ms.toFixed(0), 'ms', 'to Starlink'),
+    tile('Packet loss', st.drop_rate == null ? '–' : (st.drop_rate * 100).toFixed(1), '%', ''),
+    tile('Obstructed', st.obstructed_pct == null ? '–' : st.obstructed_pct.toFixed(1), '%', st.currently_obstructed ? 'right now' : 'of the sky view'),
+    tile('GPS', st.gps_sats == null ? '–' : String(st.gps_sats), 'satellites', st.gps_valid === false ? 'no fix' : ''),
+    tile('Ethernet', st.eth_mbps == null ? '–' : String(st.eth_mbps), 'Mbit/s', '')));
+
+  const items = [], add = (level, text) => items.push({ level, text });
+  if (st.outage) add('bad', 'Outage: ' + st.outage.cause + (st.outage.seconds ? ' (' + Math.round(st.outage.seconds) + ' s so far)' : '') + '.');
+  if (st.obstructed_pct != null && st.obstructed_pct > 10) add('bad', 'The dish sees ' + st.obstructed_pct.toFixed(0) + ' % obstruction. Trees, a roof edge or the van itself are in the way.');
+  else if (st.obstructed_pct != null && st.obstructed_pct > 3) add('warn', 'About ' + st.obstructed_pct.toFixed(1) + ' % of the sky is blocked. A few percent is normal; short dropouts come from this.');
+  if (st.drop_rate != null && st.drop_rate > 0.01) add('warn', 'Packet loss is ' + (st.drop_rate * 100).toFixed(1) + ' %.');
+  if (st.latency_ms != null && st.latency_ms > 100) add('warn', 'Ping to Starlink is high (' + st.latency_ms.toFixed(0) + ' ms).');
+  (st.alerts || []).forEach(a => add(INFO_ALERT.includes(a) ? 'ok' : 'warn', 'Dish says: ' + a + '.'));
+  if (st.update && !['idle', 'disabled', 'unknown'].includes(st.update)) add('ok', 'Software update: ' + st.update + '.');
+  if (!items.length) add('ok', 'Nothing unusual.');
+  out.append(h('div', { class: 'card' }, h('h3', {}, 'What I notice'), items.map(i => h('div', { class: 'find' }, h('span', { class: 'dot ' + i.level }), h('div', {}, i.text)))));
+
+  const t = d.history.t, s = d.history.series, charts = [];
+  if (s.down_mbps || s.up_mbps) charts.push(timeChart({ title: 'Speed', unit: 'Mbit/s', t, dec: 1, min: 0, area: false,
+    series: [s.down_mbps && { id: 'down', name: 'Download', color: 'var(--accent)', vals: s.down_mbps }, s.up_mbps && { id: 'up', name: 'Upload', color: 'var(--ok)', vals: s.up_mbps }].filter(Boolean) }));
+  if (s.latency_ms) charts.push(timeChart({ title: 'Ping', unit: 'ms', t, dec: 0, min: 0, series: [{ id: 'lat', name: 'Ping', color: '#8e44ad', vals: s.latency_ms }] }));
+  if (s.drop_pct) charts.push(timeChart({ title: 'Packet loss', unit: '%', t, dec: 1, min: 0, series: [{ id: 'drop', name: 'Loss', color: 'var(--warn)', vals: s.drop_pct }] }));
+  if (s.obstructed_pct) charts.push(timeChart({ title: 'Obstruction', unit: '%', t, dec: 1, min: 0, series: [{ id: 'obs', name: 'Obstructed', color: 'var(--bad)', vals: s.obstructed_pct }] }));
+  if (charts.length) out.append(h('div', { class: 'two' }, charts.map(c => h('div', { class: 'card' }, c))));
+
+  const rows = [['Dish ID', st.id], ['Hardware', st.hardware], ['Software', st.software], ['Country', st.country], ['Generation', st.generation],
+    ['Pointing', st.azimuth == null ? null : 'azimuth ' + st.azimuth.toFixed(0) + '°, elevation ' + (st.elevation == null ? '–' : st.elevation.toFixed(0)) + '°' + (st.tilt == null ? '' : ', tilt ' + st.tilt.toFixed(0) + '°')],
+    ['Ready', st.ready ? Object.entries(st.ready).map(([k, v]) => k + (v ? ' ✓' : ' ✗')).join('  ') : null],
+    ['Read via', d.via + ' at ' + d.host]].filter(x => x[1] !== null && x[1] !== undefined && x[1] !== '');
+  out.append(h('details', { class: 'group' }, h('summary', {}, 'Dish details'), h('div', { class: 'body' }, h('table', { class: 'kv' }, rows.map(([k, v]) => h('tr', {}, h('td', {}, k), h('td', {}, String(v))))))));
+  out.append(h('div', { class: 'muted', style: 'margin-top:8px' }, 'Read every ' + d.interval + ' s from the dish. Starlink does not publish this interface, so a dish update can change what is shown. History is kept in memory for 2 hours.'));
+  clear(box).append(out);
+}
+
+function starlinkCard(sl) {
+  if (!sl || !sl.enabled || !sl.state) return null;
+  const good = sl.state === 'Connected';
+  return h('div', { class: 'card' }, h('h3', {}, 'Starlink ', h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, sl.state)),
+    h('div', { class: 'big' }, fmtMbps(sl.down_bps), h('small', {}, ' Mbit/s down')),
+    h('div', { class: 'muted' }, 'up ' + fmtMbps(sl.up_bps) + ' · ping ' + (sl.latency_ms == null ? '–' : sl.latency_ms.toFixed(0)) + ' ms · obstructed ' + (sl.obstructed_pct == null ? '–' : sl.obstructed_pct.toFixed(1)) + ' %'),
+    (sl.alerts || []).length ? h('div', { class: 'muted' }, sl.alerts.join(', ')) : null);
 }
 
 // ------------------------------------------------------------ files & logs
