@@ -102,9 +102,10 @@ class FridgeDriver(BleDriver):
         svc.add_path(so('Settings/Adjustable'), 0)     # type/name fixed by the driver
         if otype == self.TYPE_SETPOINT:
             svc.add_path(so('Dimming'), None, writeable=True, onchangecallback=callback)
-            svc.add_path(so('DimmingMin'), None)
-            svc.add_path(so('DimmingMax'), None)
-            svc.add_path(so('StepSize'), 1)
+            svc.add_path(so('Settings/DimmingMin'), None)   # the GUI looks for these under Settings/
+            svc.add_path(so('Settings/DimmingMax'), None)
+            svc.add_path(so('Settings/StepSize'), 1)
+            svc.add_path(so('Settings/Decimals'), 0)
             svc.add_path(so('Measurement'), None)
 
     @staticmethod
@@ -266,8 +267,8 @@ class FridgeDriver(BleDriver):
         if i not in self._want:
             dev[so % (ch, 'Dimming')] = zone.target
         dev[so % (ch, 'Measurement')] = zone.current
-        dev[so % (ch, 'DimmingMin')] = zone.min
-        dev[so % (ch, 'DimmingMax')] = zone.max
+        dev[so % (ch, 'Settings/DimmingMin')] = zone.min
+        dev[so % (ch, 'Settings/DimmingMax')] = zone.max
         dev[so % (ch, 'Status')] = 0x09 if st.powered_on else 0x00
 
     def shutdown(self):

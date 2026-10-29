@@ -462,9 +462,9 @@ def main():
                 'power_switch': get(bus, 'com.victronenergy.switch.fridge_controls',
                                     '/SwitchableOutput/power/State'),
                 'freezer_range': (get(bus, 'com.victronenergy.switch.fridge_controls',
-                                      '/SwitchableOutput/setpoint2/DimmingMin'),
+                                      '/SwitchableOutput/setpoint2/Settings/DimmingMin'),
                                   get(bus, 'com.victronenergy.switch.fridge_controls',
-                                      '/SwitchableOutput/setpoint2/DimmingMax')),
+                                      '/SwitchableOutput/setpoint2/Settings/DimmingMax')),
             }
         except dbus.exceptions.DBusException as e:
             result['error'] = str(e)

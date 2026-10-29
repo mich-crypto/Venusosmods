@@ -372,6 +372,8 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(sw['/SwitchableOutput/setpoint2/Name'], 'Freezer set point')
         self.assertIn('/SwitchableOutput/eco/State', sw.paths_at_register)
         self.assertNotIn('/SwitchableOutput/power/State', d.zones[0].service.paths_at_register)
+        self.assertEqual((sw['/SwitchableOutput/setpoint2/Settings/DimmingMin'],
+                          sw['/SwitchableOutput/setpoint2/Settings/DimmingMax']), (-22.0, -12.0))
         self.assertEqual((sw['/SwitchableOutput/setpoint2/Dimming'],
                           sw['/SwitchableOutput/setpoint2/Measurement']), (-18.0, -17.0))
 
