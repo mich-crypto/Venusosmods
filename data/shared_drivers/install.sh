@@ -48,7 +48,7 @@ echo
 # The settings page needs a password before it can change anything
 for name in "$@"; do
     if [ "$name" = web_ui ] && ! grep -q '^\[web\]' "$DRIVERS/config.ini"; then
-        PW=$(tr -dc 'a-km-np-zA-HJ-NP-Z2-9' < /dev/urandom | head -c 10)
+        PW=$(tr -dc 'a-km-np-zA-HJ-NP-Z2-9' < /dev/urandom | fold -w 10 | head -n 1)
         printf '\n[web]\npassword = %s\nport = 8088\nopen_firewall = yes\n' "$PW" >> "$DRIVERS/config.ini"
         echo "Settings page password: $PW   (saved in config.ini, section [web])"
         NEWPW=1
