@@ -19,8 +19,8 @@ The volume is integrated in 1 mm height slices. Heights in the output are
 measured from the inner floor of the leg, where the sensor lies, so they match
 the ESP32's height after "zero" on the empty tank.
 
-  python3 tools/tank_wheelarch.py                      # serial commands + C table
-  python3 tools/tank_wheelarch.py --capacity 100       # scale to the datasheet volume
+  python3 tools/tank_wheelarch.py                      # serial commands + C table (100 L)
+  python3 tools/tank_wheelarch.py --capacity 0         # pure geometry, no scaling
   python3 tools/tank_wheelarch.py --markdown --svg docs/tank/tank-filling-chart.svg
 """
 
@@ -31,6 +31,7 @@ H, L, XC = 695.0, 1150.0, 590.0
 D_LOW, D_TOP = 230.0, 260.0
 Z_STEP = H - 230.0
 R_A, R_B = 420.0, 350.0
+NOMINAL_L = 100.0       # the tank is sold as 100 L; the geometry alone gives ~106 L
 
 
 def slice_area(z, t):
@@ -77,7 +78,7 @@ def svg_chart(curve, pts, capacity, path):
     W, Hh, ml, mr, mt, mb = 720, 390, 64, 24, 52, 56
     pw, ph = W - ml - mr, Hh - mt - mb
     xmax = math.ceil(curve[-1][0] / 100) * 100
-    ymax = math.ceil(capacity / 20) * 20
+    ymax = math.ceil(capacity * 1.1 / 20) * 20   # headroom for the end label
     sx = lambda h: ml + h / xmax * pw
     sy = lambda v: mt + ph - v / ymax * ph
     ink, ink2, grid, blue, surf = '#0b0b0b', '#52514e', '#e1e0d9', '#2a78d6', '#fcfcfb'
@@ -123,8 +124,9 @@ def svg_chart(curve, pts, capacity, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--wall', type=float, default=5.0, help='wall thickness in mm (default 5)')
-    ap.add_argument('--capacity', type=float, help='scale to this total (litres), e.g. '
-                    'the volume printed on the tank or its datasheet')
+    ap.add_argument('--capacity', type=float, default=NOMINAL_L,
+                    help='scale to this total in litres (default %(default)s, the '
+                         'nominal volume of the tank; 0 = pure geometry)')
     ap.add_argument('--step', type=float, default=20.0, help='table step in mm (default 20)')
     ap.add_argument('--markdown', action='store_true', help='print a Markdown table')
     ap.add_argument('--svg', help='write the chart to this SVG file')

@@ -8,9 +8,11 @@ litres without any filling calibration.
 
 ![Water volume by height](tank/tank-filling-chart.svg)
 
-**Capacity: about 106 L** (115 L from the outside dimensions, minus 5 mm
-walls). If the tank's label or datasheet gives a capacity, rescale the table
-to it (see "Adjusting" below).
+**Capacity: 100 L**, the tank's nominal volume. The geometry alone gives
+106 L (115 L from the outside dimensions, minus 5 mm walls), so the whole
+curve is scaled by 0.94. That covers thicker walls, internal parts, and the
+air space that stays under the top when the tank is filled to the brim of
+the filler. Full (100 %) is at 685 mm water height.
 
 ## How the tank was modelled
 
@@ -53,43 +55,43 @@ level when you want a precise number.
 | Height (mm) | Litres | % |
 |---:|---:|---:|
 | 0 | 0.0 | 0 |
-| 20 | 0.9 | 1 |
-| 40 | 1.7 | 2 |
-| 60 | 2.6 | 2 |
-| 80 | 3.5 | 3 |
-| 100 | 4.4 | 4 |
-| 120 | 5.3 | 5 |
-| 140 | 6.3 | 6 |
-| 160 | 7.3 | 7 |
-| 180 | 8.3 | 8 |
-| 200 | 9.4 | 9 |
-| 220 | 10.6 | 10 |
-| 240 | 11.8 | 11 |
-| 260 | 13.1 | 12 |
-| 280 | 14.4 | 14 |
-| 300 | 15.9 | 15 |
-| 320 | 17.4 | 16 |
-| 340 | 19.2 | 18 |
-| 350 | 20.1 | 19 |
-| 360 | 21.1 | 20 |
-| 380 | 24.0 | 23 |
-| 400 | 27.7 | 26 |
-| 420 | 32.4 | 30 |
-| 440 | 37.4 | 35 |
-| 460 | 42.4 | 40 |
-| 465 | 43.7 | 41 |
-| 480 | 48.0 | 45 |
-| 500 | 53.7 | 50 |
-| 520 | 59.4 | 56 |
-| 540 | 65.1 | 61 |
-| 560 | 70.8 | 67 |
-| 580 | 76.5 | 72 |
-| 600 | 82.2 | 77 |
-| 620 | 87.9 | 83 |
-| 640 | 93.6 | 88 |
-| 660 | 99.3 | 93 |
-| 680 | 105.0 | 99 |
-| 685 | 106.4 | 100 |
+| 20 | 0.8 | 1 |
+| 40 | 1.6 | 2 |
+| 60 | 2.4 | 2 |
+| 80 | 3.3 | 3 |
+| 100 | 4.1 | 4 |
+| 120 | 5.0 | 5 |
+| 140 | 5.9 | 6 |
+| 160 | 6.9 | 7 |
+| 180 | 7.8 | 8 |
+| 200 | 8.9 | 9 |
+| 220 | 9.9 | 10 |
+| 240 | 11.1 | 11 |
+| 260 | 12.3 | 12 |
+| 280 | 13.6 | 14 |
+| 300 | 14.9 | 15 |
+| 320 | 16.4 | 16 |
+| 340 | 18.0 | 18 |
+| 350 | 18.9 | 19 |
+| 360 | 19.9 | 20 |
+| 380 | 22.5 | 23 |
+| 400 | 26.1 | 26 |
+| 420 | 30.5 | 30 |
+| 440 | 35.2 | 35 |
+| 460 | 39.9 | 40 |
+| 465 | 41.1 | 41 |
+| 480 | 45.1 | 45 |
+| 500 | 50.4 | 50 |
+| 520 | 55.8 | 56 |
+| 540 | 61.2 | 61 |
+| 560 | 66.5 | 67 |
+| 580 | 71.9 | 72 |
+| 600 | 77.2 | 77 |
+| 620 | 82.6 | 83 |
+| 640 | 87.9 | 88 |
+| 660 | 93.3 | 93 |
+| 680 | 98.7 | 99 |
+| 685 | 100.0 | 100 |
 
 ## Checking it
 
@@ -97,7 +99,9 @@ level when you want a precise number.
 2. Pour in 10 L and compare `litres=` in the log with the table. Repeat a few
    times. The bottom part (leg) is the most sensitive to the model, and the
    top part the least.
-3. If the reading is consistently a few % off, rescale (below). If one region
+3. Best check: fill the empty tank completely and note how much went in
+   (water meter, or count the buckets). If that isn't 100 L, rescale to the
+   real number (below). If one region
    is off (e.g. around the arch), calibrate by filling in steps instead
    ([calibration.md](calibration.md), method A), which measures your real
    tank.
@@ -105,8 +109,9 @@ level when you want a precise number.
 ## Adjusting
 
 ```sh
-python3 tools/tank_wheelarch.py --capacity 100   # scale to the label's capacity
-python3 tools/tank_wheelarch.py --wall 6         # different wall thickness
+python3 tools/tank_wheelarch.py                  # the default: scaled to 100 L
+python3 tools/tank_wheelarch.py --capacity 95    # e.g. if it really holds 95 L
+python3 tools/tank_wheelarch.py --capacity 0     # pure geometry (106 L)
 ```
 
 Each prints `cal point ...` lines to paste into the Serial Monitor (followed
