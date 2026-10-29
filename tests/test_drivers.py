@@ -367,9 +367,15 @@ class DriverTests(unittest.TestCase):
                           sw['/SwitchableOutput/setpoint/Settings/DimmingMax']), (0.0, 8.0))   # from the fridge
         self.assertEqual((sw['/SwitchableOutput/setpoint2/Settings/DimmingMin'],
                           sw['/SwitchableOutput/setpoint2/Settings/DimmingMax']), (-18.0, -10.0))  # config wins
-        zone = fridge.Zone(3.0, 4.0, None, None)                  # a fridge that reports no range
-        self.assertEqual(d._range(0, zone), (-20.0, 20.0))
-        self.assertEqual(d._range(0, fridge.Zone(3.0, 4.0, 9.0, 2.0)), (-20.0, 20.0))   # min above max
+        # no config: the manual's ranges, whatever the fridge reports
+        self.assertEqual(d._range(0, fridge.Zone(3.0, 4.0, 9.0, 2.0)), (0.0, 8.0))
+        self.assertEqual(d._range(1, fridge.Zone(-18.0, -17.0, -30.0, -5.0)), (-18.0, -10.0))   # config wins
+        d2 = FridgeDriver('s', section('mac = 11:22:33:44:55:66\n'))
+        for part in fridge.chunks(dual_zone_status()):
+            d2._on_notify(part)
+        self.assertEqual(d2._range(1, d2._status.zones[1]), (-20.0, -12.0))
+        d2._status.zones = d2._status.zones[:1]                    # single-compartment fridge
+        self.assertEqual(d2._range(0, d2._status.zones[0]), (-20.0, 20.0))
 
     def test_fridge_controls(self):
         d = FridgeDriver('s', section('mac = 11:22:33:44:55:66\n'))
@@ -387,20 +393,20 @@ class DriverTests(unittest.TestCase):
         self.assertIn('/SwitchableOutput/eco/State', sw.paths_at_register)
         self.assertNotIn('/SwitchableOutput/power/State', d.zones[0].service.paths_at_register)
         self.assertEqual((sw['/SwitchableOutput/setpoint2/Settings/DimmingMin'],
-                          sw['/SwitchableOutput/setpoint2/Settings/DimmingMax']), (-22.0, -12.0))
+                          sw['/SwitchableOutput/setpoint2/Settings/DimmingMax']), (-20.0, -12.0))
         self.assertEqual((sw['/SwitchableOutput/setpoint2/Dimming'],
                           sw['/SwitchableOutput/setpoint2/Measurement']), (-18.0, -17.0))
 
         sent = []
         d.gatt.exchange = lambda chunks, cb: sent.append(b''.join(chunks))
-        # freezer set point below the fridge's range is clamped to its minimum
+        # a freezer set point below the manual's -20 is clamped to -20
         d.zones[1].service  # created by the status above
         status = d._status
         self.assertTrue(d._request_setpoint(1, -40))
         self.assertTrue(d._request('powered_on', False))
         d._send()
         self.assertEqual(sent[-1], fridge.set_others_frame(status.raw, powered_on=False) +
-                         fridge.set_target_frame(1, status.zones[1].min) + fridge.query_frame())
+                         fridge.set_target_frame(1, -20) + fridge.query_frame())
         self.assertEqual(d._want, {})
 
     def test_fridge_control_off(self):

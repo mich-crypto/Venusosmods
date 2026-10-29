@@ -144,20 +144,29 @@ class FridgeDriver(BleDriver):
         t = max(lo, min(hi, float(value)))
         return self._request(zone, int(round(t)))
 
-    DEFAULT_RANGE = (-20.0, 20.0)     # what the Alpicool-type dual-zone fridges list in their manuals
+    # From the manual of the dual-zone fridges: the fridge compartment is set 0...8 C and the freezer
+    # -20...-12 C; single-compartment models take -20...20 C.
+    RANGES = {'fridge': (0.0, 8.0), 'freezer': (-20.0, -12.0), 'single': (-20.0, 20.0)}
 
     def _range(self, i, zone):
-        """Set point range of a zone: zoneN_min / zoneN_max from config.ini, else what the fridge
-        reports, else -20...20 C (also used when the fridge reports something that makes no sense)."""
-        lo = self.cfg.getfloat('zone%d_min' % (i + 1), fallback=None)
-        hi = self.cfg.getfloat('zone%d_max' % (i + 1), fallback=None)
-        lo = zone.min if lo is None else lo
-        hi = zone.max if hi is None else hi
-        if lo is None or hi is None or lo >= hi:
-            lo, hi = self.DEFAULT_RANGE
+        """Set point range of a zone: zoneN_min / zoneN_max from config.ini, else the manual's range
+        for that kind of compartment. What the fridge itself reports is only logged: it has been
+        seen to disagree with the manual."""
+        kind = self.zone_types[i] if i < len(self.zone_types) else 'auto'
+        if self._status is not None and len(self._status.zones) < 2:
+            kind = 'single'
+        elif kind not in ('fridge', 'freezer'):
+            target = zone.target
+            kind = 'freezer' if (target < 0 if target is not None else i > 0) else 'fridge'
+        lo, hi = self.RANGES[kind]
+        lo = self.cfg.getfloat('zone%d_min' % (i + 1), fallback=lo)
+        hi = self.cfg.getfloat('zone%d_max' % (i + 1), fallback=hi)
+        if lo >= hi:
+            lo, hi = self.RANGES[kind]
         if (i, lo, hi) not in self._logged_ranges:
             self._logged_ranges.add((i, lo, hi))
-            log.info('Zone %d set point range %g...%g C (fridge reports %s...%s)', i + 1, lo, hi, zone.min, zone.max)
+            log.info('Zone %d (%s) set point range %g...%g C (the fridge itself reports %s...%s)',
+                     i + 1, kind, lo, hi, zone.min, zone.max)
         return lo, hi
 
     def _request(self, key, value):

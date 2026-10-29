@@ -81,8 +81,8 @@ zone1_name = Fridge
 # only used by dual-zone fridges
 zone2_type = auto
 zone2_name = Freezer
-# Set point range of the sliders. By default the fridge's own limits are used, and -20...20 C
-# if it reports none. Override them here if the sliders are wrong:
+# Set point range of the sliders. Default (from the manual): fridge 0...8 C, freezer -20...-12 C,
+# a single-compartment fridge -20...20 C. Override here if your model differs:
 #zone1_min = 0
 #zone1_max = 10
 #zone2_min = -20
