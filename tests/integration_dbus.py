@@ -528,7 +528,7 @@ def main():
     # Mopeka paired via the sync button and stored the MAC in localsettings
     assert result['paired_mac'] == MOPEKA_MAC, result['paired_mac']
     check_web_results(web)
-    assert codes == [0, 0, 0, 0], codes
+    assert codes == [0, 0, 0, -15, 0], codes   # the fake battery has no signal handler (SIGTERM = -15)
     print('INTEGRATION OK')
 
 
