@@ -228,6 +228,40 @@ def decode_reply(data):
     return decode_status(messages[0])
 
 
+# ------------------------------------------------------------------ quality
+
+def quality(st):
+    """
+    One number for "how well is the connection": (score 0-100, label), or None without a status.
+    Starts at 100 and loses points for packet loss (up to 40), blocked sky (20), high latency (25),
+    a speed limit (10), a weak signal (15) and dish alerts (5 each, up to 15). An outage scores 0.
+    """
+    if not st:
+        return None
+    state = st.get('state') or ''
+    if state.startswith('Outage'):
+        return 0, 'Offline'
+    if state == 'Searching':
+        return 10, 'Poor'
+    score = 100.0
+    score -= min(40.0, (st.get('drop_rate') or 0.0) * 100.0 * 8.0)
+    score -= min(20.0, (st.get('obstructed_pct') or 0.0) * 2.0)
+    lat = st.get('latency_ms')
+    if lat is not None and lat > 50:
+        score -= min(25.0, (lat - 50.0) / 4.0)
+    if st.get('limit_down') or st.get('limit_up'):
+        score -= 10.0
+    if st.get('snr_ok') is False:
+        score -= 15.0
+    bad = [a for a in (st.get('alerts') or []) if a not in INFO_ALERTS]
+    score -= min(15.0, 5.0 * len(bad))
+    if st.get('currently_obstructed'):
+        score = min(score, 40.0)
+    score = int(round(max(1.0, min(100.0, score))))
+    label = 'Excellent' if score >= 85 else ('Good' if score >= 65 else ('Fair' if score >= 40 else 'Poor'))
+    return score, label
+
+
 # ----------------------------------------------------- dish history (1 Hz)
 
 HISTORY_LEN = 900          # the dish keeps the last 900 seconds in a ring buffer

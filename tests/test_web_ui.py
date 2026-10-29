@@ -425,6 +425,111 @@ class StarlinkApiTests(AppTestCase):
         self.assertEqual(self.post('/api/driver_config', {'section': 'nosuch', 'f.x': '1'}).status, 400)
 
 
+SWITCH = 'com.victronenergy.switch.fridge_controls'
+
+
+def switch_values():
+    v = {'/Mgmt/ProcessName': 'fridge_venus.py', '/Connected': 1,
+         '/SwitchableOutput/power/State': 1, '/SwitchableOutput/eco/State': 0}
+    for ch, name, target, cur, lo, hi in (('setpoint', 'Set point 1: Fridge', 4.0, 5.5, 0.0, 8.0),
+                                          ('setpoint2', 'Set point 2: Freezer', -18.0, -16.5, -20.0, -12.0)):
+        base = '/SwitchableOutput/%s/' % ch
+        v.update({base + 'Name': name, base + 'Settings/CustomName': name, base + 'Dimming': target, base + 'Measurement': cur,
+                  base + 'Settings/DimmingMin': lo, base + 'Settings/DimmingMax': hi, base + 'Settings/StepSize': 1})
+    return v
+
+
+class VenusFeatureTests(AppTestCase):
+    def setUp(self):
+        super().setUp()
+        self.sent = []
+        self.app.bus_calls = self.sent
+
+        class Bus(object):
+            def call_blocking(inner, name, path, iface, method, sig, args, timeout=None):
+                self.sent.append((name, path, method, sig, args[0], float(args[0])))
+        self._bus = Bus()
+        self.app._bus = self._bus
+
+    # --- fridge
+    def test_fridge_not_available_yet(self):
+        self.app.fridge_switch = lambda: (None, {})
+        self.assertEqual(body_of(self.get('/api/fridge')), {'ok': True, 'available': False})
+        self.assertEqual(self.post('/api/fridge_set', {'output': 'power', 'value': '0'}).status, 409)
+
+    def test_fridge_state_and_controls(self):
+        self.app.fridge_switch = lambda: (SWITCH, switch_values())
+        d = body_of(self.get('/api/fridge'))
+        self.assertEqual((d['available'], d['power'], d['eco']), (True, 1, 0))
+        self.assertEqual([(z['output'], z['name'], z['min'], z['max'], z['target']) for z in d['zones']],
+                         [('setpoint', 'Set point 1: Fridge', 0.0, 8.0, 4.0), ('setpoint2', 'Set point 2: Freezer', -20.0, -12.0, -18.0)])
+        self.assertEqual(self.post('/api/fridge_set', {'output': 'power', 'value': '0'}).status, 200)
+        self.assertEqual(self.post('/api/fridge_set', {'output': 'setpoint2', 'value': '-15'}).status, 200)
+        self.assertEqual([(c[1], c[5]) for c in self.sent], [('/SwitchableOutput/power/State', 0.0), ('/SwitchableOutput/setpoint2/Dimming', -15.0)])
+        self.assertTrue(all(c[0] == SWITCH and c[2] == 'SetValue' and c[3] == 'v' for c in self.sent))
+
+    def test_fridge_controls_refuse_bad_input_and_strangers(self):
+        self.app.fridge_switch = lambda: (SWITCH, switch_values())
+        for form in ({'output': 'setpoint', 'value': '12'}, {'output': 'setpoint2', 'value': '-5'}, {'output': 'setpoint', 'value': 'warm'},
+                     {'output': 'power', 'value': '2'}, {'output': 'format_c', 'value': '1'}, {'output': 'eco', 'value': ''}):
+            self.assertEqual(self.post('/api/fridge_set', form).status, 400, form)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.post('/api/fridge_set', {'output': 'power', 'value': '1'}, auth=False).status, 401)
+        self.assertEqual(self.post('/api/fridge_set', {'output': 'power', 'value': '1'}, csrf=False).status, 403)
+        self.assertEqual(self.get('/api/fridge', auth=False).status, 401)
+
+    # --- Starlink as a Venus OS device
+    def test_starlink_in_venus_os(self):
+        import test_starlink as tsl
+        hub = self.app.starlink
+        hub.time, hub.status = hub.clock(), starlink_status(drop_rate=0.0, latency_ms=30.0)
+        self.assertTrue(self.app.publish_starlink())
+        svc = self.app.starlink_dev.service
+        self.assertEqual(svc.name, 'com.victronenergy.tank.starlink')
+        self.assertEqual((svc['/Level'], svc['/Starlink/Label'], svc['/Starlink/State']), (96, 'Excellent', 'Connected'))
+        self.assertEqual((svc['/Starlink/DownMbps'], svc['/Starlink/LatencyMs'], svc['/Connected']), (184.5, 30.0, 1))
+        hub.status = starlink_status(state='Outage: obstructed')
+        self.app.publish_starlink()
+        self.assertEqual((svc['/Level'], svc['/Starlink/Label']), (0, 'Offline'))
+        self.assertIn('/Starlink/DropPercent', svc.paths_at_register)                # paths exist before registering
+
+    def test_starlink_in_venus_os_can_be_switched_off(self):
+        app = web_ui.App({'driver_config': self.config, 'init_dir': self.init, 'service_dir': self.svc, 'log_dir': self.logs,
+                          'rc_local': self.rc, 'password': self.PASSWORD, 'state_dir': os.path.join(self.tmp, 's2'),
+                          'starlink': {'venus_service': 'no'}})
+        app.starlink.status, app.starlink.time = starlink_status(), app.starlink.clock()
+        app.publish_starlink()
+        self.assertIsNone(app.starlink_dev)
+
+    # --- gas sensor battery
+    def test_mopeka_battery_is_recorded_and_warned_about(self):
+        app = self.app
+        app.starlink.tg.update(enabled=True, token='T', chat_id='1')
+        sent = []
+        app.starlink.flush = lambda: sent.append(list(app.starlink.queue))
+        app.mopeka_values = lambda: {'/BatteryVoltage': 2.45, '/Mopeka/BatteryPercent': 55}
+        app.record_mopeka()
+        self.assertEqual(sent, [])
+        app.mopeka_values = lambda: {'/BatteryVoltage': 2.12, '/Mopeka/BatteryPercent': 12}
+        app.record_mopeka()
+        app.record_mopeka()                                                           # once per half day, not every look
+        self.assertEqual(len(sent), 1)
+        self.assertIn('battery is low: 12 %', sent[0][0])
+        d = body_of(self.get('/api/mopeka_battery'))
+        self.assertEqual((d['available'], d['percent'], d['low_at'], len(d['series'])), (True, 12, 20, 3))
+        self.assertEqual(d['series'][-1][1:], [2.12, 12])
+        app.mopeka_values = lambda: None
+        self.assertEqual(body_of(self.get('/api/mopeka_battery'))['available'], False)
+
+
+def starlink_status(**kw):
+    import starlink as sl
+    import test_starlink as tsl
+    st = sl.decode_reply(sl.frame(tsl.status_message(latency=kw.pop('latency_ms', 31.5))))
+    st.update(kw)
+    return st
+
+
 class SerialBatteryTests(AppTestCase):
     def user_text(self):
         try:

@@ -282,7 +282,12 @@ svc -t /service/mopeka_standard          # then press sync on the new sensor
    "Reading when full" from the current sensor reading and your bottle curve
    and saves it. Redo it right after a refill for the best accuracy.
    `svc -t /service/mopeka_standard` restarts the driver after changes.
-7. The sensor's temperature is also published as its own temperature sensor,
+7. **Sensor battery:** the *Gas* tab shows the sensor's battery charge and
+   voltage, a graph of the voltage (recorded every 10 minutes) and a "low" mark
+   when it falls to 20 %. With Telegram alerts switched on you get a message
+   once (and again after 12 hours if it stays low). Change the limit with
+   *Gas sensor battery alert at* in the Telegram settings.
+8. The sensor's temperature is also published as its own temperature sensor,
    `com.victronenergy.temperature.mopeka_standard_temp` ("Gas bottle
    temperature", type outdoor), so it shows up with the other environment
    sensors in the *Device list* and on VRM. Turn it off with
@@ -346,6 +351,11 @@ automatically.
   read of the fridge, so give it a minute. It needs a Venus OS version that
   has the switch pane (v3.5x or newer with the new GUI). If the icon is
   missing, check the *Device list* for "Compressor fridge controls".
+* **Controls on the settings page:** the *Fridge* tab has the same controls
+  (power, eco mode, a slider with − and + per zone, limited to the range the
+  fridge allows). It shows "The fridge confirmed." when the fridge has taken the
+  change. They use the same path as the switch pane, so they work only when the
+  controls device exists and the phone app is not connected to the fridge.
 * Don't want controls in Venus OS? Set `control = no` in the `[fridge]`
   section.
 
@@ -425,6 +435,15 @@ if you forget it. Open the address in Safari and add it to the home screen.
     billing day, data cap, electricity price) and **Telegram alerts** (dish
     offline and back, packet loss, hardware alerts, new public IP, failed
     speed tests; make a bot with @BotFather).
+  **In Venus OS:** the dish also appears as a device called *Starlink
+  connection* (Device list, Levels page and VRM). There is no Starlink device
+  type, so it is shown as a tank-type device whose *level* is the connection
+  quality from 0 to 100 %: 85 and up excellent, 65 good, 40 fair, below that
+  poor, 0 offline. The score starts at 100 and loses points for packet loss,
+  blocked sky, high ping, a speed limit, a weak signal and dish alerts (an
+  outage is 0). Speed, ping, loss and obstruction are available on D-Bus under
+  `/Starlink/...`. Switch it off with *Show the dish in Venus OS* in the
+  Starlink settings. It disappears when the dish has been unreachable for a minute.
   The Pi must reach the dish at `192.168.100.1` (check:
   `curl http://192.168.100.1/`). Speed tests are off until you press the button
   or set an interval: each moves about 33 MB, so 30 minutes is about 1.6 GB a

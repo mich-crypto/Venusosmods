@@ -265,6 +265,8 @@ SCHEMA = {
             F('currency', 'text', 'Currency label', '', default='EUR'),
             F('wan_check', 'bool', 'Record the public IP address', 'Checks every 5 minutes through Cloudflare.',
               options=YES_NO, default='yes'),
+            F('venus_service', 'bool', 'Show the dish in Venus OS', 'A "Starlink connection" device (a level of 0-100 % for the '
+              'quality of the connection) in the Device list, on the Levels page and in VRM.', options=YES_NO, default='yes'),
             F('interval', 'int', 'Read the dish every', 'Seconds between live readings.', unit='s', min=2, max=300,
               advanced=True, default='5'),
             F('history_interval', 'int', 'Read the dish history every', 'Energy, data use and outages come from it.',
@@ -293,6 +295,8 @@ SCHEMA = {
               options=YES_NO, default='yes'),
             F('alert_wan', 'bool', 'Public IP changed', '', options=YES_NO, default='yes'),
             F('alert_test', 'bool', 'Speed test failed', '', options=YES_NO, default='yes'),
+            F('alert_sensor', 'bool', 'Gas sensor battery low', '', options=YES_NO, default='yes'),
+            F('sensor_pct', 'int', 'Gas sensor battery alert at', '', unit='%', min=1, max=100, advanced=True, default='20'),
             F('offline_min', 'int', 'Offline after', 'Minutes without an answer from the dish.', unit='min', min=1,
               max=1440, advanced=True, default='5'),
             F('drop_pct', 'float', 'Packet loss alert at', '', unit='%', min=0.1, max=100, advanced=True, default='5'),

@@ -163,6 +163,16 @@ table.kv td:first-child { color:var(--muted); width:55%; } table.kv code { font-
 .hz-strip { height:34px; margin:8px 0 4px; } .hz-strip svg { display:block; } .hz-sub { color:var(--muted); font-size:.74rem; }
 .keyrow { display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:6px; font-size:.74rem; color:var(--muted); }
 .keyrow i { display:inline-block; width:10px; height:10px; margin-right:6px; vertical-align:-1px; border:1px solid var(--line); }
+
+.seg { display:inline-flex; border:1px solid var(--line); border-radius:3px; overflow:hidden; }
+.seg button { background:none; border:0; border-right:1px solid var(--line); padding:9px 22px; cursor:pointer; min-width:70px; }
+.seg button:last-child { border-right:0; } .seg button[aria-pressed=true] { background:var(--ink); color:#000; font-weight:700; }
+.seg button:disabled { opacity:.4; cursor:not-allowed; }
+.ctl { display:flex; flex-wrap:wrap; gap:14px 32px; align-items:flex-end; margin-bottom:6px; }
+.ctl .name { color:var(--muted); font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; font-weight:600; margin-bottom:6px; }
+.sp { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .sp input[type=range] { width:min(320px,60vw); max-width:none; accent-color:#fff; padding:0; min-height:30px; border:0; background:none; }
+.sp .val { font-size:2rem; font-weight:600; min-width:4.2ch; text-align:center; font-variant-numeric:tabular-nums; }
+.sp .btn { min-width:46px; font-size:1.2rem; }
 @media (max-width:700px) {
   .hero { grid-template-columns:1fr; } .hero .metric { border-right:0; border-bottom:1px solid var(--line); } .hero .metric:last-child { border-bottom:0; }
   .tile .v, .stat .v { font-size:1.3rem; } .two { grid-template-columns:1fr; } .big { font-size:1.8rem; } main { padding:12px; }
@@ -264,6 +274,7 @@ function renderLock() {
 }
 
 async function selectTab(id) {
+  if (!S.state) await refreshState();               // a tap before the first answer has arrived
   S.tab = id;
   stopLogs();
   stopBattery();
@@ -522,6 +533,73 @@ async function loadDriver() {
   return r;
 }
 
+// ------------------------------------------------------- fridge controls
+function fridgeControls() {
+  clearInterval(S.fridgeTimer);
+  const card = h('div', { class: 'card' }, h('h3', {}, 'Controls'));
+  const body = h('div', {}), status = h('div', { class: 'muted', style: 'min-height:1.4em;margin-top:6px' });
+  card.append(body, status);
+  let wanted = {}, polls = 0, busy = false;
+  const send = async (output, value) => {
+    status.textContent = 'Sending…';
+    const r = await api('/api/fridge_set', { output, value: String(value) });
+    if (!r.ok) { status.textContent = ''; toast(r.data.error || 'Not sent', true); wanted = {}; await draw(); return; }
+    wanted[output] = Number(value); polls = 0; status.textContent = 'Sent. Waiting for the fridge to confirm (a few seconds)…';
+    schedule();
+  };
+  let timer = null;
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(draw, 2000); };
+  const toggle = (label, output, on) => h('div', {}, h('div', { class: 'name' }, label),
+    h('div', { class: 'seg', role: 'group' }, h('button', { type: 'button', 'aria-pressed': on === 0, disabled: !canEdit(), onclick: () => send(output, 0) }, 'Off'),
+      h('button', { type: 'button', 'aria-pressed': on === 1, disabled: !canEdit(), onclick: () => send(output, 1) }, 'On')));
+  const zone = z => {
+    const val = h('span', { class: 'val' }, z.target == null ? '–' : z.target.toFixed(0) + '°');
+    const slider = h('input', { type: 'range', min: z.min, max: z.max, step: z.step || 1, value: z.target == null ? z.min : z.target, disabled: !canEdit() });
+    let t = null;
+    const move = delta => { const v = Math.max(z.min, Math.min(z.max, Number(slider.value) + delta)); slider.value = v; val.textContent = v.toFixed(0) + '°'; clearTimeout(t); t = setTimeout(() => send(z.output, v), 700); };
+    slider.addEventListener('input', () => { val.textContent = Number(slider.value).toFixed(0) + '°'; clearTimeout(t); t = setTimeout(() => send(z.output, Number(slider.value)), 700); });
+    return h('div', { style: 'min-width:min(100%,360px)' }, h('div', { class: 'name' }, z.name + ' · now ' + (z.current == null ? '–' : z.current.toFixed(1) + ' °C') + ' · allowed ' + z.min + ' … ' + z.max + ' °C'),
+      h('div', { class: 'sp' }, h('button', { type: 'button', class: 'btn', disabled: !canEdit(), onclick: () => move(-1) }, '−'), slider,
+        h('button', { type: 'button', class: 'btn', disabled: !canEdit(), onclick: () => move(1) }, '+'), val));
+  };
+  async function draw() {
+    if (S.tab !== 'fridge' || busy) return;
+    busy = true;
+    const r = await api('/api/fridge');
+    busy = false;
+    if (S.tab !== 'fridge') return;
+    clear(body);
+    if (!r.ok) { body.append(h('div', { class: 'muted' }, r.data.error || 'Could not read the fridge')); return; }
+    const d = r.data;
+    if (!d.available) { body.append(h('div', { class: 'muted' }, 'The controls appear after the first successful reading of the fridge (and need control = yes). If the phone app is connected to the fridge, close it.')); return; }
+    if (!canEdit()) body.append(lockedNotice());
+    body.append(h('div', { class: 'ctl' }, toggle('Power', 'power', d.power), toggle('Eco mode', 'eco', d.eco)), h('div', { class: 'ctl' }, d.zones.map(zone)));
+    const confirmed = Object.entries(wanted).every(([k, v]) => k === 'power' ? d.power === v : (k === 'eco' ? d.eco === v : (d.zones.find(z => z.output === k) || {}).target === v));
+    if (Object.keys(wanted).length && confirmed) { status.textContent = 'The fridge confirmed.'; wanted = {}; }
+    else if (Object.keys(wanted).length && ++polls < 15) schedule();
+    else if (Object.keys(wanted).length) { status.textContent = 'No confirmation yet. The fridge may be busy with the phone app; the change is sent again when it is free.'; wanted = {}; }
+  }
+  draw();
+  S.fridgeTimer = setInterval(() => { if (!document.hidden && S.tab === 'fridge' && !Object.keys(wanted).length && !$('#dlg').open) draw(); }, 10000);
+  return card;
+}
+
+// --------------------------------------------------- gas sensor battery
+async function mopekaBatteryCard() {
+  const r = await api('/api/mopeka_battery');
+  if (!r.ok || !r.data.available) return null;
+  const d = r.data, low = d.percent != null && d.percent <= d.low_at;
+  const card = h('div', { class: 'card' }, h('h3', {}, 'Sensor battery ', low ? h('span', { class: 'chip bad' }, 'low') : h('span', { class: 'chip ok' }, 'ok')),
+    h('div', { class: 'hero', style: 'grid-template-columns:repeat(2,1fr);margin-bottom:8px' }, metric('Charge', d.percent == null ? '–' : String(d.percent), '%', d.percent == null ? '' : 'warning at ' + d.low_at + ' %'),
+      metric('Voltage', d.volts == null ? '–' : d.volts.toFixed(2), 'V', 'measured by the sensor')),
+    h('div', { class: 'bar-level' }, h('i', { style: 'width:' + Math.max(0, Math.min(100, d.percent || 0)) + '%;' + (low ? 'background:var(--bad)' : '') })));
+  const rows = d.series.filter(x => x[1] != null);
+  if (rows.length >= 3) card.append(timeChart({ title: 'Voltage over time', unit: 'V', t: rows.map(x => x[0]), dec: 2, series: [{ id: 'v', name: 'Battery', color: 'var(--ink)', vals: rows.map(x => x[1]) }] }));
+  else card.append(h('div', { class: 'muted' }, 'The history fills in as the page records the voltage every 10 minutes.'));
+  card.append(h('div', { class: 'muted' }, 'You get a Telegram message when the charge falls to ' + d.low_at + ' % (Starlink → Settings → Telegram).'));
+  return card;
+}
+
 async function tabDriver(kind) {
   const main = $('#main');
   S.forms = {};
@@ -530,6 +608,8 @@ async function tabDriver(kind) {
   const r = await loadDriver();
   if (!r.ok) { main.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read config.ini')); return; }
   const sections = S.driver.sections.filter(s => s.kind === kind);
+  if (kind === 'fridge') main.append(fridgeControls());
+  if (kind === 'mopeka') { const b = await mopekaBatteryCard(); if (b) main.append(b); }
   if (!canEdit()) main.append(lockedNotice());
   if (!sections.length) {
     main.append(h('div', { class: 'banner' }, 'No [' + ({ fridge: 'fridge', mopeka: 'mopeka_standard', esp32: 'esp32_hydro', starlink: 'starlink' }[kind]) + '] section in config.ini yet. Add it on the Files & logs tab (see config.ini.example for a template).'));
@@ -940,7 +1020,7 @@ function cellBars(cells, bal) {
 
 // ------------------------------------------------------ battery: the page
 const BAT_WINDOWS = [[900, '15 min'], [3600, '1 hour'], [21600, '6 hours']];
-function stopBattery() { clearInterval(S.bTimer); S.bTimer = null; clearInterval(S.slTimer); S.slTimer = null; clearInterval(S.rawTimer); S.rawTimer = null; }
+function stopBattery() { clearInterval(S.bTimer); S.bTimer = null; clearInterval(S.slTimer); S.slTimer = null; clearInterval(S.rawTimer); S.rawTimer = null; clearInterval(S.fridgeTimer); S.fridgeTimer = null; }
 
 async function tabBattery(main) {
   stopBattery();
@@ -1433,6 +1513,7 @@ async function starlinkView(box) {
     metric('PoP latency', st.latency_ms == null ? '–' : st.latency_ms.toFixed(0), 'ms', 'average ' + avg('latency_ms', 0) + ' ms over ' + win)));
   const alerts = st.alerts || [];
   out.append(h('div', { class: 'row', style: 'margin:0 0 8px' }, h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, st.state),
+    d.quality == null ? null : h('span', { class: 'chip ' + (d.quality >= 65 ? 'ok' : (d.quality >= 40 ? 'warn' : 'bad')), title: 'Also shown in Venus OS as "Starlink connection"' }, 'quality ' + d.quality + ' % · ' + d.quality_label),
     alerts.length ? alerts.map(a => h('span', { class: 'chip ' + (INFO_ALERT.includes(a) ? '' : 'warn') }, a)) : h('span', { class: 'chip' }, 'no alerts')));
   out.append(h('div', { class: 'metaline' }, h('span', {}, 'Uptime ', h('b', {}, fmtDuration(st.uptime_s))),
     h('span', {}, 'GPS ', h('b', {}, st.gps_sats == null ? '–' : st.gps_sats + ' sats')),
@@ -1696,6 +1777,7 @@ function starlinkCard(sl) {
   const good = sl.state === 'Connected';
   return h('div', { class: 'card' }, h('h3', {}, 'Starlink ', h('span', { class: 'chip ' + (good ? 'ok' : 'bad') }, sl.state), sl.throttled ? h('span', { class: 'chip warn' }, 'throttled: ' + sl.limit) : null),
     h('div', { class: 'big' }, fmtMbps(sl.down_bps), h('small', {}, ' Mbit/s down')),
+    sl.quality == null ? null : h('div', { class: 'muted' }, 'Connection quality ' + sl.quality + ' % · ' + sl.quality_label),
     h('div', { class: 'muted' }, 'up ' + fmtMbps(sl.up_bps) + ' · ping ' + (sl.latency_ms == null ? '–' : sl.latency_ms.toFixed(0)) + ' ms · obstructed ' + (sl.obstructed_pct == null ? '–' : sl.obstructed_pct.toFixed(1)) + ' %'),
     (sl.alerts || []).length ? h('div', { class: 'muted' }, sl.alerts.join(', ')) : null);
 }

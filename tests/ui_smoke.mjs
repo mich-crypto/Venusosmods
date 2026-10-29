@@ -62,6 +62,7 @@ await page.getByText('Calibrate: with an empty bottle').waitFor();
 await shot(page, '03-gas');
 const capacity = page.locator('.field', { hasText: 'Usable gas volume' }).locator('input');
 check((await capacity.inputValue()) !== '', 'gas form shows a saved volume');
+check(await page.getByRole('heading', { name: /Sensor battery/ }).isVisible(), 'gas tab shows the sensor battery');
 check((await page.locator('.field', { hasText: 'Temperature type' }).locator('select').inputValue()) === 'outdoor', 'gas form offers the temperature as outdoor sensor by default');
 check((await page.locator('.field', { hasText: 'Publish temperature' }).locator('select').inputValue()) === 'yes', 'temperature service shown as on by default');
 await page.getByRole('button', { name: /Use as full/ }).click();
@@ -98,6 +99,19 @@ await shot(page, '05-fridge');
 await page.getByRole('button', { name: 'Save & restart driver' }).click();
 await page.getByText('Saved and restarted').waitFor();
 check(true, 'fridge saved and driver restart requested');
+
+// fridge controls on the page
+await page.locator('#savebar').waitFor({ state: 'hidden' });
+await page.waitForTimeout(800);                                   // the form and the controls are redrawn after a save
+await page.getByRole('heading', { name: 'Controls' }).waitFor();
+await page.locator('.seg').first().waitFor();
+check((await page.locator('.ctl .sp').count()) === 2, 'fridge controls show both set point sliders');
+await page.locator('.ctl .seg').first().getByRole('button', { name: 'Off' }).click();
+await page.getByText('The fridge confirmed.').waitFor({ timeout: 40000 });
+check(true, 'switching the fridge off from the page is confirmed by the fridge');
+await page.locator('.ctl .seg').first().getByRole('button', { name: 'On' }).click();
+await page.getByText('The fridge confirmed.').waitFor({ timeout: 40000 });
+await shot(page, '05b-fridge-controls');
 
 // water
 await tab(page, 'Water');

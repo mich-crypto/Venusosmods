@@ -86,7 +86,7 @@ class Store(object):
         self.dirty = False
         self.saved_at = 0
         self.data = {'version': 1, 'days': {}, 'tests': [], 'outages': [], 'unreachable': [], 'wan': [],
-                     'dish': {'current': None}, 'first_seen': None}
+                     'dish': {'current': None}, 'first_seen': None, 'series': {}}
         try:
             if json is None:
                 raise OSError('no json module')
@@ -167,6 +167,13 @@ class Store(object):
             del self.data['outages'][:-MAX_OUTAGES]
             self.dirty = True
         return added
+
+    def add_series(self, name, row, keep=3000):
+        """A small time series of rows (e.g. [time, volts, percent]); the oldest rows fall off."""
+        rows = self.data.setdefault('series', {}).setdefault(name, [])
+        rows.append(row)
+        del rows[:-keep]
+        self.dirty = True
 
     def add_unreachable(self, start, end):
         self.data['unreachable'].append({'start': start, 'end': end})

@@ -156,6 +156,30 @@ class DishHistoryTests(unittest.TestCase):
         self.assertEqual(sl.new_samples([], 5, 1), [])
 
 
+class QualityTests(unittest.TestCase):
+    def st(self, **kw):
+        base = {'state': 'Connected', 'drop_rate': 0.0, 'obstructed_pct': 0.5, 'latency_ms': 30.0, 'alerts': [],
+                'limit_down': None, 'limit_up': None, 'snr_ok': True, 'currently_obstructed': False}
+        return dict(base, **kw)
+
+    def test_levels(self):
+        self.assertEqual(sl.quality(self.st()), (99, 'Excellent'))
+        self.assertEqual(sl.quality(self.st(drop_rate=0.03))[1], 'Good')              # 3 % loss: -24
+        self.assertEqual(sl.quality(self.st(drop_rate=0.10, latency_ms=150))[1], 'Poor')
+        self.assertEqual(sl.quality(self.st(state='Outage: obstructed')), (0, 'Offline'))
+        self.assertEqual(sl.quality(self.st(state='Searching'))[1], 'Poor')
+        self.assertIsNone(sl.quality(None))
+
+    def test_penalties_add_up_but_stay_in_range(self):
+        worst = self.st(drop_rate=0.5, obstructed_pct=80, latency_ms=900, alerts=['thermal throttle', 'motors stuck', 'x', 'y'],
+                        limit_down='overage limit', snr_ok=False)
+        score, label = sl.quality(worst)
+        self.assertTrue(1 <= score <= 100)
+        self.assertEqual(label, 'Poor')
+        self.assertEqual(sl.quality(self.st(alerts=['roaming', 'heating']))[0], 99)    # information only
+        self.assertLessEqual(sl.quality(self.st(currently_obstructed=True))[0], 40)
+
+
 class HistoryTests(unittest.TestCase):
     def test_window_and_decimation(self):
         now = [10000.0]

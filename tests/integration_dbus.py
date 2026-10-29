@@ -257,7 +257,7 @@ def get(bus, service, path):
     return bus.call_blocking(service, path, 'com.victronenergy.BusItem', 'GetValue', '', [])
 
 
-def check_web_results(web):
+def check_web_results(web, result):
     res = web['results']
     assert 'exception' not in res, res
     st, page = res['page']
@@ -267,6 +267,9 @@ def check_web_results(web):
     st, raw = res['raw_fridge']
     assert st == 200 and any(' tx ' in l and 'query' in l for l in raw['lines']), raw
     assert any(' status ' in l and 'payload=' in l and 'Zone(target=3.0' in l for l in raw['lines']), raw['lines'][-5:]
+    vs = result.get('starlink_venus')
+    assert vs and vs['/Connected'] == 1 and vs['/Level'] >= 80 and vs['/Starlink/State'] == 'Connected' \
+        and vs['/ProductName'] == 'Starlink', (vs, result.get('starlink_venus_error'))
     st, dash = res['dash']
     last = dash['last']
     assert st == 200 and last and last['ok'] and last['colo'] == 'AMS' and last['down_mbps'] > 10, dash['tests']
@@ -278,6 +281,12 @@ def check_web_results(web):
     assert st == 200 and lg['outages'] and lg['outages'][0]['cause'] == 'obstructed', lg
     assert lg['wan'][0]['ip'] == '203.0.113.7', lg['wan']
     assert res['speed'][0] == 200 and res['debug'][0] == 200 and res['debug_bad'][0] == 400, (res['speed'], res['debug_bad'])
+    st, fr = res['fridge_api']
+    assert st == 200 and fr['available'] and [z['output'] for z in fr['zones']] == ['setpoint', 'setpoint2'], fr
+    assert fr['zones'][1]['min'] == -20 and fr['zones'][1]['max'] == -12, fr['zones']
+    assert res['fridge_set'][0] == 200 and res['fridge_bad'][0] == 400, (res['fridge_set'], res['fridge_bad'])
+    st, mb = res['mopeka_battery']
+    assert st == 200 and mb['available'] and mb['volts'] == 2.5, mb
     st, sl = res['starlink']
     assert st == 200 and sl['state'] == 'Connected' and sl['via'].startswith('gRPC-web port'), sl
     assert sl['status']['alerts'] == ['roaming'] and sl['status']['down_bps'] > 1e8 and sl['history']['t'], sl
@@ -422,7 +431,7 @@ def main():
             bus.call_blocking('com.victronenergy.switch.fridge_controls',
                               '/SwitchableOutput/power/State', 'com.victronenergy.BusItem',
                               'SetValue', 'v', [dbus.Int32(0, variant_level=1)])
-            GLib.timeout_add_seconds(7, check_control)
+            GLib.timeout_add_seconds(12, check_control)           # the fridge connects, sends and reads back: allow for a busy machine
             return False
         except dbus.exceptions.DBusException as e:
             result['error'] = str(e)
@@ -480,6 +489,10 @@ def main():
             http_call('debug', 'POST', '/api/debug_start', {'tool': 'ping', 'target': '127.0.0.1'}, dict(auth, **csrf))
             http_call('debug_bad', 'POST', '/api/debug_start', {'tool': 'ping', 'target': '-c 1; rm'}, dict(auth, **csrf))
             http_call('starlink', 'GET', '/api/starlink', headers=auth)
+            http_call('fridge_api', 'GET', '/api/fridge', headers=auth)
+            http_call('fridge_set', 'POST', '/api/fridge_set', {'output': 'setpoint', 'value': '5'}, dict(auth, **csrf))
+            http_call('fridge_bad', 'POST', '/api/fridge_set', {'output': 'setpoint', 'value': '30'}, dict(auth, **csrf))
+            http_call('mopeka_battery', 'GET', '/api/mopeka_battery', headers=auth)
             http_call('raw_gas', 'GET', '/api/rawlog?source=gas', headers=auth)
             http_call('raw_fridge', 'GET', '/api/rawlog?source=fridge', headers=auth)
             http_call('log', 'GET', '/api/log?service=fridge', headers=auth)
@@ -512,6 +525,11 @@ def main():
     def wait_for_web():
         res = web.get('results', {})
         if 'reboot' in res or 'exception' in res or time.time() > web['deadline']:
+            try:                                           # the dish as a Venus OS device, published by the settings page
+                result['starlink_venus'] = values('com.victronenergy.tank.starlink', (
+                    '/Level', '/Connected', '/Starlink/State', '/Starlink/Label', '/Starlink/DownMbps', '/ProductName'))
+            except dbus.exceptions.DBusException as e:
+                result['starlink_venus_error'] = str(e)
             keep = int(os.environ.get('KEEP_UI') or 0)
             if keep:
                 print('UI at http://127.0.0.1:%d/  password %s' % (web['port'], web['password']), flush=True)
@@ -583,7 +601,7 @@ def main():
 
     # Mopeka paired via the sync button and stored the MAC in localsettings
     assert result['paired_mac'] == MOPEKA_MAC, result['paired_mac']
-    check_web_results(web)
+    check_web_results(web, result)
     assert codes == [0, 0, 0, -15, 0], codes   # the fake battery has no signal handler (SIGTERM = -15)
     print('INTEGRATION OK')
 

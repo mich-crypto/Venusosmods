@@ -110,13 +110,16 @@ class Hub(object):
         self.price = _num(cfg.get('price_per_kwh'), 0, 0)
         self.currency = cfg.get('currency') or 'EUR'
         self.wan_check = _bool(cfg.get('wan_check'), True)
+        self.venus_service = _bool(cfg.get('venus_service'), True)
+        self.venus_instance = int(_num(cfg.get('venus_instance'), 40, 0, 999))
         self.test_server = (cfg.get('test_server') or 'https://speed.cloudflare.com').rstrip('/')      # only changed by the tests
         self.wan_url = cfg.get('wan_url') or 'https://1.1.1.1/cdn-cgi/trace'
         self.tg = {'enabled': _bool(telegram.get('enabled'), False), 'token': telegram.get('token', ''),
                    'chat_id': telegram.get('chat_id', ''), 'drop_pct': _num(telegram.get('drop_pct'), 5, 0.1),
                    'offline_min': _num(telegram.get('offline_min'), 5, 1),
+                   'sensor_pct': _num(telegram.get('sensor_pct'), 20, 1, 100),
                    'kinds': dict((k, _bool(telegram.get('alert_' + k), True)) for k in
-                                 ('offline', 'drop', 'hardware', 'wan', 'test'))}
+                                 ('offline', 'drop', 'hardware', 'wan', 'test', 'sensor'))}
         # live state
         self.status = None
         self.time = None
@@ -480,7 +483,9 @@ class Hub(object):
     def summary(self):
         age = None if self.time is None else int(self.clock() - self.time)
         s = self.status or {}
+        q = starlink.quality(self.status) if self.status and age is not None and age < 60 else None
         return {'enabled': self.enabled, 'reachable': self.error is None and self.status is not None,
+                'quality': None if q is None else q[0], 'quality_label': None if q is None else q[1],
                 'error': self.error, 'age': age, 'via': self.via, 'state': s.get('state'),
                 'down_bps': s.get('down_bps'), 'up_bps': s.get('up_bps'), 'latency_ms': s.get('latency_ms'),
                 'obstructed_pct': s.get('obstructed_pct'), 'alerts': s.get('alerts'),

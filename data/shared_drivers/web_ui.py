@@ -237,6 +237,7 @@ class App(object):
         self.starlink = starlink_hub.Hub(opts.get('starlink') or {}, opts.get('telegram') or {},
                                          netmon.Store(os.path.join(self.state_dir, 'starlink.json')))
         self.rawlog_dir = opts.get('rawlog_dir') or rawlog.DEFAULT_DIR
+        self.starlink_dev = None          # the dish as a Venus OS device; False = could not be created
 
     # ---------------------------------------------------------- plumbing
 
@@ -325,6 +326,9 @@ class App(object):
             'POST /api/driver_config': self.api_driver_config_save,
             'GET /api/battery': self.api_battery,
             'GET /api/starlink': self.api_starlink,
+            'GET /api/fridge': self.api_fridge,
+            'POST /api/fridge_set': self.api_fridge_set,
+            'GET /api/mopeka_battery': self.api_mopeka_battery,
             'GET /api/starlink_dashboard': self.api_starlink_dashboard,
             'GET /api/starlink_energy': self.api_starlink_energy,
             'GET /api/starlink_log': self.api_starlink_log,
@@ -488,6 +492,135 @@ class App(object):
         out['history'] = m.history.history(window)
         out['hist_error'] = m.hist_error
         return jsonr(out)
+
+    # ---------------------------------------------------- Starlink in Venus OS
+    STARLINK_PATHS = ('/Starlink/State', '/Starlink/Label', '/Starlink/DownMbps', '/Starlink/UpMbps', '/Starlink/LatencyMs',
+                      '/Starlink/DropPercent', '/Starlink/ObstructedPercent', '/Starlink/Alerts', '/Starlink/Throttled')
+
+    def publish_starlink(self):
+        """
+        Timer: show the dish in Venus OS. There is no Starlink device type, so it is a tank-type service whose
+        level is the connection quality (0-100 %): it appears in the Device list and on the Levels page, and in VRM.
+        """
+        hub = self.starlink
+        if not hub.enabled or not hub.venus_service or self.starlink_dev is False:
+            return True
+        if self.starlink_dev is None:
+            try:
+                import venus_service
+                if venus_service.VeDbusService is None:
+                    raise RuntimeError('velib_python not found')
+                self.starlink_dev = venus_service.TankDevice(
+                    self.bus, 'starlink', product_name='Starlink', connection='Starlink dish %s' % hub.host,
+                    fluid_type=venus_service.FLUID_RAW_WATER, default_instance=hub.venus_instance,
+                    custom_name='Starlink connection', timeout_s=60, extra_paths=self.STARLINK_PATHS)
+            except Exception as e:                                   # noqa: BLE001 - a missing nicety must not stop the page
+                log.warning('Starlink is not shown in Venus OS: %s', e)
+                self.starlink_dev = False
+                return True
+        dev = self.starlink_dev
+        st = hub.status
+        if st is not None and hub.time is not None and hub.clock() - hub.time < 30:
+            score, label = starlink.quality(st)
+            alerts = ', '.join(st.get('alerts') or [])
+            dev.publish(level=score, extra={
+                '/Starlink/State': st.get('state'), '/Starlink/Label': label,
+                '/Starlink/DownMbps': None if st.get('down_bps') is None else round(st['down_bps'] / 1e6, 1),
+                '/Starlink/UpMbps': None if st.get('up_bps') is None else round(st['up_bps'] / 1e6, 1),
+                '/Starlink/LatencyMs': None if st.get('latency_ms') is None else round(st['latency_ms'], 1),
+                '/Starlink/DropPercent': None if st.get('drop_rate') is None else round(st['drop_rate'] * 100, 2),
+                '/Starlink/ObstructedPercent': None if st.get('obstructed_pct') is None else round(st['obstructed_pct'], 2),
+                '/Starlink/Alerts': alerts, '/Starlink/Throttled': int(bool(st.get('limit_down') or st.get('limit_up')))})
+        else:
+            dev.check_timeout()                                      # no news for a minute: disconnected, level cleared
+        return True
+
+    # ------------------------------------------------------ Mopeka battery
+    def mopeka_values(self):
+        ours, _ = self.devices()
+        for d in ours:
+            if d['kind'] == 'tank' and d['values'].get('/Mopeka/BatteryPercent') is not None:
+                return d['values']
+        return None
+
+    def record_mopeka(self):
+        """Timer: remember the gas sensor's battery, and warn when it runs low."""
+        v = self.mopeka_values()
+        if v is None:
+            return True
+        volts, pct = v.get('/BatteryVoltage'), v.get('/Mopeka/BatteryPercent')
+        self.starlink.store.add_series('mopeka_battery', [int(time.time()), volts, pct])
+        self.starlink.store.save()
+        hub = self.starlink
+        if hub.tg['kinds']['sensor'] and pct is not None and pct <= hub.tg['sensor_pct']:
+            hub.alert('mopeka-battery', 'The gas sensor battery is low: %d %% (%s V). Replace it soon.' % (
+                pct, '–' if volts is None else '%.2f' % volts), cooldown=12 * 3600)
+        return True
+
+    def api_mopeka_battery(self, req):
+        v = self.mopeka_values() or {}
+        rows = self.starlink.store.data.get('series', {}).get('mopeka_battery', [])
+        return jsonr({'ok': True, 'available': bool(v), 'volts': v.get('/BatteryVoltage'), 'percent': v.get('/Mopeka/BatteryPercent'),
+                      'low_at': self.starlink.tg['sensor_pct'], 'series': rows[-1500:]})
+
+    # --------------------------------------------------------- fridge controls
+    FRIDGE_OUTPUTS = ('power', 'eco', 'setpoint', 'setpoint2')
+
+    def fridge_switch(self):
+        try:
+            names = [str(n) for n in self.bus.list_names() if str(n).startswith('com.victronenergy.switch.')]
+        except dbus.exceptions.DBusException:
+            return None, {}
+        for name in names:
+            try:
+                values = self.dbus_dump(name)
+            except dbus.exceptions.DBusException:
+                continue
+            if values.get('/Mgmt/ProcessName') == 'fridge_venus.py':
+                return name, values
+        return None, {}
+
+    def api_fridge(self, req):
+        name, v = self.fridge_switch()
+        if not name:
+            return jsonr({'ok': True, 'available': False})
+        zones = []
+        for ch in ('setpoint', 'setpoint2'):
+            base = '/SwitchableOutput/%s/' % ch
+            if base + 'Name' in v:
+                zones.append({'output': ch, 'name': v.get(base + 'Settings/CustomName') or v.get(base + 'Name'),
+                              'target': v.get(base + 'Dimming'), 'current': v.get(base + 'Measurement'),
+                              'min': v.get(base + 'Settings/DimmingMin'), 'max': v.get(base + 'Settings/DimmingMax'),
+                              'step': v.get(base + 'Settings/StepSize') or 1})
+        return jsonr({'ok': True, 'available': True, 'service': name, 'connected': v.get('/Connected'),
+                      'power': v.get('/SwitchableOutput/power/State'), 'eco': v.get('/SwitchableOutput/eco/State'), 'zones': zones})
+
+    def api_fridge_set(self, req):
+        output, raw = req.form.get('output', ''), req.form.get('value', '')
+        if output not in self.FRIDGE_OUTPUTS:
+            return jsonr({'ok': False, 'error': 'unknown control'}, 400)
+        name, v = self.fridge_switch()
+        if not name:
+            return jsonr({'ok': False, 'error': 'the fridge controls are not available (the fridge has not been read yet, or control = no)'}, 409)
+        try:
+            if output in ('power', 'eco'):
+                if raw not in ('0', '1'):
+                    return jsonr({'ok': False, 'error': 'value must be 0 or 1'}, 400)
+                path, value = '/SwitchableOutput/%s/State' % output, dbus.Int32(int(raw), variant_level=1)
+            else:
+                target = float(raw)
+                lo = v.get('/SwitchableOutput/%s/Settings/DimmingMin' % output)
+                hi = v.get('/SwitchableOutput/%s/Settings/DimmingMax' % output)
+                if lo is not None and hi is not None and not lo <= target <= hi:
+                    return jsonr({'ok': False, 'error': 'the set point must be between %g and %g' % (lo, hi)}, 400)
+                path, value = '/SwitchableOutput/%s/Dimming' % output, dbus.Double(target, variant_level=1)
+        except ValueError:
+            return jsonr({'ok': False, 'error': 'not a number'}, 400)
+        try:
+            self.bus.call_blocking(name, path, BUS_ITEM, 'SetValue', 'v', [value], timeout=4)
+        except dbus.exceptions.DBusException as e:
+            return jsonr({'ok': False, 'error': 'the driver did not accept it: %s' % e}, 502)
+        return jsonr({'ok': True, 'message': 'Sent. The fridge takes a few seconds to answer.'})
 
     def api_starlink_dashboard(self, req):
         m = self.starlink
@@ -1163,6 +1296,9 @@ def main():
         GLib.timeout_add_seconds(300, hub.poll_wan)
         GLib.timeout_add_seconds(300, lambda: (hub.store.save(), True)[1])
     GLib.timeout_add_seconds(app.recorder.interval, app.sample_batteries)
+    GLib.timeout_add_seconds(5, app.publish_starlink)
+    GLib.timeout_add_seconds(600, app.record_mopeka)
+    GLib.timeout_add_seconds(30, lambda: (app.record_mopeka(), False)[1])
     loop = GLib.MainLoop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, loop.quit)
