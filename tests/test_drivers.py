@@ -306,6 +306,17 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(s['/Level'], level)
         self.assertIsNone(s['/Mopeka/DistanceMm'])
 
+    def test_mopeka_level_curve(self):
+        d = MopekaStandardDriver('s', section(
+            'mac = aa:bb:cc:dd:ee:ff\nempty_mm = 0\nfull_mm = 400\n'
+            'level_curve = 0:0, 0.1:4.6, 0.194:13.9, 1:100\n'))
+        self.assertEqual(d.distance_to_level(0), 0)
+        self.assertAlmostEqual(d.distance_to_level(40), 4.6)        # 0.1 of full
+        self.assertAlmostEqual(d.distance_to_level(400), 100)
+        self.assertAlmostEqual(d.distance_to_level(500), 100)       # above full: clamped
+        mid = d.distance_to_level(200)                              # straight part
+        self.assertAlmostEqual(mid, 13.9 + (0.5 - 0.194) / (1 - 0.194) * 86.1, places=3)
+
     def test_mopeka_pairs_on_sync_button(self):
         d = MopekaStandardDriver('s', section('capacity_l = 27\n'))
         s = d.tank.service

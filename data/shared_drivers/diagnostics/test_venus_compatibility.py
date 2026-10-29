@@ -182,9 +182,10 @@ def check_config(path):
                     report('FAIL', '[%s] empty_mm/full_mm' % name, 'full_mm must be > empty_mm')
                 if not cfg.getfloat('capacity_l', 0):
                     report('WARN', '[%s] capacity_l' % name, 'not set - no remaining litres')
-                if cfg.get('level_table', '').strip():
-                    from venus_service import parse_table
-                    parse_table(cfg['level_table'])
+                for key in ('level_table', 'level_curve'):
+                    if cfg.get(key, '').strip():
+                        from venus_service import parse_table
+                        parse_table(cfg[key])
             elif kind == 'esp32':
                 cfg.getint('device_id', 1)
                 cfg.getboolean('temperature_service', False)

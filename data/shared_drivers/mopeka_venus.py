@@ -50,6 +50,10 @@ class MopekaStandardDriver(BleDriver):
         self.full_mm = config.getfloat('full_mm', 254.0)
         table = config.get('level_table', '').strip()
         self.level_table = parse_table(table) if table else None
+        # Bottle shape relative to the calibration: fraction of the way from
+        # empty_mm to full_mm -> percent. Only full_mm needs measuring.
+        curve = config.get('level_curve', '').strip()
+        self.level_curve = parse_table(curve) if curve else None
         # The ultrasonic echo jumps around a bit - median over the last N reads
         self._distances = collections.deque(maxlen=config.getint('median_window', 5))
         self._level = None
@@ -71,6 +75,9 @@ class MopekaStandardDriver(BleDriver):
     def distance_to_level(self, distance_mm):
         if self.level_table:
             return interpolate(self.level_table, distance_mm)
+        if self.level_curve:
+            x = (distance_mm - self.empty_mm) / (self.full_mm - self.empty_mm)
+            return interpolate(self.level_curve, max(0.0, min(1.0, x)))
         if distance_mm <= self.empty_mm:
             return 0.0
         if distance_mm >= self.full_mm:

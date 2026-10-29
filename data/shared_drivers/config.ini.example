@@ -36,8 +36,13 @@ propane_ratio = 1.0
 # bottle and put the numbers here. A full bottle is filled to ~80 % volume.
 empty_mm = 38
 full_mm = 254
+# Optional bottle shape, relative to the calibration: fraction of the way
+# from empty_mm to full_mm -> percent. Only full_mm has to be measured (the
+# reading of a freshly filled bottle). Example: CAMPKO 30 L (24 L usable,
+# 300 mm diameter, rounded bottom):
+#level_curve = 0:0, 0.05:1.3, 0.10:4.6, 0.15:9.2, 0.194:13.9, 1:100
 # Optional, for non-cylindrical bottles: distance_mm:percent pairs. Overrides
-# empty_mm/full_mm.
+# empty_mm/full_mm and level_curve.
 #level_table = 20:0, 60:15, 120:45, 180:75, 240:100
 median_window = 5
 
