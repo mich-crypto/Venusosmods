@@ -453,9 +453,8 @@ if you forget it. Open the address in Safari and add it to the home screen.
   * *Debug*: ping, traceroute, DNS lookup and an HTTP check run on the Pi.
   * *Settings*: **software update** (compares with GitHub and runs
     `update.sh`), the Starlink settings (speed test interval, ping targets,
-    billing day, data cap, electricity price) and **Telegram alerts** (dish
-    offline and back, packet loss, hardware alerts, new public IP, failed
-    speed tests; make a bot with @BotFather).
+    billing day, data cap, electricity price). The Telegram messages are on
+    the **Notifications** tab.
   **In Venus OS:** the dish also appears as a device called *Starlink
   connection* (Device list, Levels page and VRM). There is no Starlink device
   type, so it is shown as a tank-type device whose *level* is the connection
@@ -474,7 +473,17 @@ if you forget it. Open the address in Safari and add it to the home screen.
   view shows an error run
   `python3 /data/shared_drivers/diagnostics/starlink_probe.py` and send the
   output.
-* **Raw data** – what the sensors really send, for debugging. *Gas* shows
+* **Notifications** – Telegram messages for the camper. Make a bot with
+  @BotFather, paste its token, open the link the page shows to read your chat
+  ID, save, and press *Send a test message*. You can switch each one on or off:
+  lithium battery low (a warning and an alarm, 20 % and 10 % by default), any
+  alarm or warning a Victron device shows (and when it clears), the gas sensor
+  battery, the **parking spot** (park, press *Use the current position*, and you
+  get a message with a map link when the camper is more than 200 m away, and when
+  it is back), the **Orion XS** being switched on to charge, and the Starlink
+  messages (dish offline, packet loss, hardware alerts, new public IP, failed
+  speed test). The page shows what is live now and the last messages sent.
+* **Debug** – two views for troubleshooting. **Raw data**: what the sensors really send. *Gas* shows
   every Mopeka advertisement with its raw bytes (`data=`), the decoded
   distance, temperature, battery and echo quality, and the level that was
   published. *Fridge* shows what the Pi sends (`tx`) and receives (`rx`), the
@@ -483,7 +492,7 @@ if you forget it. Open the address in Safari and add it to the home screen.
   ESP32 advertisements. The log lives in `/tmp/venusosmods-raw/` on the Pi, so
   it starts empty after a reboot and never wears the SD card. Use *Copy* to
   paste it into a message.
-* **Files & logs** – the raw config files as a fallback, and the log of every
+  **Files & logs**: the raw config files as a fallback, and the log of every
   service.
 
 Each save keeps the previous file as `config.ini.bak` next to it.

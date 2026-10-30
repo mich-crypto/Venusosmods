@@ -40,6 +40,7 @@ import config_tools as ct  # noqa: E402
 import devices  # noqa: E402
 import rawlog  # noqa: E402
 import netmon  # noqa: E402
+import notifier  # noqa: E402
 import starlink  # noqa: E402
 import starlink_hub  # noqa: E402
 
@@ -237,6 +238,7 @@ class App(object):
         self.state_dir = opts.get('state_dir') or os.path.join(HERE, 'state')
         self.starlink = starlink_hub.Hub(opts.get('starlink') or {}, opts.get('telegram') or {},
                                          netmon.Store(os.path.join(self.state_dir, 'starlink.json')))
+        self.notifier = notifier.Notifier(opts.get('telegram') or {}, self._notify_send, record=self._notify_record)
         self.rawlog_dir = opts.get('rawlog_dir') or rawlog.DEFAULT_DIR
         self.starlink_dev = None          # the dish as a Venus OS device; False = could not be created
 
@@ -339,6 +341,8 @@ class App(object):
             'GET /api/starlink_log': self.api_starlink_log,
             'POST /api/starlink_test': self.api_starlink_test,
             'POST /api/telegram_test': self.api_telegram_test,
+            'GET /api/notifications': self.api_notifications,
+            'POST /api/fence_here': self.api_fence_here,
             'POST /api/debug_start': self.api_debug_start,
             'GET /api/debug_result': self.api_debug_result,
             'GET /api/update_check': self.api_update_check,
@@ -801,6 +805,76 @@ class App(object):
         if not m.start_speedtest(manual=True):
             return jsonr({'ok': False, 'error': 'a test is already running'}, 409)
         return jsonr({'ok': True, 'message': 'Speed test started (about %d MB of data)' % (m.test_down_mb + m.test_up_mb)})
+
+    # ------------------------------------------------------- notifications
+    def _notify_send(self, key, text, cooldown):
+        return self.starlink.alert(key, text, cooldown)
+
+    def _notify_record(self, text):
+        self.starlink.store.add_series('notify', [int(time.time()), text], keep=100)
+        self.starlink.store.save()
+
+    @staticmethod
+    def _alarm_rows(device, values):
+        for path, v in values.items():
+            if (path.startswith('/Alarms/') or path == '/Alarm') and isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                yield {'device': device, 'path': path, 'value': v}
+
+    def notify_snapshot(self):
+        """What the notifier needs, read from the Victron devices on D-Bus."""
+        snap = {'batteries': [], 'alarms': [], 'gps': None, 'dcdc': []}
+        try:
+            names = sorted(str(n) for n in self.bus.list_names() if str(n).startswith('com.victronenergy.'))
+        except dbus.exceptions.DBusException:
+            return snap
+        for name in names:
+            kind = name.split('.')[2] if name.count('.') >= 2 else ''
+            if kind in ('settings', 'platform'):
+                continue
+            try:
+                v = self.dbus_dump(name)
+            except dbus.exceptions.DBusException:
+                continue
+            label = v.get('/CustomName') or v.get('/ProductName') or name.split('.')[-1]
+            snap['alarms'].extend(self._alarm_rows(label, v))
+            if kind == 'battery' and isinstance(v.get('/Soc'), (int, float)):
+                snap['batteries'].append({'name': label, 'soc': float(v['/Soc'])})
+            elif kind == 'gps' and snap['gps'] is None:
+                lat, lon = v.get('/Position/Latitude'), v.get('/Position/Longitude')
+                if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and v.get('/Fix', 1):
+                    snap['gps'] = {'lat': float(lat), 'lon': float(lon)}
+            elif kind == 'dcdc':
+                snap['dcdc'].append({'name': label, 'state': v.get('/State'), 'mode': v.get('/Mode'),
+                                     'volts': v.get('/Dc/0/Voltage'), 'amps': v.get('/Dc/0/Current')})
+        return snap
+
+    def notify_check(self):
+        """Timer: look at the camper and send what changed."""
+        try:
+            self.notifier.check(self.notify_snapshot())
+        except Exception:                                      # a bad reading must never stop the timer
+            log.exception('notification check failed')
+        return True
+
+    def api_notifications(self, req):
+        tg = self.starlink.tg
+        rows = self.starlink.store.data.get('series', {}).get('notify', [])
+        return jsonr({'ok': True, 'ready': bool(tg['enabled'] and tg['token'] and tg['chat_id']),
+                      'live': self.notifier.view(), 'recent': rows[-15:][::-1]})
+
+    def api_fence_here(self, req):
+        gps = self.notifier.last.get('gps') or (self.notify_snapshot().get('gps'))
+        if not gps:
+            return jsonr({'ok': False, 'error': 'No GPS position yet. The GPS needs a fix (sky view) and has to show up in Venus OS.'}, 400)
+        text = self.read_text(self.driver_config)
+        new = ct.set_values(text, 'telegram', {'fence_lat': '%.6f' % gps['lat'], 'fence_lon': '%.6f' % gps['lon'], 'alert_geofence': 'yes'})
+        problem = ct.check_syntax(new)
+        if problem:
+            return jsonr({'ok': False, 'error': 'file would be invalid: ' + problem}, 500)
+        ct.write_file(self.driver_config, new)
+        self.notifier.on['geofence'] = True
+        self.notifier.set_home(gps['lat'], gps['lon'])
+        return jsonr({'ok': True, 'message': 'This is now the parking spot. You get a message when the camper leaves its %d m area.' % self.notifier.fence_m})
 
     def api_telegram_test(self, req):
         m = self.starlink
@@ -1459,6 +1533,8 @@ def main():
         GLib.timeout_add_seconds(5, lambda: (hub.poll_icmp(), hub.poll_wan(), False)[2])
         GLib.timeout_add_seconds(300, hub.poll_wan)
         GLib.timeout_add_seconds(300, lambda: (hub.store.save(), True)[1])
+    GLib.timeout_add_seconds(60, hub.flush)                     # Telegram messages that could not be sent are retried
+    GLib.timeout_add_seconds(15, app.notify_check)
     GLib.timeout_add_seconds(app.recorder.interval, app.sample_batteries)
     GLib.timeout_add_seconds(5, app.publish_starlink)
     GLib.timeout_add_seconds(600, app.record_mopeka)

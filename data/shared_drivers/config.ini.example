@@ -122,8 +122,17 @@ history_interval = 60
 port = 9201
 
 [telegram]
-# Alerts to a Telegram chat: dish offline/back, packet loss, hardware alerts, new public IP,
-# failed speed tests. Make a bot with @BotFather, send it a message, then fill in both lines.
+# Notifications to a Telegram chat. Make a bot with @BotFather, send it a message, then fill in
+# token and chat_id (the Notifications tab of the settings page walks you through it).
 enabled = no
 token =
 chat_id =
+# What you get (all switchable on the page): lithium battery low, any alarm, gas sensor battery,
+# leaving the parking spot, Orion XS charging switched on, Starlink events.
+#alert_battery = yes
+#battery_warn_pct = 20
+#battery_alarm_pct = 10
+#alert_alarms = yes
+#alert_geofence = no
+#fence_m = 200
+#alert_orion = yes

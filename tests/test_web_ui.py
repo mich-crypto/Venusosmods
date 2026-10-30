@@ -531,6 +531,60 @@ def starlink_status(**kw):
     return st
 
 
+class NotificationTests(AppTestCase):
+    class Bus(object):
+        def __init__(self, services):
+            self.services = services
+
+        def list_names(self):
+            return list(self.services)
+
+    SERVICES = {
+        'com.victronenergy.battery.ttyUSB0': {'/ProductName': 'JK BMS', '/Soc': 17.0, '/Alarms/LowSoc': 1, '/Alarms/HighVoltage': 0},
+        'com.victronenergy.gps.ttyUSB1': {'/Position/Latitude': 52.1, '/Position/Longitude': 5.2, '/Fix': 1},
+        'com.victronenergy.dcdc.ttyS3': {'/ProductName': 'Orion XS', '/State': 3, '/Mode': 1, '/Dc/0/Voltage': 13.9, '/Dc/0/Current': 18.5},
+        'com.victronenergy.settings': {'/Alarms/Fake': 2},
+        'com.victronenergy.tank.mopeka': {'/Level': 50},
+    }
+
+    def setUp(self):
+        AppTestCase.setUp(self)
+        self.app._bus = self.Bus(self.SERVICES)
+        self.app.dbus_dump = lambda name: dict(self.SERVICES[name])
+
+    def test_snapshot_reads_the_victron_devices(self):
+        snap = self.app.notify_snapshot()
+        self.assertEqual(snap['batteries'], [{'name': 'JK BMS', 'soc': 17.0}])
+        self.assertEqual(snap['alarms'], [{'device': 'JK BMS', 'path': '/Alarms/LowSoc', 'value': 1}])   # zero is not an alarm
+        self.assertEqual(snap['gps'], {'lat': 52.1, 'lon': 5.2})
+        self.assertEqual(snap['dcdc'][0]['state'], 3)
+
+    def test_check_sends_through_the_hub_queue(self):
+        hub = self.app.starlink
+        hub.tg.update(enabled=True, token='T', chat_id='1')
+        hub.flush = lambda: True
+        for _ in range(2):
+            self.app.notify_check()
+        self.assertEqual(len(hub.queue), 2)                                  # the battery warning and the alarm
+        self.assertTrue(any('JK BMS' in t and 'Low soc' in t for t in hub.queue))
+        d = body_of(self.get('/api/notifications'))
+        self.assertTrue(d['ready'])
+        self.assertEqual(len(d['recent']), 2)
+        self.assertEqual(d['live']['battery_soc'], 17.0)
+        self.assertEqual(d['live']['active_alarms'], ['JK BMS: Low soc'])
+
+    def test_use_the_current_position_as_the_parking_spot(self):
+        self.assertEqual(self.post('/api/fence_here', {}, auth=False).status, 401)
+        r = self.post('/api/fence_here', {})
+        self.assertEqual(r.status, 200, r.body)
+        t = ct.parse_ini(self.config_text())['telegram']
+        self.assertEqual((t['fence_lat'], t['fence_lon'], t['alert_geofence']), ('52.100000', '5.200000', 'yes'))
+        self.assertEqual(body_of(self.get('/api/notifications'))['live']['home'], {'lat': 52.1, 'lon': 5.2})
+        self.app._bus = self.Bus({})
+        self.app.notifier.last['gps'] = None
+        self.assertEqual(self.post('/api/fence_here', {}).status, 400)         # no GPS, no spot
+
+
 class SetupGuideTests(AppTestCase):
     def objects(self, devices):
         out = {'/org/bluez/hci0': {'org.bluez.Adapter1': {}}}

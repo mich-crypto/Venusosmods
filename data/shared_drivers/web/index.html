@@ -215,7 +215,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
 // ---------------------------------------------------------------- helpers
 const S = { tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
 const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
-              ['battery', 'Battery'], ['starlink', 'Starlink'], ['raw', 'Raw data'], ['files', 'Files & logs']];
+              ['battery', 'Battery'], ['starlink', 'Starlink'], ['notify', 'Notifications'], ['debug', 'Debug']];
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -311,7 +311,7 @@ async function renderTab() {
   hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
   const main = clear($('#main'));
   const f = { overview: tabOverview, fridge: () => tabDevice('fridge'), gas: () => tabDevice('mopeka'),
-              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, raw: tabRaw, files: tabFiles }[S.tab];
+              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, notify: tabNotify, debug: tabDebug }[S.tab];
   await f(main);
 }
 
@@ -2124,16 +2124,15 @@ async function slSettings(box) {
   const r = await api('/api/driver_config');
   if (!r.ok) { out.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read config.ini')); return; }
   S.forms = {};
-  for (const kind of ['starlink', 'telegram']) {
+  for (const kind of ['starlink']) {
     const section = r.data.sections.find(s => s.kind === kind) || r.data.optional.find(s => s.kind === kind);
     const { form, card, normal, adv } = formFor(section);
     S.forms[section.section] = form;
     normal.forEach(x => card.append(fieldRow(form, x, section)));
     if (adv.length) card.append(h('details', { class: 'adv' }, h('summary', {}, 'Advanced'), adv.map(x => fieldRow(form, x, section))));
-    if (kind === 'telegram') card.append(h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: async () => { const x = await api('/api/telegram_test', {}); toast(x.ok ? x.data.message : x.data.error, !x.ok); } }, 'Send a test message')));
     out.append(card);
   }
-  out.append(h('div', { class: 'muted' }, 'Saving restarts this page (a few seconds): these settings are read when it starts. Settings that are not in config.ini use the defaults shown.'));
+  out.append(h('div', { class: 'muted' }, 'Telegram messages are set up on the Notifications tab. Saving restarts this page (a few seconds): these settings are read when it starts. Settings that are not in config.ini use the defaults shown.'));
 }
 
 async function updatePanel() {
@@ -2197,7 +2196,7 @@ async function tabRaw(main) {
   const box = h('div', {});
   main.append(box);
   await rawView(box);
-  S.rawTimer = setInterval(() => { if (!document.hidden && S.tab === 'raw' && !S.rawPaused && !$('#dlg').open) rawView(box); }, 3000);
+  S.rawTimer = setInterval(() => { if (!document.hidden && S.tab === 'debug' && S.dbgView === 'raw' && !S.rawPaused && !$('#dlg').open) rawView(box); }, 3000);
 }
 
 function rawLine(text) {
@@ -2208,7 +2207,7 @@ function rawLine(text) {
 
 async function rawView(box) {
   const r = await api('/api/rawlog?source=' + S.rawSource + '&lines=300');
-  if (S.tab !== 'raw') return;
+  if (S.tab !== 'debug' || S.dbgView !== 'raw') return;
   const out = h('div', {});
   if (!r.ok) { clear(box).append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read the log')); return; }
   const lines = r.data.lines, old = $('.rawbox'), stick = !old || old.scrollTop + old.clientHeight >= old.scrollHeight - 30;
@@ -2287,6 +2286,75 @@ async function firstRunGuide() {
   if (seen) return;
   const r = await api('/api/setup');
   if (r.ok && r.data.first_run) { try { localStorage.setItem('wizSeen', '1'); } catch (e) { /* ignore */ } openSetup(); }
+}
+
+// -------------------------------------------------------------- debug: raw data, files and logs
+async function tabDebug(main) {
+  S.dbgView = S.dbgView || 'raw';
+  main.append(h('div', { class: 'pills', role: 'group' }, [['raw', 'Raw data'], ['files', 'Files & logs']].map(([id, label]) =>
+    h('button', { type: 'button', 'aria-pressed': S.dbgView === id, onclick: () => { S.dbgView = id; renderTab(); } }, label))));
+  await (S.dbgView === 'raw' ? tabRaw : tabFiles)(main);
+}
+
+// ------------------------------------------------------------------ notifications
+function metersText(m) { return m < 1000 ? m + ' m' : (m / 1000).toFixed(1) + ' km'; }
+
+async function tabNotify(main) {
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  const [r, n] = await Promise.all([api('/api/driver_config'), api('/api/notifications')]);
+  if (!r.ok) { main.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read config.ini')); return; }
+  const section = r.data.sections.find(s => s.kind === 'telegram') || r.data.optional.find(s => s.kind === 'telegram');
+  const live = n.ok ? n.data.live : {}, ready = n.ok && n.data.ready;
+  const form = { section, fields: {} };
+  S.forms = { [section.section]: form };
+  const byKey = {};
+  section.fields.forEach(f => { byKey[f.key] = f; });
+  const row = k => { const f = byKey[k]; return f.type === 'bool' ? toggleRow(form, f, section) : fieldRow(form, f, section); };
+  const rule = (title, keys, ...extra) => h('div', { class: 'card' }, h('h3', {}, title), keys.map(row), extra);
+  const note = text => h('div', { class: 'muted', style: 'margin:6px 0' }, text);
+
+  main.append(ready ? h('div', { class: 'banner' }, 'Telegram is connected. Messages go to your chat.')
+    : h('div', { class: 'banner warn' }, 'Telegram is not connected yet. Follow the three steps below.'));
+
+  const token = byKey.token;
+  const conn = h('div', { class: 'card' }, h('h3', {}, 'Telegram'),
+    h('ol', { class: 'steps' },
+      h('li', {}, 'In Telegram, open ', h('b', {}, '@BotFather'), ', send ', h('code', {}, '/newbot'), ' and copy the token it gives you.'),
+      h('li', {}, 'Send any message to your new bot.'),
+      h('li', {}, 'Paste the token below and open the link that appears: your chat ID is the number after ', h('code', {}, '"chat":{"id":'), '.')),
+    row('enabled'), row('token'));
+  const link = h('a', { href: '#', target: '_blank', rel: 'noopener', style: 'display:none;margin:4px 0 10px' }, 'Open the page that shows my chat ID');
+  conn.append(link, row('chat_id'));
+  const tokenInput = form.fields.token && form.fields.token.input;
+  if (tokenInput) {
+    const upd = () => { const t = tokenInput.value.trim(); link.style.display = /^[0-9]+:[A-Za-z0-9_-]+$/.test(t) ? '' : 'none'; link.href = 'https://api.telegram.org/bot' + t + '/getUpdates'; };
+    tokenInput.addEventListener('input', upd); upd();
+  }
+  conn.append(h('div', { class: 'row' }, h('button', { class: 'btn small', disabled: !canEdit() || !ready, onclick: async () => {
+    const x = await api('/api/telegram_test', {}); toast(x.ok ? x.data.message : x.data.error, !x.ok);
+  } }, 'Send a test message'), ready ? null : h('span', { class: 'muted' }, 'Save first; the test works once Telegram is connected.')));
+  main.append(conn);
+
+  main.append(rule('Lithium battery', ['alert_battery', 'battery_warn_pct', 'battery_alarm_pct'],
+    note(live.battery_soc == null ? 'No battery reading yet.' : 'The battery is at ' + Math.round(live.battery_soc) + ' % now.')));
+  main.append(rule('Any alarm', ['alert_alarms'],
+    note((live.active_alarms || []).length ? 'Active now: ' + live.active_alarms.join(', ') : 'No alarm is active now. Every Victron device is watched.')));
+  main.append(rule('Gas sensor battery', ['alert_sensor', 'sensor_pct']));
+  const home = live.home;
+  main.append(rule('Parking spot (geofence)', ['alert_geofence', 'fence_m'],
+    note(!home ? 'No spot set yet. Park, then press the button.' : 'Spot set. ' + (live.distance_m == null ? 'No GPS position now.' : 'The camper is ' + metersText(live.distance_m) + ' away.')),
+    h('div', { class: 'row' }, h('button', { class: 'btn small primary', disabled: !canEdit(), onclick: () => confirmThen('Use where the camper is right now as the parking spot?', async () => {
+      const x = await api('/api/fence_here', {}); toast(x.ok ? x.data.message : x.data.error, !x.ok); if (x.ok) renderTab();
+    }) }, 'Use the current position'))));
+  main.append(rule('Orion XS', ['alert_orion'], note(live.orion_state ? 'The Orion is ' + live.orion_state + ' now.' : 'No Orion XS found.')));
+  main.append(h('details', { class: 'group' }, h('summary', {}, 'Starlink messages'), h('div', { class: 'body' },
+    ['alert_offline', 'alert_drop', 'alert_hardware', 'alert_wan', 'alert_test'].map(row))));
+
+  const recent = n.ok ? n.data.recent : [];
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'Recent messages'), recent.length
+    ? recent.map(([t, text]) => h('div', { class: 'row', style: 'margin:4px 0;align-items:flex-start' }, h('span', { class: 'muted', style: 'min-width:110px' }, new Date(t * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })), h('span', {}, text)))
+    : h('div', { class: 'muted' }, 'Nothing sent yet.')));
+  main.append(note('Saving restarts this page for a few seconds. A message that could not be sent is tried again every minute.'));
 }
 
 async function boot() {

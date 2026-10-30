@@ -227,15 +227,15 @@ check(true, 'network tool runs and shows its output');
 await shot(page, '07c4-starlink-debug');
 await page.getByRole('button', { name: 'Settings', exact: true }).click();
 await page.getByText('Software update').waitFor();
-await page.getByText('Bot token').waitFor();
+await page.getByText('Telegram messages are set up on the Notifications tab').waitFor();
 check((await page.locator('.field', { hasText: 'Speed test every' }).locator('input').count()) === 1, 'settings offer the speed test interval');
 await shot(page, '07c5-starlink-settings');
 
 // raw data
-await tab(page, 'Raw data');
+await tab(page, 'Debug');
 await page.locator('.rawbox', { hasText: 'data=' }).waitFor();
 check((await page.locator('.rawbox .k-adv').count()) >= 1, 'raw log shows the Mopeka advertisements with their bytes');
-check((await page.getByRole('tab', { name: 'Raw data', selected: true }).count()) === 1, 'the open tab is marked as selected');
+check((await page.getByRole('tab', { name: 'Debug', selected: true }).count()) === 1, 'the open tab is marked as selected');
 await shot(page, '07d-raw-gas');
 await page.getByRole('button', { name: 'Fridge', exact: true }).click();
 await page.getByText('Last status payload, byte by byte').waitFor();
@@ -243,8 +243,23 @@ check((await page.locator('.rawbox .k-tx').count()) >= 1 && (await page.locator(
 check((await page.locator('details.group tbody tr').count()) >= 20, 'fridge payload is listed byte by byte');
 await shot(page, '07e-raw-fridge');
 
+// notifications
+await tab(page, 'Notifications');
+await page.getByText('Telegram is not connected yet').waitFor();
+check((await page.getByRole('heading', { name: /Lithium battery|Parking spot|Orion XS|Any alarm/ }).count()) === 4, 'the notifications page lists the rules');
+check((await page.locator('.field .switch').count()) >= 8, 'every rule is a simple on/off switch');
+await page.locator('.field', { hasText: 'Bot token' }).locator('input').fill('123456:ABC-def');
+await page.getByRole('link', { name: 'Open the page that shows my chat ID' }).waitFor();
+check((await page.getByRole('link', { name: 'Open the page that shows my chat ID' }).getAttribute('href')) === 'https://api.telegram.org/bot123456:ABC-def/getUpdates', 'the chat ID link is built from the token');
+await shot(page, '07f-notifications');
+await page.getByRole('button', { name: 'Discard' }).click();
+await page.getByRole('button', { name: 'Use the current position' }).click();
+await page.locator('#toast', { hasText: 'No GPS' }).waitFor();
+check(true, 'without a GPS the parking spot says so');
+
 // files & logs
-await tab(page, 'Files & logs');
+await tab(page, 'Debug');
+await page.getByRole('button', { name: 'Files & logs', exact: true }).click();
 await page.getByText('Drivers: config.ini').waitFor();
 check((await page.locator('textarea').first().inputValue()).includes('[fridge]'), 'raw editor shows config.ini');
 await page.getByRole('button', { name: 'fridge', exact: true }).click();
