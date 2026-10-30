@@ -189,6 +189,81 @@ class OrionTests(unittest.TestCase):
         self.assertEqual(s2.sent, [])
 
 
+class FrostTests(unittest.TestCase):
+    def snap(self, outdoor=None, low=None, now=5.0, at='2026-10-31T04:00'):
+        return {'outdoor': outdoor, 'forecast': None if low is None else {'now': now, 'min': low, 'at': at}}
+
+    def test_frost_forecast_once_until_it_clears(self):
+        s = Sink()
+        n = s.make()
+        n.check(self.snap(low=4))
+        self.assertEqual(s.sent, [])
+        n.check(self.snap(low=-3))
+        self.assertEqual(len(s.sent), 1)
+        self.assertIn('down to -3 °C around 04:00', s.sent[0])
+        n.check(self.snap(low=-4))
+        n.check(self.snap(low=0.5))                              # still close to freezing: not announced again
+        self.assertEqual(len(s.sent), 1)
+        n.check(self.snap(low=6))
+        n.check(self.snap(low=-1))
+        self.assertEqual(len(s.sent), 2)
+
+    def test_below_zero_for_two_hours_with_the_outdoor_sensor(self):
+        s = Sink()
+        n = s.make()
+        n.check(self.snap(outdoor=-1.0))
+        s.t += 3600
+        n.check(self.snap(outdoor=-2.0))
+        self.assertEqual(s.sent, [])
+        s.t += 3700
+        n.check(self.snap(outdoor=-2.0))
+        self.assertEqual(len(s.sent), 1)
+        self.assertIn('below 0 °C at the camper for 2 hours', s.sent[0])
+        self.assertIn('outdoor sensor', s.sent[0])
+        s.t += 7200
+        n.check(self.snap(outdoor=-5.0))
+        self.assertEqual(len(s.sent), 1)                         # once per cold spell
+        n.check(self.snap(outdoor=3.0))
+        n.check(self.snap(outdoor=-1.0))
+        s.t += 7300
+        n.check(self.snap(outdoor=-1.0))
+        self.assertEqual(len(s.sent), 2)
+
+    def test_a_warm_moment_resets_the_two_hours(self):
+        s = Sink()
+        n = s.make()
+        n.check(self.snap(outdoor=-1.0))
+        s.t += 5000
+        n.check(self.snap(outdoor=2.0))
+        s.t += 5000
+        n.check(self.snap(outdoor=-1.0))
+        self.assertEqual(s.sent, [])
+
+    def test_the_forecast_stands_in_without_a_sensor(self):
+        s = Sink()
+        n = s.make(alert_freeze='no')
+        n.check(self.snap(low=-2, now=-1.0))
+        s.t += 7300
+        n.check(self.snap(low=-2, now=-1.0))
+        self.assertEqual(len(s.sent), 1)
+        self.assertIn('forecast service', s.sent[0])
+
+    def test_switches(self):
+        s = Sink()
+        n = s.make(alert_freeze='no', alert_cold='no')
+        n.check(self.snap(outdoor=-5, low=-8))
+        s.t += 9000
+        n.check(self.snap(outdoor=-5, low=-8))
+        self.assertEqual(s.sent, [])
+
+    def test_parse_forecast(self):
+        text = ('{"current":{"time":"2026-10-30T22:00","temperature_2m":1.5},'
+                '"hourly":{"time":["2026-10-30T22:00","2026-10-31T04:00","2026-10-31T05:00"],"temperature_2m":[1.5,-3.2,null]}}')
+        self.assertEqual(notifier.parse_forecast(text), {'now': 1.5, 'min': -3.2, 'at': '2026-10-31T04:00'})
+        self.assertIsNone(notifier.parse_forecast('not json'))
+        self.assertIsNone(notifier.parse_forecast('{"hourly":{"time":[],"temperature_2m":[]}}'))
+
+
 class RecordTests(unittest.TestCase):
     def test_only_what_was_sent_is_recorded(self):
         rec = []

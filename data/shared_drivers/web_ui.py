@@ -238,6 +238,11 @@ class App(object):
         self.state_dir = opts.get('state_dir') or os.path.join(HERE, 'state')
         self.starlink = starlink_hub.Hub(opts.get('starlink') or {}, opts.get('telegram') or {},
                                          netmon.Store(os.path.join(self.state_dir, 'starlink.json')))
+        self._dumps = {}                   # service -> (time, values), filled by poll_dumps
+        self._pending = set()
+        self._weather = None               # {'time', 'lat', 'lon', 'result'}
+        self._weather_busy = False
+        self._states = None                # (time, service states): svstat is not run on every request
         self.notifier = notifier.Notifier(opts.get('telegram') or {}, self._notify_send, record=self._notify_record)
         self.rawlog_dir = opts.get('rawlog_dir') or rawlog.DEFAULT_DIR
         self.starlink_dev = None          # the dish as a Venus OS device; False = could not be created
@@ -387,6 +392,13 @@ class App(object):
         return os.path.join(self.service_dir, name)
 
     def service_states(self):
+        if self._states and time.time() - self._states[0] < 2.0:
+            return [dict(x) for x in self._states[1]]
+        result = self._service_states()
+        self._states = (time.time(), result)
+        return [dict(x) for x in result]
+
+    def _service_states(self):
         names = self.init_services()
         linked = [n for n in names if os.path.lexists(self.link(n))]
         status = {}
@@ -404,10 +416,53 @@ class App(object):
                            'seconds': s.get('seconds'), 'pid': s.get('pid')})
         return result
 
-    def dbus_dump(self, name):
-        obj = self.bus.get_object(name, '/', introspect=False)
-        raw = obj.GetValue(dbus_interface=BUS_ITEM, timeout=2)
-        return dict(('/' + str(k).lstrip('/'), unwrap(v)) for k, v in raw.items())
+    DUMP_FRESH_S = 8            # a dump this young is used as it is
+    DUMP_KEEP_S = 90            # a busy service that does not answer keeps its last values this long
+
+    def dbus_dump(self, name, max_age=None):
+        """All values of a service. Served from the background poll when it is fresh, so the page never waits on D-Bus."""
+        age = self.DUMP_FRESH_S if max_age is None else max_age
+        hit = self._dumps.get(name)
+        if hit and time.time() - hit[0] <= age:
+            return dict(hit[1])
+        try:
+            obj = self.bus.get_object(name, '/', introspect=False)
+            raw = obj.GetValue(dbus_interface=BUS_ITEM, timeout=2)
+        except dbus.exceptions.DBusException:
+            if hit and time.time() - hit[0] <= self.DUMP_KEEP_S:
+                return dict(hit[1])                # not a card that vanishes for one slow answer
+            raise
+        values = dict(('/' + str(k).lstrip('/'), unwrap(v)) for k, v in raw.items())
+        self._dumps[name] = (time.time(), values)
+        return dict(values)
+
+    def poll_dumps(self):
+        """Timer: ask every Victron service for its values without blocking, and keep the answers."""
+        try:
+            names = [str(n) for n in self.bus.list_names() if str(n).startswith('com.victronenergy.')]
+        except dbus.exceptions.DBusException:
+            return True
+        for gone in [n for n in self._dumps if n not in names]:
+            del self._dumps[gone]
+        for name in names:
+            if name in self._pending:
+                continue
+            self._pending.add(name)
+            try:
+                obj = self.bus.get_object(name, '/', introspect=False)
+                obj.GetValue(dbus_interface=BUS_ITEM, timeout=6,
+                             reply_handler=lambda raw, n=name: self._dumped(n, raw),
+                             error_handler=lambda e, n=name: self._pending.discard(n))
+            except dbus.exceptions.DBusException:
+                self._pending.discard(name)
+        return True
+
+    def _dumped(self, name, raw):
+        self._pending.discard(name)
+        try:
+            self._dumps[name] = (time.time(), dict(('/' + str(k).lstrip('/'), unwrap(v)) for k, v in raw.items()))
+        except Exception:
+            log.debug('bad dump from %s', name)
 
     def devices(self):
         ours, batteries = [], []
@@ -735,7 +790,7 @@ class App(object):
             return None, {}
         for name in names:
             try:
-                values = self.dbus_dump(name)
+                values = self.dbus_dump(name, max_age=2)
             except dbus.exceptions.DBusException:
                 continue
             if values.get('/Mgmt/ProcessName') == 'fridge_venus.py':
@@ -822,7 +877,7 @@ class App(object):
 
     def notify_snapshot(self):
         """What the notifier needs, read from the Victron devices on D-Bus."""
-        snap = {'batteries': [], 'alarms': [], 'gps': None, 'dcdc': []}
+        snap = {'batteries': [], 'alarms': [], 'gps': None, 'dcdc': [], 'outdoor': None, 'forecast': self.forecast()}
         try:
             names = sorted(str(n) for n in self.bus.list_names() if str(n).startswith('com.victronenergy.'))
         except dbus.exceptions.DBusException:
@@ -843,6 +898,9 @@ class App(object):
                 lat, lon = v.get('/Position/Latitude'), v.get('/Position/Longitude')
                 if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and v.get('/Fix', 1):
                     snap['gps'] = {'lat': float(lat), 'lon': float(lon)}
+            elif kind == 'temperature' and snap['outdoor'] is None and v.get('/TemperatureType') == 4 \
+                    and isinstance(v.get('/Temperature'), (int, float)) and v.get('/Connected', 1):
+                snap['outdoor'] = float(v['/Temperature'])
             elif kind == 'dcdc':
                 snap['dcdc'].append({'name': label, 'state': v.get('/State'), 'mode': v.get('/Mode'),
                                      'volts': v.get('/Dc/0/Voltage'), 'amps': v.get('/Dc/0/Current')})
@@ -854,6 +912,45 @@ class App(object):
             self.notifier.check(self.notify_snapshot())
         except Exception:                                      # a bad reading must never stop the timer
             log.exception('notification check failed')
+        return True
+
+    # ------------------------------------------------------------- weather
+    WEATHER_EVERY_S = 1800
+    WEATHER_URL = 'https://api.open-meteo.com/v1/forecast'          # free, no key; only changed by the tests
+
+    def forecast(self):
+        w = self._weather
+        return w['result'] if w and time.time() - w['time'] < 3 * 3600 else None
+
+    def weather_position(self):
+        gps = self.notifier.last.get('gps')
+        if gps:
+            return gps
+        home = self.notifier.home
+        return {'lat': home[0], 'lon': home[1]} if home else None
+
+    def poll_weather(self):
+        """Timer: the next 24 hours of temperature at the camper's position, every half hour or after a drive."""
+        n = self.notifier
+        pos = self.weather_position()
+        if not pos or self._weather_busy or not (n.on['freeze'] or n.on['cold']):
+            return True
+        w = self._weather
+        if w and time.time() - w['time'] < self.WEATHER_EVERY_S and \
+                notifier.distance_m(pos['lat'], pos['lon'], w['lat'], w['lon']) < 10000:
+            return True
+        self._weather_busy = True
+        url = '%s?latitude=%.3f&longitude=%.3f&current=temperature_2m&hourly=temperature_2m&forecast_hours=24&timezone=auto' % (
+            self.WEATHER_URL, pos['lat'], pos['lon'])
+
+        def done(rc, out):
+            self._weather_busy = False
+            result = notifier.parse_forecast(out.decode('utf-8', 'replace')) if rc == 0 else None
+            if result:
+                self._weather = {'time': time.time(), 'lat': pos['lat'], 'lon': pos['lon'], 'result': result}
+            else:
+                log.warning('Could not read the weather forecast')
+        starlink_hub.run_async(['curl', '-s', '-m', '15', url], done, timeout=20)
         return True
 
     def api_notifications(self, req):
@@ -1030,6 +1127,7 @@ class App(object):
     OPTIONAL_SECTIONS = ('starlink', 'telegram')           # work without a section; saving one creates it
 
     def restart_service(self, name):
+        self._states = None
         link = self.link(name)
         if not os.path.lexists(link):
             return False
@@ -1246,6 +1344,7 @@ class App(object):
 
     def set_service(self, name, action):
         """Link a service into /service (and /data/rc.local, so it survives reboots) or take it out again."""
+        self._states = None
         line = self.rc_line(name)
         rc = self.read_text(self.rc_local) or '#!/bin/sh\n'
         lines = [l for l in rc.split('\n') if l.strip() != line]
@@ -1534,7 +1633,10 @@ def main():
         GLib.timeout_add_seconds(300, hub.poll_wan)
         GLib.timeout_add_seconds(300, lambda: (hub.store.save(), True)[1])
     GLib.timeout_add_seconds(60, hub.flush)                     # Telegram messages that could not be sent are retried
+    app.poll_dumps()
+    GLib.timeout_add_seconds(5, app.poll_dumps)
     GLib.timeout_add_seconds(15, app.notify_check)
+    GLib.timeout_add_seconds(30, app.poll_weather)
     GLib.timeout_add_seconds(app.recorder.interval, app.sample_batteries)
     GLib.timeout_add_seconds(5, app.publish_starlink)
     GLib.timeout_add_seconds(600, app.record_mopeka)

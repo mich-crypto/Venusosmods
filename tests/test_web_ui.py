@@ -543,6 +543,7 @@ class NotificationTests(AppTestCase):
         'com.victronenergy.battery.ttyUSB0': {'/ProductName': 'JK BMS', '/Soc': 17.0, '/Alarms/LowSoc': 1, '/Alarms/HighVoltage': 0},
         'com.victronenergy.gps.ttyUSB1': {'/Position/Latitude': 52.1, '/Position/Longitude': 5.2, '/Fix': 1},
         'com.victronenergy.dcdc.ttyS3': {'/ProductName': 'Orion XS', '/State': 3, '/Mode': 1, '/Dc/0/Voltage': 13.9, '/Dc/0/Current': 18.5},
+        'com.victronenergy.temperature.sensor': {'/Temperature': -2.5, '/TemperatureType': 4, '/Connected': 1},
         'com.victronenergy.settings': {'/Alarms/Fake': 2},
         'com.victronenergy.tank.mopeka': {'/Level': 50},
     }
@@ -558,6 +559,32 @@ class NotificationTests(AppTestCase):
         self.assertEqual(snap['alarms'], [{'device': 'JK BMS', 'path': '/Alarms/LowSoc', 'value': 1}])   # zero is not an alarm
         self.assertEqual(snap['gps'], {'lat': 52.1, 'lon': 5.2})
         self.assertEqual(snap['dcdc'][0]['state'], 3)
+
+    FORECAST = ('{"current":{"time":"2026-10-30T22:00","temperature_2m":1.5},"hourly":{"time":["2026-10-30T22:00","2026-10-31T04:00"],'
+                '"temperature_2m":[1.5,-3.2]}}')
+
+    def test_outdoor_sensor_and_forecast_reach_the_notifier(self):
+        self.assertEqual(self.app.notify_snapshot()['outdoor'], -2.5)
+        asked = []
+
+        def fake_run(argv, callback, input_bytes=None, timeout=10):
+            asked.append(argv[-1])
+            callback(0, self.FORECAST.encode())
+        old = web_ui.starlink_hub.run_async
+        web_ui.starlink_hub.run_async = fake_run
+        self.addCleanup(lambda: setattr(web_ui.starlink_hub, 'run_async', old))
+        self.app.notifier.last['gps'] = None
+        self.app.poll_weather()
+        self.assertEqual(asked, [])                                          # no position, no forecast
+        self.app.notifier.last['gps'] = {'lat': 52.1, 'lon': 5.2}
+        self.app.poll_weather()
+        self.app.poll_weather()                                              # not asked again within half an hour
+        self.assertEqual(len(asked), 1)
+        self.assertIn('latitude=52.100&longitude=5.200', asked[0])
+        self.assertEqual(self.app.notify_snapshot()['forecast'], {'now': 1.5, 'min': -3.2, 'at': '2026-10-31T04:00'})
+        self.app.notifier.last['gps'] = {'lat': 48.0, 'lon': 2.0}            # after a drive it is asked again
+        self.app.poll_weather()
+        self.assertEqual(len(asked), 2)
 
     def test_check_sends_through_the_hub_queue(self):
         hub = self.app.starlink

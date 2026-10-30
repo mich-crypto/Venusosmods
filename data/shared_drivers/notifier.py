@@ -10,6 +10,8 @@ snapshot = {
     'alarms':    [{'device': 'JK BMS', 'path': '/Alarms/LowVoltage', 'value': 1}],
     'gps':       {'lat': 52.1, 'lon': 5.2} or None,
     'dcdc':      [{'name': 'Orion XS', 'state': 3, 'mode': 1, 'volts': 13.8, 'amps': 20.0}],
+    'outdoor':   12.5 or None,                       # a temperature sensor set to "outdoor"
+    'forecast':  {'now': 1.0, 'min': -3.0, 'at': '2026-10-31T04:00'} or None,   # at the camper's position
 }
 """
 
@@ -17,9 +19,16 @@ import math
 import re
 import time
 
+try:
+    import json
+except ImportError:         # not verified on every Venus OS image: then there is no forecast
+    json = None
+
 REPEAT_ALARM_S = 3 * 3600           # a battery that stays at "alarm" is repeated this often
 REPEAT_WARN_S = 12 * 3600
 MOVED_UPDATE_S = 600                # while outside the fence: a new position this often
+COLD_HOURS = 2                      # below freezing this long: a warning
+FREEZE_C = 0.0
 CONFIRM = 2                         # a reading must hold for this many looks (a few seconds each)
 
 # what the Orion XS reports in /State (the VE.Direct charger states)
@@ -45,6 +54,23 @@ def _num(v, default, lo=None, hi=None):
     if hi is not None:
         x = min(hi, x)
     return x
+
+
+def parse_forecast(text):
+    """Open-Meteo answer (current + the next 24 hours) -> {'now': C, 'min': C, 'at': local time of the minimum}."""
+    if json is None:
+        return None
+    try:
+        d = json.loads(text)
+        times, temps = d['hourly']['time'], d['hourly']['temperature_2m']
+        rows = [(t, x) for t, x in zip(times, temps) if isinstance(x, (int, float))]
+        now = (d.get('current') or {}).get('temperature_2m')
+        if not rows:
+            return None
+        low = min(rows, key=lambda r: r[1])
+        return {'now': now if isinstance(now, (int, float)) else rows[0][1], 'min': low[1], 'at': low[0]}
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def distance_m(lat1, lon1, lat2, lon2):
@@ -76,12 +102,15 @@ class Notifier(object):
         self.alarms = {}                         # (device, path) -> {'sent': severity, 'seen': n}
         self.fence = {'state': 'unknown', 'out_seen': 0, 'in_seen': 0, 'last': 0}
         self.orion = {}                          # name -> (state, mode)
-        self.last = {'battery': None, 'gps': None, 'distance': None, 'orion': None}
+        self.cold = {'since': None, 'sent': False}
+        self.freeze_sent = False
+        self.last = {'battery': None, 'gps': None, 'distance': None, 'orion': None, 'temp': None, 'temp_from': None, 'forecast': None}
 
     def configure(self, cfg):
         cfg = dict(cfg or {})
         self.on = {'battery': _bool(cfg.get('alert_battery'), True), 'alarms': _bool(cfg.get('alert_alarms'), True),
-                   'geofence': _bool(cfg.get('alert_geofence'), False), 'orion': _bool(cfg.get('alert_orion'), True)}
+                   'geofence': _bool(cfg.get('alert_geofence'), False), 'orion': _bool(cfg.get('alert_orion'), True),
+                   'freeze': _bool(cfg.get('alert_freeze'), True), 'cold': _bool(cfg.get('alert_cold'), True)}
         self.warn_pct = _num(cfg.get('battery_warn_pct'), 20, 1, 99)
         self.alarm_pct = min(_num(cfg.get('battery_alarm_pct'), 10, 1, 99), self.warn_pct)
         self.fence_m = _num(cfg.get('fence_m'), 200, 20, 100000)
@@ -113,6 +142,12 @@ class Notifier(object):
             self._orion(snap.get('dcdc') or [])
         else:
             self.orion = {}
+        forecast = snap.get('forecast')
+        self.last['forecast'] = forecast
+        if self.on['freeze']:
+            self._freeze(forecast)
+        if self.on['cold']:
+            self._cold(snap.get('outdoor'), forecast)
 
     def _batteries(self, batteries):
         now = self.clock()
@@ -211,11 +246,41 @@ class Notifier(object):
             if name not in seen:
                 del self.orion[name]
 
+    def _freeze(self, forecast):
+        if not forecast or forecast.get('min') is None:
+            return
+        low = forecast['min']
+        if low <= FREEZE_C and not self.freeze_sent:
+            self.freeze_sent = True
+            when = str(forecast.get('at') or '')
+            when = ' around %s' % when[11:16] if len(when) >= 16 else ''
+            self._say('freeze-forecast', '❄️ Frost is coming: down to %.0f °C%s at the camper within 24 hours. Protect the water.' % (low, when))
+        elif low > FREEZE_C + 1:
+            self.freeze_sent = False                              # it will be announced again next time
+
+    def _cold(self, outdoor, forecast):
+        temp, source = outdoor, 'the outdoor sensor'
+        if temp is None and forecast and forecast.get('now') is not None:
+            temp, source = forecast['now'], 'the forecast service'
+        self.last['temp'], self.last['temp_from'] = temp, (source if temp is not None else None)
+        if temp is None:
+            return
+        c, now = self.cold, self.clock()
+        if temp < FREEZE_C:
+            if c['since'] is None:
+                c['since'] = now
+            elif not c['sent'] and now - c['since'] >= COLD_HOURS * 3600:
+                c['sent'] = True
+                self._say('cold-2h', '🥶 It has been below 0 °C at the camper for %d hours (now %.1f °C, from %s).' % (COLD_HOURS, temp, source))
+        elif temp >= FREEZE_C + 1:
+            c['since'], c['sent'] = None, False
+
     # ------------------------------------------------------------- for the page
     def view(self):
         d = self.last['distance']
         return {'battery_soc': self.last['battery'], 'orion_state': self.last['orion'],
                 'gps': self.last['gps'], 'home': None if not self.home else {'lat': self.home[0], 'lon': self.home[1]},
                 'distance_m': None if d is None else round(d), 'fence_state': self.fence['state'], 'fence_m': self.fence_m,
+                'temp': self.last['temp'], 'temp_from': self.last['temp_from'], 'forecast': self.last['forecast'],
                 'warn_pct': self.warn_pct, 'alarm_pct': self.alarm_pct, 'on': dict(self.on),
                 'active_alarms': sorted('%s: %s' % (k[0], pretty(k[1])) for k, v in self.alarms.items() if v['sent'])}

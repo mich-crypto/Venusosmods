@@ -246,7 +246,7 @@ await shot(page, '07e-raw-fridge');
 // notifications
 await tab(page, 'Notifications');
 await page.getByText('Telegram is not connected yet').waitFor();
-check((await page.getByRole('heading', { name: /Lithium battery|Parking spot|Orion XS|Any alarm/ }).count()) === 4, 'the notifications page lists the rules');
+check((await page.getByRole('heading', { name: /Lithium battery|Parking spot|Orion XS|Any alarm|Frost/ }).count()) === 5, 'the notifications page lists the rules');
 check((await page.locator('.field .switch').count()) >= 8, 'every rule is a simple on/off switch');
 await page.locator('.field', { hasText: 'Bot token' }).locator('input').fill('123456:ABC-def');
 await page.getByRole('link', { name: 'Open the page that shows my chat ID' }).waitFor();

@@ -361,7 +361,11 @@ function batteryCard(d) {
 async function tabOverview(main) {
   const st = S.state;
   if (canEdit()) {
-    const su = await api('/api/setup');
+    if (!S.setupAt || Date.now() - S.setupAt > 30000) {          // not on every refresh: it is only the "add more" card
+      const x = await api('/api/setup');
+      if (x.ok) { S.setup = x; S.setupAt = Date.now(); }
+    }
+    const su = S.setup || { ok: false };
     const missing = su.ok ? ['gas', 'fridge', 'water'].filter(k => !su.data[k].configured) : [];
     if (missing.length) main.append(h('div', { class: 'card', style: 'display:flex;gap:14px;align-items:center;flex-wrap:wrap' }, h('div', { style: 'flex:1;min-width:220px' },
       h('h3', {}, su.data.first_run ? 'Welcome' : 'Add more devices'), h('div', {}, su.data.first_run ? 'Let\'s add your devices. The guide finds them over Bluetooth and puts them in Venus OS.' : 'Not added yet: ' + missing.map(k => ({ gas: 'gas sensor', fridge: 'fridge', water: 'water tank' })[k]).join(', ') + '.')),
@@ -591,6 +595,7 @@ function fridgeControls() {
     const r = await api('/api/fridge');
     busy = false;
     if (S.tab !== 'fridge') return;
+    if (!r.ok && body.firstChild) return;               // a missed answer keeps what is on screen
     clear(body);
     if (!r.ok) { body.append(h('div', { class: 'muted' }, r.data.error || 'Could not read the fridge')); return; }
     const d = r.data;
@@ -842,6 +847,7 @@ async function addDevice(w, kind, fields, after) {
 }
 
 function doneScreen(w, kind, text, next) {
+  S.setupAt = 0;                                       // the Overview's "add more" card is read again
   w.show(h('div', { class: 'okbox' }, h('div', { class: 'big' }, '✓ Added'), h('div', {}, text)),
     h('div', { class: 'card' }, h('h3', {}, 'Where you will see it'), h('div', {}, VENUS_WHERE[kind])),
     nav(next || null, plain('Back to the list', () => w.back()), plain('Close', w.close)));
@@ -2347,6 +2353,11 @@ async function tabNotify(main) {
       const x = await api('/api/fence_here', {}); toast(x.ok ? x.data.message : x.data.error, !x.ok); if (x.ok) renderTab();
     }) }, 'Use the current position'))));
   main.append(rule('Orion XS', ['alert_orion'], note(live.orion_state ? 'The Orion is ' + live.orion_state + ' now.' : 'No Orion XS found.')));
+  const fc = live.forecast;
+  main.append(rule('Frost', ['alert_freeze', 'alert_cold'],
+    note(live.temp == null ? 'No temperature yet. The forecast needs the GPS or a parking spot, and the internet.'
+      : 'It is ' + live.temp.toFixed(1) + ' °C at the camper (from ' + live.temp_from + ').'),
+    fc ? note('Forecast, next 24 hours: lowest ' + fc.min.toFixed(0) + ' °C' + (fc.at ? ' around ' + String(fc.at).slice(11, 16) : '') + '.') : null));
   main.append(h('details', { class: 'group' }, h('summary', {}, 'Starlink messages'), h('div', { class: 'body' },
     ['alert_offline', 'alert_drop', 'alert_hardware', 'alert_wan', 'alert_test'].map(row))));
 

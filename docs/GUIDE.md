@@ -480,7 +480,11 @@ if you forget it. Open the address in Safari and add it to the home screen.
   alarm or warning a Victron device shows (and when it clears), the gas sensor
   battery, the **parking spot** (park, press *Use the current position*, and you
   get a message with a map link when the camper is more than 200 m away, and when
-  it is back), the **Orion XS** being switched on to charge, and the Starlink
+  it is back), the **Orion XS** being switched on to charge, **frost** (a warning
+  when the forecast for the camper's position says it will freeze within 24 hours,
+  and one when it has been below 0 °C for 2 hours; the temperature comes from a
+  sensor set to *outdoor*, the gas sensor by default, else from the forecast
+  service open-meteo.com), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
 * **Debug** – two views for troubleshooting. **Raw data**: what the sensors really send. *Gas* shows

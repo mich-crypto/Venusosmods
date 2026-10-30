@@ -136,3 +136,5 @@ chat_id =
 #alert_geofence = no
 #fence_m = 200
 #alert_orion = yes
+#alert_freeze = yes
+#alert_cold = yes
