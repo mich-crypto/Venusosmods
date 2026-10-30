@@ -566,6 +566,33 @@ class NotificationTests(AppTestCase):
         self.assertEqual(snap['batteries'], [{'name': 'JK BMS', 'soc': 17.0}])   # the others are still read
         self.assertIsNone(snap['outdoor'])
 
+    def test_a_gps_that_only_answers_value_by_value_is_still_read(self):
+        values = {'/Position/Latitude': 52.1, '/Position/Longitude': 5.2, '/Fix': 1}
+
+        class Item(object):
+            def __init__(self, path):
+                self.path = path
+
+            def GetValue(self, dbus_interface=None, timeout=None):
+                if self.path == '/':
+                    return [1, 2]                                              # the whole tree comes back as a list
+                if self.path not in values:
+                    raise web_ui.dbus.exceptions.DBusException('no such path')
+                return web_ui.dbus.Double(values[self.path])
+
+        class Bus(object):
+            def list_names(self):
+                return ['com.victronenergy.gps.ttyUSB1']
+
+            def get_object(self, name, path, introspect=False):
+                return Item(path)
+        app = web_ui.App.__new__(web_ui.App)
+        app._bus, app._dumps, app._pending = Bus(), {}, set()
+        self.assertEqual(app.dbus_dump('com.victronenergy.gps.ttyUSB1')['/Position/Latitude'], 52.1)
+        self.assertEqual(app.dbus_dump('com.victronenergy.gps.ttyUSB1')['/Fix'], 1)
+        app._dumped('com.victronenergy.gps.ttyUSB1', [1, 2])                   # a later poll must not wipe them
+        self.assertEqual(app.dbus_dump('com.victronenergy.gps.ttyUSB1', max_age=100)['/Position/Longitude'], 5.2)
+
     def test_snapshot_reads_the_victron_devices(self):
         snap = self.app.notify_snapshot()
         self.assertEqual(snap['batteries'], [{'name': 'JK BMS', 'soc': 17.0}])

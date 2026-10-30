@@ -240,6 +240,7 @@ class App(object):
                                          netmon.Store(os.path.join(self.state_dir, 'starlink.json')))
         self._dumps = {}                   # service -> (time, values), filled by poll_dumps
         self._pending = set()
+        self.gps_info = None               # the last GPS service seen: for telling "no GPS" from "no fix"
         self._weather = None               # {'time', 'lat', 'lon', 'result'}
         self._weather_busy = False
         self._states = None                # (time, service states): svstat is not run on every request
@@ -430,18 +431,36 @@ class App(object):
         """All values of a service. Served from the background poll when it is fresh, so the page never waits on D-Bus."""
         age = self.DUMP_FRESH_S if max_age is None else max_age
         hit = self._dumps.get(name)
-        if hit and time.time() - hit[0] <= age:
+        if hit and hit[1] and time.time() - hit[0] <= age:
             return dict(hit[1])
         try:
             obj = self.bus.get_object(name, '/', introspect=False)
             raw = obj.GetValue(dbus_interface=BUS_ITEM, timeout=2)
         except dbus.exceptions.DBusException:
-            if hit and time.time() - hit[0] <= self.DUMP_KEEP_S:
+            if hit and hit[1] and time.time() - hit[0] <= self.DUMP_KEEP_S:
                 return dict(hit[1])                # not a card that vanishes for one slow answer
             raise
-        values = self._flatten(raw)
+        values = self._flatten(raw) or self._probe(name)
         self._dumps[name] = (time.time(), values)
         return dict(values)
+
+    # What to ask for, one value at a time, from a service that cannot give its whole tree at once
+    PROBE = {'gps': ('/ProductName', '/Fix', '/Position/Latitude', '/Position/Longitude'),
+             'dcdc': ('/ProductName', '/CustomName', '/State', '/Mode', '/Dc/0/Voltage', '/Dc/0/Current'),
+             'battery': ('/ProductName', '/CustomName', '/Soc', '/Dc/0/Voltage', '/Dc/0/Current', '/Dc/0/Power', '/Connected'),
+             'temperature': ('/ProductName', '/CustomName', '/Temperature', '/TemperatureType', '/Connected'),
+             'tank': ('/ProductName', '/CustomName', '/Level', '/FluidType', '/Connected')}
+
+    def _probe(self, name):
+        kind = name.split('.')[2] if name.count('.') >= 2 else ''
+        values = {}
+        for path in self.PROBE.get(kind, ()):
+            try:
+                v = self.bus.get_object(name, path, introspect=False).GetValue(dbus_interface=BUS_ITEM, timeout=2)
+            except dbus.exceptions.DBusException:
+                continue
+            values[path] = unwrap(v)
+        return values
 
     def poll_dumps(self):
         """Timer: ask every Victron service for its values without blocking, and keep the answers."""
@@ -467,7 +486,13 @@ class App(object):
     def _dumped(self, name, raw):
         self._pending.discard(name)
         try:
-            self._dumps[name] = (time.time(), self._flatten(raw))
+            flat = self._flatten(raw)
+            old = self._dumps.get(name)
+            if not flat and old and old[1]:
+                flat = old[1]                      # a list answer: keep the values read one by one
+                self._dumps[name] = (time.time(), flat)
+            else:
+                self._dumps[name] = (time.time(), flat)
         except Exception:
             log.debug('bad dump from %s', name)
 
@@ -903,6 +928,7 @@ class App(object):
             if kind == 'battery' and isinstance(v.get('/Soc'), (int, float)):
                 snap['batteries'].append({'name': label, 'soc': float(v['/Soc'])})
             elif kind == 'gps' and snap['gps'] is None:
+                self.gps_info = {'service': name, 'fix': v.get('/Fix'), 'lat': v.get('/Position/Latitude')}
                 lat, lon = v.get('/Position/Latitude'), v.get('/Position/Longitude')
                 if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and v.get('/Fix', 1):
                     snap['gps'] = {'lat': float(lat), 'lon': float(lon)}
@@ -968,9 +994,14 @@ class App(object):
                       'live': self.notifier.view(), 'recent': rows[-15:][::-1]})
 
     def api_fence_here(self, req):
+        self.gps_info = None
         gps = self.notifier.last.get('gps') or (self.notify_snapshot().get('gps'))
         if not gps:
-            return jsonr({'ok': False, 'error': 'No GPS position yet. The GPS needs a fix (sky view) and has to show up in Venus OS.'}, 400)
+            info = self.gps_info
+            why = ('No GPS found in Venus OS. Check Settings → GPS on the Venus screen.' if not info else
+                   'The GPS is there but has no position yet (%s). Put it where it sees the sky and wait a minute.' % (
+                       'no fix' if not info.get('fix') else 'position unreadable'))
+            return jsonr({'ok': False, 'error': 'No GPS position: ' + why}, 400)
         text = self.read_text(self.driver_config)
         new = ct.set_values(text, 'telegram', {'fence_lat': '%.6f' % gps['lat'], 'fence_lon': '%.6f' % gps['lon'], 'alert_geofence': 'yes'})
         problem = ct.check_syntax(new)
