@@ -553,6 +553,19 @@ class NotificationTests(AppTestCase):
         self.app._bus = self.Bus(self.SERVICES)
         self.app.dbus_dump = lambda name: dict(self.SERVICES[name])
 
+    def test_a_service_that_answers_with_a_list_is_skipped(self):
+        self.assertEqual(web_ui.App._flatten([1, 2]), {})                      # seen on a real Pi: dbus.Array, not a dict
+        self.assertEqual(web_ui.App._flatten({'/A': 1}), {'/A': 1})
+
+        def odd(name):
+            if name.endswith('sensor'):
+                raise AttributeError("'dbus.Array' object has no attribute 'items'")
+            return dict(self.SERVICES[name])
+        self.app.dbus_dump = odd
+        snap = self.app.notify_snapshot()
+        self.assertEqual(snap['batteries'], [{'name': 'JK BMS', 'soc': 17.0}])   # the others are still read
+        self.assertIsNone(snap['outdoor'])
+
     def test_snapshot_reads_the_victron_devices(self):
         snap = self.app.notify_snapshot()
         self.assertEqual(snap['batteries'], [{'name': 'JK BMS', 'soc': 17.0}])

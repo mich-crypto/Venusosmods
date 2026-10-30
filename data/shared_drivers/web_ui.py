@@ -419,6 +419,13 @@ class App(object):
     DUMP_FRESH_S = 8            # a dump this young is used as it is
     DUMP_KEEP_S = 90            # a busy service that does not answer keeps its last values this long
 
+    @staticmethod
+    def _flatten(raw):
+        """GetValue on '/' -> {path: value}. A service with no tree of values answers with a plain list: no values."""
+        if not hasattr(raw, 'items'):
+            return {}
+        return dict(('/' + str(k).lstrip('/'), unwrap(v)) for k, v in raw.items())
+
     def dbus_dump(self, name, max_age=None):
         """All values of a service. Served from the background poll when it is fresh, so the page never waits on D-Bus."""
         age = self.DUMP_FRESH_S if max_age is None else max_age
@@ -432,7 +439,7 @@ class App(object):
             if hit and time.time() - hit[0] <= self.DUMP_KEEP_S:
                 return dict(hit[1])                # not a card that vanishes for one slow answer
             raise
-        values = dict(('/' + str(k).lstrip('/'), unwrap(v)) for k, v in raw.items())
+        values = self._flatten(raw)
         self._dumps[name] = (time.time(), values)
         return dict(values)
 
@@ -460,7 +467,7 @@ class App(object):
     def _dumped(self, name, raw):
         self._pending.discard(name)
         try:
-            self._dumps[name] = (time.time(), dict(('/' + str(k).lstrip('/'), unwrap(v)) for k, v in raw.items()))
+            self._dumps[name] = (time.time(), self._flatten(raw))
         except Exception:
             log.debug('bad dump from %s', name)
 
@@ -888,7 +895,8 @@ class App(object):
                 continue
             try:
                 v = self.dbus_dump(name)
-            except dbus.exceptions.DBusException:
+            except Exception as e:                              # one odd service must not stop the others
+                log.debug('notifications: %s: %s', name, e)
                 continue
             label = v.get('/CustomName') or v.get('/ProductName') or name.split('.')[-1]
             snap['alarms'].extend(self._alarm_rows(label, v))
