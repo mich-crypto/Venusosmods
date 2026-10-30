@@ -194,6 +194,22 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
 .bigval { font-size:2.2rem; font-weight:600; font-variant-numeric:tabular-nums; min-width:5ch; text-align:center; }
 .livebox { text-align:center; border:1px solid var(--line); border-radius:4px; padding:12px; margin:0 0 12px; }
 .okbox { border:1px solid var(--ok); border-radius:4px; padding:14px 16px; margin:0 0 12px; } .okbox .big { color:var(--ok); }
+
+/* geofence map: tiles from OpenStreetMap (dark by filter), circle and markers drawn on top */
+.fmap { position:relative; height:min(62vh,380px); min-height:260px; overflow:hidden; background:#0b0b0b; border:1px solid var(--line); border-radius:4px; touch-action:none; cursor:grab; user-select:none; }
+.fmap.picking { cursor:crosshair; outline:2px solid var(--ink); }
+.fmap .tiles { position:absolute; inset:0; filter:invert(1) hue-rotate(180deg) brightness(.82) contrast(.92) saturate(.5); }
+.fmap .tiles img { position:absolute; width:256px; height:256px; max-width:none; }
+.fmap svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.fmap .fc { fill:rgba(255,255,255,.09); stroke:#fff; stroke-width:2; stroke-dasharray:7 5; } .fmap .fc.out { stroke:var(--bad); fill:rgba(255,59,48,.10); }
+.fmap .trail { fill:none; stroke:#8fb8ff; stroke-width:2; opacity:.8; }
+.fmap .home { fill:#000; stroke:#fff; stroke-width:2.5; } .fmap .van { fill:var(--ok); stroke:#000; stroke-width:2.5; } .fmap .van.out { fill:var(--bad); }
+.fmap .pend { fill:var(--warn); stroke:#000; stroke-width:2.5; }
+.fmap .tag { fill:#fff; font-size:12px; font-weight:600; paint-order:stroke; stroke:#000; stroke-width:3px; }
+.fmap .zoom { position:absolute; right:8px; top:8px; display:flex; flex-direction:column; gap:6px; }
+.fmap .zoom button { width:38px; height:38px; background:rgba(0,0,0,.75); border:1px solid #555; border-radius:3px; color:#fff; font-size:1.2rem; cursor:pointer; }
+.fmap .note { position:absolute; left:6px; bottom:4px; font-size:.7rem; color:#ccc; background:rgba(0,0,0,.6); padding:1px 5px; border-radius:2px; max-width:80%; }
+.fenceline { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-bottom:12px; }
 @media (max-width:700px) {
   .hero { grid-template-columns:1fr !important; } .hero .metric { padding:14px 16px; border-right:0; border-bottom:1px solid var(--line); } .hero .metric:last-child { border-bottom:0; }
   .ctl .sp { grid-template-columns:42px minmax(80px,1fr) 42px 4.6ch; gap:8px; } .ctl .sp .val { font-size:1.5rem; }
@@ -222,7 +238,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
 // ---------------------------------------------------------------- helpers
 const S = { tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
 const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
-              ['battery', 'Battery'], ['starlink', 'Starlink'], ['notify', 'Notifications'], ['debug', 'Debug']];
+              ['battery', 'Battery'], ['starlink', 'Starlink'], ['geofence', 'Geofence'], ['notify', 'Notifications'], ['debug', 'Debug']];
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -318,7 +334,7 @@ async function renderTab() {
   hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
   const main = clear($('#main'));
   const f = { overview: tabOverview, fridge: () => tabDevice('fridge'), gas: () => tabDevice('mopeka'),
-              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, notify: tabNotify, debug: tabDebug }[S.tab];
+              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, geofence: tabGeofence, notify: tabNotify, debug: tabDebug }[S.tab];
   await f(main);
 }
 
@@ -2301,6 +2317,165 @@ async function firstRunGuide() {
   if (r.ok && r.data.first_run) { try { localStorage.setItem('wizSeen', '1'); } catch (e) { /* ignore */ } openSetup(); }
 }
 
+// ------------------------------------------------------------------- geofence
+const fenceMerc = (lat, lon, z) => {
+  const n = 256 * Math.pow(2, z), sn = Math.sin(lat * Math.PI / 180);
+  return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + sn) / (1 - sn)) / (4 * Math.PI)) * n];
+};
+const fenceUnmerc = (x, y, z) => {
+  const n = 256 * Math.pow(2, z);
+  return [Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI, x / n * 360 - 180];
+};
+const fenceMetersPerPx = (lat, z) => 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+
+// A small slippy map without a library: OpenStreetMap tiles, drag to move, +/- to zoom.
+function fenceMap(onPick) {
+  const tiles = h('div', { class: 'tiles' }), svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const note = h('div', { class: 'note' }, '© OpenStreetMap contributors');
+  const node = h('div', { class: 'fmap', role: 'img', 'aria-label': 'Map with the parking spot, its area and the camper' });
+  const view = { lat: 52, lon: 5, z: 4 }, st = { data: null, picking: false, pending: null, failed: 0, fitted: false };
+  const have = {};
+  const size = () => [node.clientWidth || 640, node.clientHeight || 340];
+  const ns = (tag, attrs) => { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); return e; };
+
+  function draw() {
+    const [W, H] = size(), z = view.z, [cx, cy] = fenceMerc(view.lat, view.lon, z), x0 = cx - W / 2, y0 = cy - H / 2, n = Math.pow(2, z);
+    const want = {};
+    for (let ty = Math.floor(y0 / 256); ty <= Math.floor((y0 + H) / 256); ty++) {
+      if (ty < 0 || ty >= n) continue;
+      for (let tx = Math.floor(x0 / 256); tx <= Math.floor((x0 + W) / 256); tx++) {
+        const key = z + '/' + (((tx % n) + n) % n) + '/' + ty + '/' + tx;
+        want[key] = true;
+        let img = have[key];
+        if (!img) {
+          img = have[key] = h('img', { alt: '', draggable: false });
+          img.onerror = () => { st.failed++; note.textContent = 'No map pictures (this device has no internet). The area and the camper are still drawn.'; img.remove(); };
+          img.onload = () => { if (st.failed === 0) note.textContent = '© OpenStreetMap contributors'; };
+          img.src = 'https://tile.openstreetmap.org/' + z + '/' + (((tx % n) + n) % n) + '/' + ty + '.png';
+          tiles.append(img);
+        }
+        img.style.left = Math.round(tx * 256 - x0) + 'px'; img.style.top = Math.round(ty * 256 - y0) + 'px';
+      }
+    }
+    for (const key of Object.keys(have)) if (!want[key]) { have[key].remove(); delete have[key]; }
+    // the overlay
+    clear(svg);
+    const at = (lat, lon) => { const [x, y] = fenceMerc(lat, lon, z); return [x - x0, y - y0]; };
+    const d = st.data || {};
+    const out = d.state === 'out';
+    if (d.track && d.track.length > 1) svg.append(ns('polyline', { class: 'trail', points: d.track.map(r => at(r[1], r[2]).map(v => v.toFixed(1)).join(',')).join(' ') }));
+    if (d.home) {
+      const [hx, hy] = at(d.home.lat, d.home.lon);
+      svg.append(ns('circle', { class: 'fc' + (out ? ' out' : ''), cx: hx, cy: hy, r: Math.max(2, d.radius / fenceMetersPerPx(d.home.lat, z)) }));
+      svg.append(ns('circle', { class: 'home', cx: hx, cy: hy, r: 7 }));
+      const t = ns('text', { class: 'tag', x: hx + 11, y: hy - 9 }); t.textContent = 'Parking spot'; svg.append(t);
+    }
+    if (d.gps) {
+      const [vx, vy] = at(d.gps.lat, d.gps.lon);
+      svg.append(ns('circle', { class: 'van' + (out ? ' out' : ''), cx: vx, cy: vy, r: 8 }));
+      const t = ns('text', { class: 'tag', x: vx + 12, y: vy + 4 }); t.textContent = 'Camper'; svg.append(t);
+    }
+    if (st.pending) { const [px, py] = at(st.pending[0], st.pending[1]); svg.append(ns('circle', { class: 'pend', cx: px, cy: py, r: 8 })); }
+  }
+
+  function fit() {
+    const d = st.data || {}, [W, H] = size();
+    const pts = [];
+    if (d.home) {
+      const dLat = d.radius / 111320, dLon = d.radius / (111320 * Math.cos(d.home.lat * Math.PI / 180));
+      pts.push([d.home.lat + dLat, d.home.lon - dLon], [d.home.lat - dLat, d.home.lon + dLon]);
+    }
+    if (d.gps) pts.push([d.gps.lat, d.gps.lon]);
+    if (!pts.length) { view.lat = 52; view.lon = 5; view.z = 4; return; }
+    const lats = pts.map(p => p[0]), lons = pts.map(p => p[1]);
+    view.lat = (Math.max(...lats) + Math.min(...lats)) / 2; view.lon = (Math.max(...lons) + Math.min(...lons)) / 2;
+    view.z = 3;
+    for (let z = 18; z >= 3; z--) {
+      const a = fenceMerc(Math.max(...lats), Math.min(...lons), z), b = fenceMerc(Math.min(...lats), Math.max(...lons), z);
+      if (Math.abs(b[0] - a[0]) <= W * 0.8 && Math.abs(b[1] - a[1]) <= H * 0.8) { view.z = Math.min(z, 17); break; }
+    }
+  }
+
+  const zoom = delta => { view.z = Math.max(3, Math.min(18, view.z + delta)); draw(); };
+  node.append(tiles, svg, note, h('div', { class: 'zoom' },
+    h('button', { type: 'button', 'aria-label': 'Zoom in', onclick: () => zoom(1) }, '+'), h('button', { type: 'button', 'aria-label': 'Zoom out', onclick: () => zoom(-1) }, '−'),
+    h('button', { type: 'button', 'aria-label': 'Show everything', style: 'font-size:.7rem', onclick: () => { fit(); draw(); } }, 'Fit')));
+  let drag = null;
+  node.addEventListener('pointerdown', e => { if (e.target.closest('.zoom')) return; node.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, moved: 0, lat: view.lat, lon: view.lon }; });
+  node.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+    if (drag.moved < 5) return;
+    const [cx, cy] = fenceMerc(drag.lat, drag.lon, view.z);
+    [view.lat, view.lon] = fenceUnmerc(cx - dx, cy - dy, view.z); draw();
+  });
+  node.addEventListener('pointerup', e => {
+    const d = drag; drag = null;
+    if (!d || d.moved >= 5 || !st.picking) return;
+    const [W, H] = size(), r = node.getBoundingClientRect(), [cx, cy] = fenceMerc(view.lat, view.lon, view.z);
+    st.pending = fenceUnmerc(cx - W / 2 + (e.clientX - r.left), cy - H / 2 + (e.clientY - r.top), view.z); draw();
+    if (onPick) onPick(st.pending[0], st.pending[1]);
+  });
+  node.addEventListener('wheel', e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1 : -1); }, { passive: false });
+  if (window.ResizeObserver) new ResizeObserver(() => draw()).observe(node);
+  return {
+    node,
+    update(data) { st.data = data; if (!st.fitted && node.clientWidth) { fit(); st.fitted = true; } draw(); },
+    refit() { fit(); draw(); },
+    picking(on) { st.picking = on; if (!on) st.pending = null; node.classList.toggle('picking', on); draw(); },
+  };
+}
+
+async function tabGeofence(main) {
+  clearInterval(S.fenceTimer);
+  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  let data = null, ready = false;
+  const statusBox = h('div', { class: 'fenceline' });
+  let picking = false;
+  const map = fenceMap(async (lat, lon) => {
+    confirmThen('Use this point as the parking spot?', async () => {
+      const x = await api('/api/fence_here', { lat: lat.toFixed(6), lon: lon.toFixed(6) });
+      toast(x.ok ? x.data.message : x.data.error, !x.ok); picking = false; pickBtn.textContent = 'Pick the spot on the map'; map.picking(false); await load(); if (x.ok) map.refit();
+    });
+  });
+  const pickBtn = h('button', { type: 'button', class: 'btn', disabled: !canEdit(), onclick: () => {
+    picking = !picking; pickBtn.textContent = picking ? 'Tap the map… (cancel)' : 'Pick the spot on the map'; map.picking(picking);
+  } }, 'Pick the spot on the map');
+  const sw = h('input', { type: 'checkbox', disabled: !canEdit() });
+  sw.addEventListener('change', async () => { const x = await api('/api/fence_set', { enabled: sw.checked ? 'yes' : 'no' }); toast(x.ok ? (sw.checked ? 'Geofence is on' : 'Geofence is off') : x.data.error, !x.ok); await load(); });
+  let saveTimer = null;
+  const radius = stepper({ value: 200, min: 20, max: 2000, step: 10, unit: 'm', onchange: v => {
+    if (!ready) return;
+    if (data) { data.radius = v; map.update(data); }
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => { const x = await api('/api/fence_set', { radius: String(v) }); if (!x.ok) toast(x.data.error, true); }, 600);
+  } });
+  const paint = () => {
+    const d = data, out = d.state === 'out';
+    clear(statusBox);
+    if (!d.gps_found) statusBox.append(h('span', { class: 'chip bad' }, 'No GPS found'), h('span', { class: 'muted' }, 'Check Settings → GPS on the Venus screen.'));
+    else if (!d.gps) statusBox.append(h('span', { class: 'chip warn' }, 'GPS has no fix yet'), h('span', { class: 'muted' }, 'Put it where it sees the sky.'));
+    else if (!d.home) statusBox.append(h('span', { class: 'chip warn' }, 'No parking spot yet'), h('span', { class: 'muted' }, 'Park, then press "Use the current position".'));
+    else statusBox.append(h('span', { class: 'chip ' + (out ? 'bad' : 'ok') }, out ? 'Outside the area' : 'Inside the area'),
+      h('b', {}, d.distance_m == null ? '' : metersText(d.distance_m) + ' from the spot'), h('span', { class: 'muted' }, 'Area: ' + metersText(d.radius) + ' around the spot'),
+      ...(d.on ? [] : [h('span', { class: 'chip' }, 'messages are off')]));
+    sw.checked = d.on; ready = false; radius.set(d.radius); ready = true;
+    map.update(d);
+  };
+  const load = async () => { const r = await api('/api/geofence'); if (r.ok) { data = r.data; paint(); } };
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'Where is the camper?'), statusBox, map.node,
+    h('div', { class: 'muted', style: 'margin-top:6px' }, 'Drag to move the map, + and − to zoom. The blue line is where the camper has been.')));
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'The area'),
+    h('div', { class: 'field' }, h('label', { class: 'switch' }, sw, h('span', {}, 'Send a message when the camper leaves the area')),
+      h('div', { class: 'help' }, 'Telegram has to be set up on the Notifications tab.')),
+    h('div', { class: 'field' }, h('div', { class: 'lbl' }, 'How far from the spot'), radius.node),
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn primary', disabled: !canEdit(), onclick: () => confirmThen('Use where the camper is right now as the parking spot?', async () => {
+      const x = await api('/api/fence_here', {}); toast(x.ok ? x.data.message : x.data.error, !x.ok); await load(); if (x.ok) map.refit();
+    }) }, 'Use the current position'), pickBtn)));
+  await load();
+  S.fenceTimer = setInterval(() => { if (!document.hidden && S.tab === 'geofence' && !$('#dlg').open) load(); }, 10000);
+}
+
 // -------------------------------------------------------------- debug: raw data, files and logs
 async function tabDebug(main) {
   S.dbgView = S.dbgView || 'raw';
@@ -2353,12 +2528,8 @@ async function tabNotify(main) {
   main.append(rule('Any alarm', ['alert_alarms'],
     note((live.active_alarms || []).length ? 'Active now: ' + live.active_alarms.join(', ') : 'No alarm is active now. Every Victron device is watched.')));
   main.append(rule('Gas sensor battery', ['alert_sensor', 'sensor_pct']));
-  const home = live.home;
-  main.append(rule('Parking spot (geofence)', ['alert_geofence', 'fence_m'],
-    note(!home ? 'No spot set yet. Park, then press the button.' : 'Spot set. ' + (live.distance_m == null ? 'No GPS position now.' : 'The camper is ' + metersText(live.distance_m) + ' away.')),
-    h('div', { class: 'row' }, h('button', { class: 'btn small primary', disabled: !canEdit(), onclick: () => confirmThen('Use where the camper is right now as the parking spot?', async () => {
-      const x = await api('/api/fence_here', {}); toast(x.ok ? x.data.message : x.data.error, !x.ok); if (x.ok) renderTab();
-    }) }, 'Use the current position'))));
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'Parking spot (geofence)'),
+    note('The map, the area and the switch are on the Geofence tab. ' + (live.home ? 'The spot is set' + (live.on && live.on.geofence ? ' and the message is on.' : ', the message is off.') : 'No spot is set yet.'))));
   main.append(rule('Orion XS', ['alert_orion'], note(live.orion_state ? 'The Orion is ' + live.orion_state + ' now.' : 'No Orion XS found.')));
   const fc = live.forecast;
   main.append(rule('Frost', ['alert_freeze', 'alert_cold'],

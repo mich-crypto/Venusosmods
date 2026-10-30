@@ -253,9 +253,24 @@ await page.getByRole('link', { name: 'Open the page that shows my chat ID' }).wa
 check((await page.getByRole('link', { name: 'Open the page that shows my chat ID' }).getAttribute('href')) === 'https://api.telegram.org/bot123456:ABC-def/getUpdates', 'the chat ID link is built from the token');
 await shot(page, '07f-notifications');
 await page.getByRole('button', { name: 'Discard' }).click();
+// geofence: the map, the area and the camper
+await tab(page, 'Geofence');
+await page.getByText('No parking spot yet').waitFor();
+check((await page.locator('.fmap svg circle.van').count()) === 1, 'the map shows the camper');
 await page.getByRole('button', { name: 'Use the current position' }).click();
-await page.locator('#toast', { hasText: 'No GPS' }).waitFor();
-check(true, 'without a GPS the parking spot says so');
+await page.getByText('Inside the area').waitFor();
+check((await page.locator('.fmap svg circle.fc').count()) === 1, 'the map draws the area around the spot');
+await shot(page, '07g-geofence');
+await page.getByRole('button', { name: 'Pick the spot on the map' }).click();
+await page.waitForTimeout(800);                                    // the map is redrawn after the spot is saved
+await page.locator('.fmap').scrollIntoViewIfNeeded();
+const box = await page.locator('.fmap').boundingBox();
+await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.3);
+await page.getByText(/^[1-9][0-9]* m from the spot/).waitFor();
+check(true, 'a spot picked on the map shows its distance from the camper');
+await page.getByRole('button', { name: 'Zoom in' }).click();
+await shot(page, '07h-geofence-picked');
+await page.getByRole('button', { name: 'Show everything' }).click();
 
 // files & logs
 await tab(page, 'Debug');

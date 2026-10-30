@@ -473,12 +473,20 @@ if you forget it. Open the address in Safari and add it to the home screen.
   view shows an error run
   `python3 /data/shared_drivers/diagnostics/starlink_probe.py` and send the
   output.
+* **Geofence** – a map with the camper, the parking spot and the area around it
+  (a dashed circle, red when the camper is outside). The blue line is where the
+  camper has been. Press *Use the current position* when you park, or *Pick the spot
+  on the map* and tap a point. The switch turns the Telegram message on or off and
+  the slider sets the distance (200 m by default); both apply at once. The map
+  pictures come from OpenStreetMap through the browser of the device you look at
+  the page with, so that device needs internet; without it the circle and the
+  camper are still drawn on a plain background.
 * **Notifications** – Telegram messages for the camper. Make a bot with
   @BotFather, paste its token, open the link the page shows to read your chat
   ID, save, and press *Send a test message*. You can switch each one on or off:
   lithium battery low (a warning and an alarm, 20 % and 10 % by default), any
   alarm or warning a Victron device shows (and when it clears), the gas sensor
-  battery, the **parking spot** (park, press *Use the current position*, and you
+  battery, the **parking spot** (set on the Geofence tab: you
   get a message with a map link when the camper is more than 200 m away, and when
   it is back), the **Orion XS** being switched on to charge, **frost** (a warning
   when the forecast for the camper's position says it will freeze within 24 hours,

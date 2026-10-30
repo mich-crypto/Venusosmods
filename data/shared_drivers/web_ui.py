@@ -349,6 +349,8 @@ class App(object):
             'POST /api/telegram_test': self.api_telegram_test,
             'GET /api/notifications': self.api_notifications,
             'POST /api/fence_here': self.api_fence_here,
+            'POST /api/fence_set': self.api_fence_set,
+            'GET /api/geofence': self.api_geofence,
             'POST /api/debug_start': self.api_debug_start,
             'GET /api/debug_result': self.api_debug_result,
             'GET /api/update_check': self.api_update_check,
@@ -910,6 +912,7 @@ class App(object):
     def notify_snapshot(self):
         """What the notifier needs, read from the Victron devices on D-Bus."""
         snap = {'batteries': [], 'alarms': [], 'gps': None, 'dcdc': [], 'outdoor': None, 'forecast': self.forecast()}
+        self.gps_info = None
         try:
             names = sorted(str(n) for n in self.bus.list_names() if str(n).startswith('com.victronenergy.'))
         except dbus.exceptions.DBusException:
@@ -943,10 +946,26 @@ class App(object):
     def notify_check(self):
         """Timer: look at the camper and send what changed."""
         try:
-            self.notifier.check(self.notify_snapshot())
+            snap = self.notify_snapshot()
+            self.notifier.check(snap)
+            self.record_track(snap.get('gps'))
         except Exception:                                      # a bad reading must never stop the timer
             log.exception('notification check failed')
         return True
+
+    TRACK_STEP_M, TRACK_EVERY_S = 25, 900
+
+    def record_track(self, gps):
+        """Remember where the camper has been (a point after every 25 m, or every 15 minutes), for the map."""
+        if not gps:
+            return
+        rows = self.starlink.store.data.setdefault('series', {}).setdefault('track', [])
+        now = time.time()
+        if rows and now - rows[-1][0] < self.TRACK_EVERY_S and \
+                notifier.distance_m(rows[-1][1], rows[-1][2], gps['lat'], gps['lon']) < self.TRACK_STEP_M:
+            return
+        self.starlink.store.add_series('track', [int(now), round(gps['lat'], 6), round(gps['lon'], 6)], keep=400)
+        self.starlink.store.save()
 
     # ------------------------------------------------------------- weather
     WEATHER_EVERY_S = 1800
@@ -993,21 +1012,73 @@ class App(object):
         return jsonr({'ok': True, 'ready': bool(tg['enabled'] and tg['token'] and tg['chat_id']),
                       'live': self.notifier.view(), 'recent': rows[-15:][::-1]})
 
-    def api_fence_here(self, req):
-        self.gps_info = None
-        gps = self.notifier.last.get('gps') or (self.notify_snapshot().get('gps'))
-        if not gps:
-            info = self.gps_info
-            why = ('No GPS found in Venus OS. Check Settings → GPS on the Venus screen.' if not info else
-                   'The GPS is there but has no position yet (%s). Put it where it sees the sky and wait a minute.' % (
-                       'no fix' if not info.get('fix') else 'position unreadable'))
-            return jsonr({'ok': False, 'error': 'No GPS position: ' + why}, 400)
+    def api_geofence(self, req):
+        n = self.notifier
+        v = n.view()
+        rows = self.starlink.store.data.get('series', {}).get('track', [])
+        distance, state = v['distance_m'], v['fence_state']
+        if v['home'] and v['gps']:                       # worked out now: the notifier only looks every few seconds
+            distance = round(notifier.distance_m(v['home']['lat'], v['home']['lon'], v['gps']['lat'], v['gps']['lon']))
+            state = 'out' if distance > n.fence_m else 'in'
+        return jsonr({'ok': True, 'gps': v['gps'], 'home': v['home'], 'radius': n.fence_m, 'distance_m': distance,
+                      'state': state, 'on': n.on['geofence'], 'track': rows[-200:],
+                      'gps_found': bool(self.gps_info), 'gps_fix': bool(self.gps_info and self.gps_info.get('fix'))})
+
+    def _save_fence(self, values):
         text = self.read_text(self.driver_config)
-        new = ct.set_values(text, 'telegram', {'fence_lat': '%.6f' % gps['lat'], 'fence_lon': '%.6f' % gps['lon'], 'alert_geofence': 'yes'})
+        new = ct.set_values(text, 'telegram', values)
         problem = ct.check_syntax(new)
         if problem:
-            return jsonr({'ok': False, 'error': 'file would be invalid: ' + problem}, 500)
+            return 'file would be invalid: ' + problem
         ct.write_file(self.driver_config, new)
+        return None
+
+    def api_fence_set(self, req):
+        """The switch and the distance of the geofence: applied at once, without restarting the page."""
+        f = req.form
+        values = {}
+        if f.get('radius', '') != '':
+            try:
+                radius = int(float(f['radius']))
+            except ValueError:
+                return jsonr({'ok': False, 'error': 'the distance has to be a number of metres'}, 400)
+            if not 20 <= radius <= 100000:
+                return jsonr({'ok': False, 'error': 'the distance has to be between 20 m and 100 km'}, 400)
+            values['fence_m'] = str(radius)
+        if f.get('enabled', '') in ('yes', 'no'):
+            values['alert_geofence'] = f['enabled']
+        if not values:
+            return jsonr({'ok': False, 'error': 'nothing to change'}, 400)
+        error = self._save_fence(values)
+        if error:
+            return jsonr({'ok': False, 'error': error}, 500)
+        if 'fence_m' in values:
+            self.notifier.fence_m = float(values['fence_m'])
+        if 'alert_geofence' in values:
+            self.notifier.on['geofence'] = values['alert_geofence'] == 'yes'
+        return jsonr({'ok': True, 'message': 'Saved'})
+
+    def api_fence_here(self, req):
+        """The parking spot: the point given (picked on the map), else where the camper is now."""
+        f = req.form
+        if f.get('lat', '') != '' or f.get('lon', '') != '':
+            try:
+                gps = {'lat': float(f.get('lat', '')), 'lon': float(f.get('lon', ''))}
+            except ValueError:
+                return jsonr({'ok': False, 'error': 'that is not a position'}, 400)
+            if not (-90 <= gps['lat'] <= 90 and -180 <= gps['lon'] <= 180):
+                return jsonr({'ok': False, 'error': 'that is not a position on Earth'}, 400)
+        else:
+            gps = self.notifier.last.get('gps') or (self.notify_snapshot().get('gps'))
+            if not gps:
+                info = self.gps_info
+                why = ('No GPS found in Venus OS. Check Settings → GPS on the Venus screen.' if not info else
+                       'The GPS is there but has no position yet (%s). Put it where it sees the sky and wait a minute.' % (
+                           'no fix' if not info.get('fix') else 'position unreadable'))
+                return jsonr({'ok': False, 'error': 'No GPS position: ' + why}, 400)
+        error = self._save_fence({'fence_lat': '%.6f' % gps['lat'], 'fence_lon': '%.6f' % gps['lon'], 'alert_geofence': 'yes'})
+        if error:
+            return jsonr({'ok': False, 'error': error}, 500)
         self.notifier.on['geofence'] = True
         self.notifier.set_home(gps['lat'], gps['lon'])
         return jsonr({'ok': True, 'message': 'This is now the parking spot. You get a message when the camper leaves its %d m area.' % self.notifier.fence_m})
@@ -1450,7 +1521,7 @@ def build_response(resp):
             'Content-Type: ' + resp.ctype, 'Content-Length: %d' % len(resp.body),
             'Cache-Control: no-store', 'X-Content-Type-Options: nosniff',
             'Content-Security-Policy: default-src \'self\'; style-src \'self\' \'unsafe-inline\'; '
-            'script-src \'self\' \'unsafe-inline\'; img-src \'self\' data:; frame-ancestors \'none\'',
+            'script-src \'self\' \'unsafe-inline\'; img-src \'self\' data: https://tile.openstreetmap.org; frame-ancestors \'none\'',
             'Connection: close']
     head += ['%s: %s' % kv for kv in resp.headers.items()]
     return ('\r\n'.join(head) + '\r\n\r\n').encode('latin-1') + resp.body

@@ -553,6 +553,43 @@ class NotificationTests(AppTestCase):
         self.app._bus = self.Bus(self.SERVICES)
         self.app.dbus_dump = lambda name: dict(self.SERVICES[name])
 
+    def test_geofence_page_data_and_settings(self):
+        self.assertEqual(self.post('/api/fence_set', {'radius': '300'}, auth=False).status, 401)
+        self.app.notify_check()
+        d = body_of(self.get('/api/geofence'))
+        self.assertEqual((d['home'], d['radius'], d['on'], d['gps_found'], d['gps_fix']), (None, 200, False, True, True))
+        self.assertEqual(d['gps'], {'lat': 52.1, 'lon': 5.2})
+        self.assertEqual(len(d['track']), 1)                                   # the first position starts the trail
+        self.app.notify_check()
+        self.assertEqual(len(body_of(self.get('/api/geofence'))['track']), 1)  # standing still adds nothing
+        self.assertEqual(self.post('/api/fence_set', {'radius': '10'}).status, 400)
+        self.assertEqual(self.post('/api/fence_set', {'radius': 'far'}).status, 400)
+        self.assertEqual(self.post('/api/fence_set', {}).status, 400)
+        self.assertEqual(self.post('/api/fence_set', {'radius': '350', 'enabled': 'yes'}).status, 200)
+        t = ct.parse_ini(self.config_text())['telegram']
+        self.assertEqual((t['fence_m'], t['alert_geofence']), ('350', 'yes'))
+        d = body_of(self.get('/api/geofence'))
+        self.assertEqual((d['radius'], d['on']), (350, True))                  # applied without a restart
+        self.assertEqual(self.post('/api/fence_here', {'lat': '95', 'lon': '1'}).status, 400)
+        self.assertEqual(self.post('/api/fence_here', {'lat': 'x', 'lon': '1'}).status, 400)
+        self.assertEqual(self.post('/api/fence_here', {'lat': '52.0', 'lon': '5.0'}).status, 200)   # picked on the map
+        d = body_of(self.get('/api/geofence'))
+        self.assertEqual(d['home'], {'lat': 52.0, 'lon': 5.0})
+        self.assertGreater(d['distance_m'], 10000)                              # worked out at once, not at the next look
+        self.assertEqual(d['state'], 'out')
+
+    def test_the_current_position_does_not_make_the_gps_vanish_from_the_page(self):
+        self.assertEqual(self.post('/api/fence_here', {}).status, 200)           # no look at the GPS has happened yet
+        d = body_of(self.get('/api/geofence'))
+        self.assertTrue(d['gps_found'] and d['gps_fix'])
+
+    def test_a_drive_adds_to_the_trail(self):
+        self.app.record_track({'lat': 52.0, 'lon': 5.0})
+        self.app.record_track({'lat': 52.0001, 'lon': 5.0})                    # 11 m: not worth a point
+        self.app.record_track({'lat': 52.001, 'lon': 5.0})
+        rows = self.app.starlink.store.data['series']['track']
+        self.assertEqual([(r[1], r[2]) for r in rows], [(52.0, 5.0), (52.001, 5.0)])
+
     def test_a_service_that_answers_with_a_list_is_skipped(self):
         self.assertEqual(web_ui.App._flatten([1, 2]), {})                      # seen on a real Pi: dbus.Array, not a dict
         self.assertEqual(web_ui.App._flatten({'/A': 1}), {'/A': 1})

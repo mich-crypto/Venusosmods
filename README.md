@@ -44,7 +44,7 @@ data/                              -> copied to /data on the Pi
     devices.py                     recognises Mopeka / fridge / ESP32 water senders in a Bluetooth scan
     rawlog.py                      rolling log of the raw sensor bytes (shown on the Debug tab)
     starlink_hub.py                polls the dish, ping, speed tests, WAN IP, Telegram sending
-    notifier.py                    Telegram notifications: battery, alarms, geofence, Orion XS
+    notifier.py                    Telegram notifications: battery, alarms, geofence, frost, Orion XS
     netmon.py                      energy, data use, outage and test bookkeeping (JSON store)
     starlink.py                    Starlink dish status (gRPC-web, hand-made protobuf reader)
     battery_debug.py               battery history for the graphs (cells, current, temperatures)

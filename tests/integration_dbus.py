@@ -409,6 +409,8 @@ def main():
                                      ('fridge_venus.py', 'fridge'))]
     procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, 'fake_battery.py')],
                                   env=dict(env, VELIB=velib)))
+    procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, 'fake_gps.py')],
+                                  env=dict(env, VELIB=velib)))
     procs.append(subprocess.Popen(
         [sys.executable, os.path.join(DRIVERS, 'web_ui.py'), '--config', cfg, '--port', str(web['port']),
          '--bind', '127.0.0.1', '--no-firewall', '--sample-s', '1', '--state-dir', os.path.join(W, 'state'), '--init-dir', os.path.join(W, 'init.d'),
@@ -620,7 +622,7 @@ def main():
     # Mopeka paired via the sync button and stored the MAC in localsettings
     assert result['paired_mac'] == MOPEKA_MAC, result['paired_mac']
     check_web_results(web, result)
-    assert codes == [0, 0, 0, -15, 0], codes   # the fake battery has no signal handler (SIGTERM = -15)
+    assert codes == [0, 0, 0, -15, -15, 0], codes   # the fake battery and GPS have no signal handler (SIGTERM = -15)
     print('INTEGRATION OK')
 
 
