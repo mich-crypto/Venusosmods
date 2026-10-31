@@ -311,8 +311,8 @@ svc -t /service/mopeka_standard          # then press sync on the new sensor
    voltage, a graph of the voltage (recorded every 10 minutes) and a "low" mark
    when it falls to 20 %. With Telegram alerts switched on you get a message
    once (and again after 12 hours if it stays low). Change the limit with
-   *Gas sensor battery alert at* in the Telegram settings.
-8. The sensor's temperature is also published as its own temperature sensor,
+   *Gas sensor battery alert at* on the Notifications tab.
+9. The sensor's temperature is also published as its own temperature sensor,
    `com.victronenergy.temperature.mopeka_standard_temp` ("Gas bottle
    temperature", type outdoor), so it shows up with the other environment
    sensors in the *Device list* and on VRM. Turn it off with
