@@ -11,6 +11,7 @@ Needs dbus-python + PyGObject, dbus-run-session and a velib_python checkout:
 """
 
 import http.client
+import json
 import os
 import shutil
 import socket
@@ -409,6 +410,16 @@ def main():
                                      ('fridge_venus.py', 'fridge'))]
     procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, 'fake_battery.py')],
                                   env=dict(env, VELIB=velib)))
+    # a week of gas level history for the graph on the Gas tab: a bottle that is used and refilled once
+    os.makedirs(os.path.join(W, 'state'), exist_ok=True)
+    now = int(time.time())
+    gas_rows = []
+    for k in range(0, 7 * 24 * 6):                                    # one point every 10 minutes
+        t = now - (7 * 24 * 6 - k) * 600
+        level = 90 - 0.45 * (k % 400) / 6.0 + (0 if k < 400 else 35)
+        gas_rows.append([t, round(max(5, level), 1), round(max(5, level) * 0.27, 2), 12.0])
+    with open(os.path.join(W, 'state', 'starlink.json'), 'w') as f:
+        json.dump({'version': 1, 'series': {'gas': gas_rows}}, f)
     procs.append(subprocess.Popen([sys.executable, os.path.join(HERE, 'fake_gps.py')],
                                   env=dict(env, VELIB=velib)))
     procs.append(subprocess.Popen(

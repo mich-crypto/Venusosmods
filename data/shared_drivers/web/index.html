@@ -651,6 +651,30 @@ async function mopekaBatteryCard() {
   return card;
 }
 
+// the bottle's level over time, with what it is used per day
+async function gasHistoryCard() {
+  const win = S.gasWin || 7 * 86400;
+  const r = await api('/api/gas_history?window=' + win);
+  if (!r.ok || !r.data.available) return null;
+  const rows = r.data.rows.filter(x => x[1] != null);
+  const card = h('div', { class: 'card' }, h('h3', {}, 'Gas level over time'),
+    h('div', { class: 'pills', role: 'group' }, [[86400, '24 hours'], [7 * 86400, '7 days'], [30 * 86400, '30 days']].map(([sec, label]) =>
+      h('button', { type: 'button', 'aria-pressed': win === sec, onclick: () => { S.gasWin = sec; renderTab(); } }, label))));
+  if (rows.length < 3) { card.append(h('div', { class: 'muted' }, 'The graph fills in as the page records the level every 10 minutes.')); return card; }
+  card.append(timeChart({ title: 'Level', unit: '%', t: rows.map(x => x[0]), dec: 0, min: 0, max: 100, height: 200,
+    series: [{ id: 'level', name: 'Level', color: 'var(--ink)', vals: rows.map(x => x[1]) }] }));
+  // used per day: only the drops count, a refill (a rise) is skipped
+  let used = 0;
+  for (let i = 1; i < rows.length; i++) { const d = rows[i][1] - rows[i - 1][1]; if (d < 0 && d > -15) used -= d; }
+  const days = (rows[rows.length - 1][0] - rows[0][0]) / 86400, perDay = days >= 0.5 ? used / days : null, now = rows[rows.length - 1][1];
+  const litres = rows[rows.length - 1][2];
+  card.append(h('div', { class: 'stats', style: 'margin-top:8px' },
+    stat('Now', Math.round(now) + ' %', litres == null ? '' : litres.toFixed(1) + ' L left', true),
+    stat('Used per day', perDay == null ? '–' : (perDay < 0.1 ? '< 0.1' : perDay.toFixed(1)) + ' %', perDay == null ? 'needs half a day of data' : 'over the last ' + (days < 2 ? Math.round(days * 24) + ' hours' : Math.round(days) + ' days'), true),
+    stat('Lasts about', perDay == null || perDay < 0.1 ? '–' : (now / perDay < 2 ? Math.round(now / perDay * 24) + ' hours' : Math.round(now / perDay) + ' days'), 'at this pace', true)));
+  return card;
+}
+
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
@@ -722,7 +746,7 @@ async function tabDevice(kind) {
   if (!canEdit()) main.append(lockedNotice());
   main.append(deviceHeader(kind, section));
   if (kind === 'fridge') main.append(fridgeControls());
-  if (kind === 'mopeka') { const b = await mopekaBatteryCard(); if (b) main.append(b); }
+  if (kind === 'mopeka') { const g = await gasHistoryCard(); if (g) main.append(g); const b = await mopekaBatteryCard(); if (b) main.append(b); }
 
   const form = { section, fields: {} };
   S.forms[section.section] = form;
@@ -1311,9 +1335,9 @@ function sized(box, draw) {
   return go;
 }
 
-const clock = (t, withSeconds) => {
+const clock = (t, withSeconds, withDate) => {
   const d = new Date(t * 1000), p = n => String(n).padStart(2, '0');
-  return p(d.getHours()) + ':' + p(d.getMinutes()) + (withSeconds ? ':' + p(d.getSeconds()) : '');
+  return (withDate ? p(d.getDate()) + '/' + p(d.getMonth() + 1) + ' ' : '') + p(d.getHours()) + ':' + p(d.getMinutes()) + (withSeconds ? ':' + p(d.getSeconds()) : '');
 };
 
 // A time chart. o = { title, t, series:[{id,name,color,vals,dash}], unit, dec, area, include:[], lines:[{y,label,color}], height }
@@ -1356,7 +1380,7 @@ function timeChart(o) {
     const nx = width < 420 ? 3 : 5;
     for (let k = 0; k <= nx; k++) {
       const tt = t0 + span * k / nx;
-      root.append(svg('text', { x: X(tt), y: H - 6, 'text-anchor': k === 0 ? 'start' : (k === nx ? 'end' : 'middle') }, clock(tt, span < 600)));
+      root.append(svg('text', { x: X(tt), y: H - 6, 'text-anchor': k === 0 ? 'start' : (k === nx ? 'end' : 'middle') }, clock(tt, span < 600, span > 36 * 3600)));
     }
     for (const ln of (o.lines || [])) {
       if (ln.y < lo || ln.y > hi) continue;
@@ -1384,7 +1408,7 @@ function timeChart(o) {
       let best = 0; for (let i = 1; i < t.length; i++) if (Math.abs(t[i] - target) < Math.abs(t[best] - target)) best = i;
       cursor.setAttribute('x1', X(t[best])); cursor.setAttribute('x2', X(t[best])); cursor.setAttribute('visibility', 'visible');
       clear(tip).hidden = false;
-      tip.append(h('b', {}, clock(t[best], true)));
+      tip.append(h('b', {}, clock(t[best], span < 36 * 3600, span >= 36 * 3600)));
       const rows = vis.filter(s => s.vals[best] !== null && s.vals[best] !== undefined);
       (rows.length > 12 ? rows.slice().sort((a, b) => a.vals[best] - b.vals[best]).filter((s, i, arr) => i < 3 || i >= arr.length - 3) : rows).forEach(s =>
         tip.append(h('div', {}, h('i', { style: 'display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' + s.color }), s.name + ': ' + s.vals[best].toFixed(o.dec === undefined ? yt.dec : o.dec) + (o.unit ? ' ' + o.unit : ''))));

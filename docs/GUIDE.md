@@ -303,7 +303,11 @@ svc -t /service/mopeka_standard          # then press sync on the new sensor
    "Reading when full" from the current sensor reading and your bottle curve
    and saves it. Redo it right after a refill for the best accuracy.
    `svc -t /service/mopeka_standard` restarts the driver after changes.
-7. **Sensor battery:** the *Gas* tab shows the sensor's battery charge and
+7. **Gas level over time:** the *Gas* tab draws the bottle's level for the last
+   24 hours, 7 days or 30 days (one point every 10 minutes, kept for about 4 weeks),
+   and works out how many percent are used per day and how long the bottle lasts
+   at that pace (a refill is left out of the count; it needs half a day of data).
+8. **Sensor battery:** the *Gas* tab shows the sensor's battery charge and
    voltage, a graph of the voltage (recorded every 10 minutes) and a "low" mark
    when it falls to 20 %. With Telegram alerts switched on you get a message
    once (and again after 12 hours if it stays low). Change the limit with

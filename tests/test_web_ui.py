@@ -583,6 +583,18 @@ class NotificationTests(AppTestCase):
         d = body_of(self.get('/api/geofence'))
         self.assertTrue(d['gps_found'] and d['gps_fix'])
 
+    def test_the_gas_level_is_recorded_for_the_graph(self):
+        self.app.mopeka_values = lambda: {'/BatteryVoltage': 2.9, '/Mopeka/BatteryPercent': 80, '/Level': 73.04,
+                                          '/Remaining': 0.0198, '/Temperature': 11.0}
+        self.app.record_mopeka()
+        d = body_of(self.get('/api/gas_history', query='window=3600'))
+        self.assertTrue(d['available'])
+        self.assertEqual([r[1:] for r in d['rows']], [[73.0, 19.8, 11.0]])           # percent, litres, temperature
+        self.app.starlink.store.data['series']['gas'].insert(0, [1000, 99.0, 30.0, 10.0])     # long ago: outside the window
+        self.assertEqual(len(body_of(self.get('/api/gas_history', query='window=3600'))['rows']), 1)
+        self.assertEqual(len(body_of(self.get('/api/gas_history', query='window=%d' % (60 * 86400)))['rows']), 1)
+        self.assertEqual(self.get('/api/gas_history', auth=False).status, 401)             # like every other data page
+
     def test_a_drive_adds_to_the_trail(self):
         self.app.record_track({'lat': 52.0, 'lon': 5.0})
         self.app.record_track({'lat': 52.0001, 'lon': 5.0})                    # 11 m: not worth a point

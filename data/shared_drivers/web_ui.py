@@ -342,6 +342,7 @@ class App(object):
             'GET /api/fridge': self.api_fridge,
             'POST /api/fridge_set': self.api_fridge_set,
             'GET /api/mopeka_battery': self.api_mopeka_battery,
+            'GET /api/gas_history': self.api_gas_history,
             'GET /api/starlink_dashboard': self.api_starlink_dashboard,
             'GET /api/starlink_energy': self.api_starlink_energy,
             'GET /api/starlink_log': self.api_starlink_log,
@@ -647,7 +648,12 @@ class App(object):
         if v is None:
             return True
         volts, pct = v.get('/BatteryVoltage'), v.get('/Mopeka/BatteryPercent')
-        self.starlink.store.add_series('mopeka_battery', [int(time.time()), volts, pct])
+        now = int(time.time())
+        self.starlink.store.add_series('mopeka_battery', [now, volts, pct])
+        level, left = v.get('/Level'), v.get('/Remaining')
+        if isinstance(level, (int, float)):                    # the bottle's level, for the graph on the Gas tab
+            self.starlink.store.add_series('gas', [now, round(level, 1), None if left is None else round(left * 1000, 2),
+                                                   v.get('/Temperature')], keep=4000)
         self.starlink.store.save()
         hub = self.starlink
         if hub.tg['kinds']['sensor'] and pct is not None and pct <= hub.tg['sensor_pct']:
@@ -660,6 +666,15 @@ class App(object):
         rows = self.starlink.store.data.get('series', {}).get('mopeka_battery', [])
         return jsonr({'ok': True, 'available': bool(v), 'volts': v.get('/BatteryVoltage'), 'percent': v.get('/Mopeka/BatteryPercent'),
                       'low_at': self.starlink.tg['sensor_pct'], 'series': rows[-1500:]})
+
+    def api_gas_history(self, req):
+        raw = req.query.get('window', '')
+        window = max(3600, min(60 * 86400, int(raw))) if raw.isdigit() else 86400
+        rows = self.starlink.store.data.get('series', {}).get('gas', [])
+        since = time.time() - window
+        v = self.mopeka_values() or {}
+        return jsonr({'ok': True, 'available': bool(v), 'window': window, 'level': v.get('/Level'),
+                      'rows': [r for r in rows if r[0] >= since]})
 
     # ------------------------------------------------------ setup guide
     # kind -> (service folder and config section, config kind, default name)
