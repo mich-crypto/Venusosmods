@@ -1,0 +1,1332 @@
+<title>JK BMS Setup Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sticky bar, step rail on the left (strip on phones), one step at a time in the main column.
+   Dark first, like the Venus OS web page this prototype belongs to. */
+:root {
+  --bg:#0c0e0f; --surface:#14171a; --surface-2:#1b1f23; --ink:#eef1f2; --muted:#9aa3a9; --faint:#6a747b; --line:#272c30;
+  --charge:#5aa9ff; --charge-soft:rgba(90,169,255,.14); --dis:#ff9a3d; --dis-soft:rgba(255,154,61,.14);
+  --ok:#3ccf6e; --ok-soft:rgba(60,207,110,.13); --warn:#ffb020; --warn-soft:rgba(255,176,32,.13); --bad:#ff5a4e; --bad-soft:rgba(255,90,78,.14);
+  --top:#c08cff; --top-soft:rgba(192,140,255,.15);
+  --display:"Barlow Condensed","DIN Alternate","Bahnschrift","Arial Narrow",sans-serif;
+  --body:"Barlow","D-DIN","Helvetica Neue",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg:#f4f5f5; --surface:#ffffff; --surface-2:#eef0f1; --ink:#121517; --muted:#59636a; --faint:#8a939a; --line:#d8dcdf;
+  --charge:#0b6bd3; --charge-soft:rgba(11,107,211,.10); --dis:#cf5f05; --dis-soft:rgba(207,95,5,.10);
+  --ok:#17904a; --ok-soft:rgba(23,144,74,.10); --warn:#a86b00; --warn-soft:rgba(200,130,0,.12); --bad:#cc3127; --bad-soft:rgba(204,49,39,.10);
+  --top:#7a3fd0; --top-soft:rgba(122,63,208,.10); color-scheme: light; } }
+:root[data-theme="light"] {
+  --bg:#f4f5f5; --surface:#ffffff; --surface-2:#eef0f1; --ink:#121517; --muted:#59636a; --faint:#8a939a; --line:#d8dcdf;
+  --charge:#0b6bd3; --charge-soft:rgba(11,107,211,.10); --dis:#cf5f05; --dis-soft:rgba(207,95,5,.10);
+  --ok:#17904a; --ok-soft:rgba(23,144,74,.10); --warn:#a86b00; --warn-soft:rgba(200,130,0,.12); --bad:#cc3127; --bad-soft:rgba(204,49,39,.10);
+  --top:#7a3fd0; --top-soft:rgba(122,63,208,.10); color-scheme: light; }
+
+* { box-sizing:border-box; }
+body { background:var(--bg); color:var(--ink); font-family:var(--body); font-size:15px; line-height:1.5; }
+body::before { content:""; position:fixed; inset:0 0 auto; height:env(safe-area-inset-top,0px); z-index:10; background:var(--bg); }
+code, .mono { font-family:var(--mono); font-size:.78rem; }
+button { font:inherit; color:inherit; }
+:focus-visible { outline:2px solid var(--charge); outline-offset:2px; }
+
+.top { position:sticky; top:env(safe-area-inset-top,0px); z-index:6; background:var(--bg); border-bottom:1px solid var(--line);
+  padding-block:10px; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.brand { display:flex; flex-direction:column; min-width:0; }
+.brand b { font-family:var(--display); font-weight:600; font-size:1.25rem; letter-spacing:.06em; text-transform:uppercase; line-height:1.1; }
+.brand span { color:var(--faint); font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; }
+.top .spacer { flex:1; }
+.chip { display:inline-flex; align-items:center; gap:6px; font-size:.7rem; font-weight:600; padding:3px 10px; border-radius:99px; border:1px solid var(--line);
+  color:var(--muted); letter-spacing:.08em; text-transform:uppercase; white-space:nowrap; background:none; }
+button.chip { cursor:pointer; }
+.chip.ok { color:var(--ok); border-color:var(--ok); } .chip.warn { color:var(--warn); border-color:var(--warn); } .chip.bad { color:var(--bad); border-color:var(--bad); }
+.chip.on { color:var(--charge); border-color:var(--charge); }
+
+.layout { display:grid; grid-template-columns:230px minmax(0,1fr); gap:28px; max-width:1180px; margin:0 auto;
+  padding-block:20px 80px; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px)); }
+#rail { position:sticky; top:calc(env(safe-area-inset-top,0px) + 72px); align-self:start; display:flex; flex-direction:column; gap:2px; }
+.rail-h { font-family:var(--display); font-size:.72rem; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); margin:14px 0 6px 10px; }
+.rail-h:first-child { margin-top:0; }
+.step-btn { display:grid; grid-template-columns:24px 1fr auto; gap:8px; align-items:center; text-align:left; padding:7px 10px; border:0; background:none;
+  border-radius:4px; cursor:pointer; color:var(--muted); }
+.step-btn:hover { background:var(--surface); color:var(--ink); }
+.step-btn[aria-current="page"] { background:var(--surface-2); color:var(--ink); }
+.step-btn .n { font-family:var(--display); font-weight:600; font-size:.85rem; color:var(--faint); text-align:center; }
+.step-btn[aria-current="page"] .n { color:var(--charge); }
+.step-btn .lbl { font-size:.92rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dot { width:8px; height:8px; border-radius:50%; background:transparent; }
+.dot.changed { background:var(--charge); } .dot.warn { background:var(--warn); } .dot.bad { background:var(--bad); }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns:minmax(0,1fr); gap:14px; padding-top:10px; }
+  #rail { position:static; flex-direction:row; overflow-x:auto; gap:4px; padding-bottom:6px; scrollbar-width:thin; }
+  .rail-h { display:none; }
+  .step-btn { grid-template-columns:auto auto auto; flex:0 0 auto; border:1px solid var(--line); }
+}
+
+main { min-width:0; }
+.eyebrow { font-family:var(--display); font-size:.78rem; letter-spacing:.18em; text-transform:uppercase; color:var(--charge); }
+h1 { font-family:var(--display); font-weight:600; font-size:2.1rem; line-height:1.05; margin:4px 0 8px; text-wrap:balance; letter-spacing:.01em; }
+h2 { font-family:var(--display); font-weight:600; font-size:.82rem; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin:30px 0 10px; }
+h3 { font-family:var(--display); font-weight:600; font-size:1.15rem; margin:0 0 4px; letter-spacing:.02em; }
+.lead { color:var(--muted); max-width:66ch; margin:0 0 18px; font-size:1rem; }
+p { max-width:68ch; }
+
+.card { background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:16px 18px; min-width:0; }
+.stack { display:flex; flex-direction:column; gap:12px; }
+.two { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr)); gap:12px; }
+.viz-card { padding:14px 14px 10px; }
+.viz { width:100%; height:auto; display:block; overflow:visible; }
+.viz-cap { color:var(--muted); font-size:.88rem; margin:6px 2px 0; min-height:1.4em; font-variant-numeric:tabular-nums; }
+.viz-cap b { color:var(--ink); font-weight:600; }
+
+/* svg tokens */
+.viz text { font-family:var(--body); font-size:12px; fill:var(--muted); }
+.viz .t-strong { fill:var(--ink); font-weight:600; font-size:13px; }
+.viz .t-small { font-size:10.5px; fill:var(--faint); }
+.viz .t-charge { fill:var(--charge); font-weight:600; } .viz .t-dis { fill:var(--dis); font-weight:600; }
+.viz .t-ok { fill:var(--ok); font-weight:600; } .viz .t-warn { fill:var(--warn); font-weight:600; } .viz .t-bad { fill:var(--bad); font-weight:600; } .viz .t-top { fill:var(--top); font-weight:600; }
+.viz .box { fill:var(--surface-2); stroke:var(--line); stroke-width:1.2; }
+.viz .box.dashed { fill:none; stroke-dasharray:5 4; stroke:var(--faint); }
+.viz .grid { stroke:var(--line); stroke-width:1; fill:none; }
+.viz .axis { stroke:var(--faint); stroke-width:1; fill:none; }
+.viz .link-line { stroke:var(--charge); stroke-width:1.5; stroke-dasharray:3 5; fill:none; opacity:.7; }
+.viz .link-line.off { stroke:var(--faint); }
+.viz .pk-req { fill:var(--charge); } .viz .pk-res { fill:var(--ok); }
+.viz .l-charge { stroke:var(--charge); stroke-width:2.2; fill:none; } .viz .a-charge { fill:var(--charge-soft); stroke:none; }
+.viz .l-dis { stroke:var(--dis); stroke-width:2.2; fill:none; } .viz .a-dis { fill:var(--dis-soft); stroke:none; }
+.viz .l-ink { stroke:var(--ink); stroke-width:1.6; fill:none; } .viz .l-muted { stroke:var(--faint); stroke-width:1.5; fill:none; stroke-dasharray:4 4; }
+.viz .l-ok { stroke:var(--ok); stroke-width:2.2; fill:none; } .viz .l-bad { stroke:var(--bad); stroke-width:2.2; fill:none; } .viz .l-top { stroke:var(--top); stroke-width:1.5; fill:none; stroke-dasharray:4 3; }
+.viz .l-warn { stroke:var(--warn); stroke-width:1.5; fill:none; stroke-dasharray:4 3; }
+.viz .playhead { stroke:var(--ink); stroke-width:1; opacity:.55; }
+.viz .f-ink { fill:var(--ink); } .viz .f-charge { fill:var(--charge); } .viz .f-dis { fill:var(--dis); } .viz .f-surface { fill:var(--surface); stroke:var(--ink); stroke-width:1.5; }
+.viz .z-bad { fill:var(--bad-soft); } .viz .z-warn { fill:var(--warn-soft); } .viz .z-ok { fill:var(--ok-soft); } .viz .z-charge { fill:var(--charge-soft); } .viz .z-top { fill:var(--top-soft); } .viz .z-none { fill:var(--surface-2); }
+.viz .s-ok { fill:var(--ok); } .viz .s-bad { fill:var(--bad); } .viz .s-warn { fill:var(--warn); } .viz .s-muted { fill:var(--line); }
+.viz .cell { fill:var(--surface-2); stroke:var(--faint); stroke-width:1.2; }
+.viz .cell-fill { fill:var(--ok); opacity:.75; }
+.viz .flow-c { stroke:var(--charge); fill:none; stroke-linecap:round; } .viz .flow-d { stroke:var(--dis); fill:none; stroke-linecap:round; }
+
+/* fields */
+.field { padding:14px 0; border-top:1px solid var(--line); display:grid; gap:6px; }
+.field:first-child { border-top:0; padding-top:4px; }
+.f-head { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+.f-label { font-weight:600; font-size:1rem; }
+.f-head code { color:var(--faint); overflow-wrap:anywhere; }
+.field.changed .f-label::after { content:"changed"; margin-left:8px; font-size:.62rem; letter-spacing:.1em; text-transform:uppercase; color:var(--charge);
+  border:1px solid var(--charge); border-radius:99px; padding:1px 7px; vertical-align:2px; font-weight:600; }
+.f-plain { margin:0; color:var(--muted); font-size:.9rem; }
+.f-ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; min-width:0; }
+.f-meta { display:flex; gap:12px; color:var(--faint); font-size:.8rem; flex-wrap:wrap; align-items:center; }
+.f-err { color:var(--bad); font-size:.85rem; }
+.f-err:empty { display:none; }
+.link { background:none; border:0; padding:0; color:var(--charge); cursor:pointer; font-size:.82rem; text-decoration:underline; text-underline-offset:2px; }
+.link[hidden] { display:none; }
+
+input[type=text], input[type=number], input[type=password], input[type=search], select, textarea {
+  background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:8px 10px; font:inherit; font-size:.95rem; min-width:0; }
+input[type=number] { width:110px; font-variant-numeric:tabular-nums; }
+input[type=text].wide, textarea { width:100%; }
+input:focus, select:focus, textarea:focus { border-color:var(--charge); outline:none; }
+input[type=range] { flex:1 1 180px; min-width:120px; max-width:360px; accent-color:var(--charge); }
+.unit { color:var(--muted); font-size:.9rem; }
+.switch { display:inline-flex; align-items:center; gap:10px; cursor:pointer; user-select:none; }
+.switch input { position:absolute; opacity:0; width:1px; height:1px; }
+.switch .track { width:44px; height:24px; border-radius:99px; background:var(--line); position:relative; transition:background .2s; flex:0 0 auto; }
+.switch .track::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:var(--ink); transition:transform .2s; }
+.switch input:checked + .track { background:var(--charge); }
+.switch input:checked + .track::after { transform:translateX(20px); background:#fff; }
+.switch input:focus-visible + .track { outline:2px solid var(--charge); outline-offset:2px; }
+.seg { display:inline-flex; border:1px solid var(--line); border-radius:4px; overflow:hidden; flex-wrap:wrap; }
+.seg button { border:0; background:none; padding:7px 12px; cursor:pointer; color:var(--muted); font-size:.88rem; }
+.seg button + button { border-left:1px solid var(--line); }
+.seg button[aria-pressed="true"] { background:var(--ink); color:var(--bg); font-weight:600; }
+.btn { border:1px solid var(--line); background:var(--surface-2); padding:8px 14px; border-radius:4px; cursor:pointer; font-size:.9rem; }
+.btn:hover:not(:disabled) { border-color:var(--ink); }
+.btn.primary { background:var(--ink); color:var(--bg); border-color:var(--ink); font-weight:600; }
+.btn.small { padding:4px 10px; font-size:.82rem; }
+.btn.danger { color:var(--bad); }
+.btn:disabled { opacity:.45; cursor:default; }
+.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+.callout { border:1px solid var(--line); border-left:3px solid var(--charge); background:var(--surface); padding:10px 14px; border-radius:4px; font-size:.92rem; color:var(--muted); }
+.callout b { color:var(--ink); }
+.warns { display:flex; flex-direction:column; gap:6px; }
+.warns:empty { display:none; }
+.w { display:flex; gap:10px; align-items:flex-start; padding:9px 12px; border-radius:4px; font-size:.9rem; }
+.w.bad { background:var(--bad-soft); } .w.warn { background:var(--warn-soft); } .w.info { background:var(--charge-soft); }
+.w .tag { font-size:.62rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; padding:2px 7px; border-radius:99px; flex:0 0 auto; margin-top:2px; }
+.w.bad .tag { color:var(--bad); border:1px solid var(--bad); } .w.warn .tag { color:var(--warn); border:1px solid var(--warn); } .w.info .tag { color:var(--charge); border:1px solid var(--charge); }
+
+.pills { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 2px; }
+.pill { font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; padding:3px 9px; border-radius:99px; border:1px solid var(--line); color:var(--faint); }
+.pill.now { color:var(--bg); background:var(--ink); border-color:var(--ink); font-weight:600; }
+.cal { display:grid; grid-template-columns:repeat(14,minmax(0,1fr)); gap:4px; margin-top:8px; }
+.cal div { aspect-ratio:1; max-width:100%; border-radius:3px; background:var(--surface-2); font-size:.62rem; color:var(--faint); display:grid; place-items:center; font-variant-numeric:tabular-nums; }
+.cal div.reset { background:var(--top-soft); color:var(--top); font-weight:600; outline:1px solid var(--top); }
+.cal div.today { outline:2px solid var(--ink); color:var(--ink); }
+
+table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+th, td { text-align:left; padding:8px 8px; border-bottom:1px solid var(--line); font-size:.9rem; vertical-align:top; }
+th { font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); font-weight:600; }
+.tbl { overflow-x:auto; }
+.pts input[type=number] { width:86px; padding:5px 8px; }
+.pts td { padding:5px 6px; vertical-align:middle; }
+
+.nav-foot { display:flex; justify-content:space-between; gap:10px; margin-top:26px; padding-top:16px; border-top:1px solid var(--line); flex-wrap:wrap; }
+details.grp { border:1px solid var(--line); border-radius:6px; background:var(--surface); margin-bottom:8px; }
+details.grp > summary { cursor:pointer; padding:12px 16px; font-family:var(--display); font-weight:600; font-size:1.05rem; letter-spacing:.02em; list-style:none; display:flex; gap:10px; align-items:center; }
+details.grp > summary::-webkit-details-marker { display:none; }
+details.grp > summary::before { content:"›"; color:var(--faint); transition:transform .15s; display:inline-block; }
+details.grp[open] > summary::before { transform:rotate(90deg); }
+details.grp .body { padding:0 16px 8px; }
+.toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+.toolbar input[type=search] { flex:1 1 220px; max-width:360px; }
+.toolbar label { display:flex; gap:6px; align-items:center; color:var(--muted); font-size:.9rem; }
+.preview { width:100%; min-height:220px; font-family:var(--mono); font-size:.8rem; line-height:1.5; white-space:pre; overflow:auto; }
+.drop { border:1.5px dashed var(--faint); border-radius:6px; padding:18px; text-align:center; color:var(--muted); }
+.drop.over { border-color:var(--charge); background:var(--charge-soft); color:var(--ink); }
+.confirm { border:1px solid var(--warn); background:var(--warn-soft); padding:10px 12px; border-radius:4px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.toast { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(18px + env(safe-area-inset-bottom,0px)); background:var(--ink); color:var(--bg);
+  padding:9px 16px; border-radius:4px; font-size:.9rem; z-index:20; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:calc(100% - 32px); }
+.kv { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr)); gap:10px; }
+.kv .k { font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
+.kv .v { font-family:var(--display); font-size:1.5rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.kv .v small { font-size:.9rem; color:var(--muted); font-weight:500; }
+@media (prefers-reduced-motion: reduce) { .switch .track, .switch .track::after { transition:none; } }
+</style>
+
+<header class="top">
+  <div class="brand"><b>JK BMS Setup</b><span>dbus-serialbattery · config.ini</span></div>
+  <span class="spacer"></span>
+  <button type="button" class="chip" id="chip-changes" title="Open Review and back up">0 changed</button>
+  <button type="button" class="chip" id="chip-warn" hidden></button>
+  <button type="button" class="chip" id="chip-motion" aria-pressed="true">Animations on</button>
+</header>
+<div class="layout">
+  <nav id="rail" aria-label="Setup steps"></nav>
+  <main id="main"></main>
+</div>
+
+<script>
+'use strict';
+// ------------------------------------------------------------------ helpers
+const $ = s => document.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+    else if (k === 'class') el.className = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat(9)) if (kid !== null && kid !== undefined && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const fx = (v, n) => Number.isFinite(v) ? v.toFixed(n) : '–';
+const T = (x, y, s, cls, anchor) => `<text x="${x}" y="${y}" class="${cls || ''}" text-anchor="${anchor || 'start'}">${esc(s)}</text>`;
+function toast(msg) { const t = h('div', { class: 'toast', role: 'status' }, msg); document.body.append(t); setTimeout(() => t.remove(), 2600); }
+
+// ------------------------------------------------------------- the settings
+// Every key of dbus-serialbattery's config.default.ini (upstream master), in file order.
+// t: bool | int | float | select | text | list | bms | secret.  jk: false = not used by a JK BMS on Bluetooth.
+const GROUPS = [], DEF = {};
+function grp(id, title, jk) { GROUPS.push({ id, title, jk, keys: [] }); }
+function s(key, d, t, label, plain, x) {
+  const g = GROUPS[GROUPS.length - 1];
+  DEF[key] = Object.assign({ key, d, t, label, plain, g: g.id, jk: g.jk }, x || {});
+  g.keys.push(key);
+}
+const ON_OFF_EMPTY = { empty: 'off' };
+
+grp('log', 'Logging', true);
+s('LOGGING', 'INFO', 'select', 'Log detail', 'How much the driver writes to its log. INFO is right for daily use; DEBUG only while you chase a problem, it fills the log fast.', { opts: [['ERROR', 'Errors'], ['WARNING', 'Warnings'], ['INFO', 'Info'], ['DEBUG', 'Debug']] });
+
+grp('currents', 'Battery current limits', true);
+s('MAX_BATTERY_CHARGE_CURRENT', '50.0', 'float', 'Highest charge current', 'The most current the driver ever lets into the battery. Every other limit can only lower it. Keep it at or below what the cells and the JK BMS are rated for.', { unit: 'A', min: 0, max: 400, step: 1 });
+s('MAX_BATTERY_DISCHARGE_CURRENT', '60.0', 'float', 'Highest discharge current', 'The most current the driver lets the inverter and loads take. Keep it below the BMS discharge protection so the driver limits first.', { unit: 'A', min: 0, max: 400, step: 1 });
+
+grp('voltages', 'Cell voltages', true);
+s('MIN_CELL_VOLTAGE', '2.900', 'float', 'Empty voltage per cell', 'Counts as 0 % when the driver works out the SoC itself. Not a cut-off: the JK BMS cuts off at its own UVP.', { unit: 'V', min: 2.5, max: 3.2, step: 0.005 });
+s('MAX_CELL_VOLTAGE', '3.450', 'float', 'Full charge voltage per cell', 'Absorption voltage. Chargers are asked for this × number of cells. 3.45 V fills LiFePO4 to about 98 % and is gentle on the cells.', { unit: 'V', min: 3.3, max: 3.65, step: 0.005 });
+s('FLOAT_CELL_VOLTAGE', '3.375', 'float', 'Float voltage per cell', 'After the battery is full, chargers drop to this so the cells do not sit at full voltage all day.', { unit: 'V', min: 3.3, max: 3.5, step: 0.005 });
+
+grp('reset', 'Top balancing / SoC reset', true);
+s('SOC_RESET_CELL_VOLTAGE', '3.650', 'float', 'Top balance voltage per cell', 'Every few days the driver charges up to this instead of the full charge voltage. The JK BMS then sets its SoC to 100 % and the balancer evens out the cells. Start 0.030 V below the cell OVP of the BMS.', { unit: 'V', min: 3.4, max: 3.7, step: 0.005 });
+s('SOC_RESET_AFTER_DAYS', '', 'int', 'Top balance every', 'Number of days between top balance charges. Empty turns it off. 7 to 30 days is common. The count restarts each time the voltage is reached.', { unit: 'days', min: 1, max: 60, step: 1, empty: 'off' });
+
+grp('soccalc', 'SoC calculation', true);
+s('SOC_CALCULATION', 'False', 'bool', 'Driver counts the SoC itself', 'Off: show the SoC of the JK BMS, which has a good current sensor (recommended). On: the driver adds up the current itself and sets 100 % when it switches to float.');
+
+grp('correction', 'Current correction', true);
+s('CURRENT_REPORTED_BY_BMS', '-300, 300', 'list', 'Current the BMS reports', 'With the next list, a correction table for a BMS that measures current wrong. Both lists the same = off.');
+s('CURRENT_MEASURED_BY_USER', '-300, 300', 'list', 'Current you measured', 'What a good clamp meter showed for each value in the list above.');
+
+grp('bt', 'Bluetooth', true);
+s('BLUETOOTH_BMS', '', 'bms', 'Bluetooth BMS', 'Type and MAC address of each BMS. For a JK BMS pick Jkbms_Ble. The MAC is in the JK app (device info) or shown by a BLE scanner. Needs a reboot of the Pi.');
+s('BLUETOOTH_USE_POLLING', 'True', 'bool', 'Ask the BMS for data', 'On: the driver asks for new data each time (polling). Off: the BMS pushes data by itself. Switch only if the connection keeps dropping.');
+s('BLUETOOTH_FORCE_RESET_BLE_STACK', 'False', 'bool', 'Reset Bluetooth after a lost connection', 'Restarts the Bluetooth hardware and driver when the connection is lost. Try it if the BMS never comes back without a reboot.');
+s('BLUETOOTH_USE_USB', 'False', 'bool', 'Use a USB Bluetooth stick', 'Turns off the Bluetooth built into the Pi and uses a USB stick (Bluetooth 4.0 / BLE or newer). Helps with a weak or unstable link. Needs a reboot.');
+
+grp('can', 'CAN BMS', false);
+s('CAN_PORT', '', 'text', 'CAN ports', 'Only for a BMS on a CAN cable, for example can0. Leave empty for Bluetooth.');
+
+grp('serial', 'Serial starter', true);
+s('SERIAL_STARTER_ENABLED', 'True', 'bool', 'Look for a BMS on serial and USB cables', 'If your only BMS is on Bluetooth you can turn this off. It saves a little CPU on the Pi.');
+
+grp('daisy', 'Several BMS on one cable', false);
+s('BATTERY_ADDRESSES', '', 'text', 'BMS addresses', 'Only for several BMS daisy-chained on one RS485 cable, for example 0x01, 0x02.');
+
+grp('disconnect', 'When the BMS goes silent', true);
+s('BLOCK_ON_DISCONNECT', 'False', 'bool', 'Stop at once when the BMS is lost', 'On: charging and discharging stop the moment the driver loses the BMS (Victron default). Off: they continue for a while if the cells were in a safe range.');
+s('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', '30', 'int', 'Keep going for', 'Minutes the system keeps charging and discharging without BMS data, if the last cell voltages were inside the safe range below.', { unit: 'min', min: 1, max: 240, step: 1 });
+s('BLOCK_ON_DISCONNECT_VOLTAGE_MIN', '3.225', 'float', 'Safe range: lowest cell', 'If the last known cells were below this, everything stops after 60 s.', { unit: 'V', min: 3.0, max: 3.35, step: 0.005 });
+s('BLOCK_ON_DISCONNECT_VOLTAGE_MAX', '3.375', 'float', 'Safe range: highest cell', 'If the last known cells were above this, everything stops after 60 s.', { unit: 'V', min: 3.25, max: 3.5, step: 0.005 });
+
+grp('cable', 'BMS cable alarm', true);
+s('BMS_CABLE_ALARM', 'True', 'bool', 'Alarm when the BMS is unreachable', 'Raises the "BMS cable" alarm in Venus OS after 60 s without data. For Bluetooth that means the radio link, not a cable.');
+
+grp('ext', 'External current / SoC sensor', true);
+s('EXTERNAL_SENSOR_DBUS_DEVICE', '', 'text', 'External sensor device', 'Use another device for current or SoC, for example a SmartShunt: com.victronenergy.battery.ttyS2. Empty = use the BMS.');
+s('EXTERNAL_SENSOR_DBUS_PATH_CURRENT', '', 'text', 'Path of its current', 'For a SmartShunt: /Dc/0/Current');
+s('EXTERNAL_SENSOR_DBUS_PATH_SOC', '', 'text', 'Path of its SoC', 'For a SmartShunt: /Soc. Not together with "Driver counts the SoC itself".');
+
+grp('mode', 'Charge mode', true);
+s('CHARGE_MODE', '1', 'select', 'How limits change between points', 'Linear: the current slides smoothly between the points of each curve. Step: it jumps from point to point.', { opts: [['1', 'Linear (smooth)'], ['2', 'Step']], seg: true });
+s('CVL_RECALCULATION_EVERY', '60', 'int', 'Recalculate every', 'How often the smooth values are worked out again.', { unit: 's', min: 5, max: 600, step: 5 });
+s('CVL_RECALCULATION_ON_MAX_PERCENTAGE_CHANGE', '33', 'int', 'Recalculate at once after a change of', 'A bigger jump than this is passed on immediately.', { unit: '%', min: 1, max: 100, step: 1 });
+
+grp('ovprec', 'Recovery after a cell over-voltage', true);
+s('CVL_RECOVERY_HOLD_SEC', '60', 'int', 'Hold the lowered voltage for', 'After a cell went too high and the charge voltage was lowered, keep it there this long before raising it again.', { unit: 's', min: 0, max: 600, step: 5 });
+s('CVL_RECOVERY_RATE_V_PER_SEC', '0.001', 'float', 'Then raise it by', 'How fast the charge voltage climbs back. 0 = jump back at once.', { unit: 'V/s', min: 0, max: 0.05, step: 0.001 });
+
+grp('cvcm', 'Full and float', true);
+s('CVCM_ENABLE', 'True', 'bool', 'Switch to float when full', 'On: after the battery is full and balanced, chargers drop to the float voltage, and go back to full charge when needed. Off: chargers always aim for the full charge voltage.');
+s('SWITCH_TO_FLOAT_WAIT_FOR_SEC', '900', 'int', 'Stay at full voltage for', 'Once the cells are balanced, keep the full voltage this much longer (absorption time). 0 or empty = no extra time.', { unit: 's', min: 0, max: 7200, step: 60 });
+s('SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', '0.010', 'float', 'Balanced when cells are within', 'Float can start only once the highest and lowest cell are this close. 10 = do not wait for balance.', { unit: 'V', min: 0.002, max: 0.1, step: 0.001 });
+s('SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION', '0.003', 'float', 'Restart the timer if the difference grows by', 'If the cells drift apart by more than this during the wait, the timer starts again.', { unit: 'V', min: 0, max: 0.02, step: 0.001 });
+s('SWITCH_TO_BULK_SOC_THRESHOLD', '80', 'int', 'Charge fully again below', 'When the SoC falls below this, chargers aim for the full voltage again. 0 or empty = off.', { unit: '%', min: 0, max: 100, step: 1 });
+s('SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', '0.080', 'float', 'Or when cells drift apart by', 'Cells further apart than this also start a full charge. 10 = off.', { unit: 'V', min: 0.01, max: 0.3, step: 0.005 });
+
+grp('cvl', 'Cell voltage limitation (charge voltage)', true);
+s('CVL_CONTROLLER_MODE', '1', 'select', 'Protect the highest cell by', 'When one cell runs ahead, the driver lowers the charge voltage so that cell does not hit the BMS OVP. P-controller reacts fastest, I-controller is smoother.', { opts: [['0', 'Off'], ['1', 'P-controller'], ['2', 'I-controller'], ['3', 'Clipped sum']], seg: true });
+s('CVL_ICONTROLLER_FACTOR', '0.2', 'float', 'I-controller factor', 'Only for the I-controller. 0.2 V/Vs works well.', { unit: 'V/Vs', min: 0.05, max: 1, step: 0.05 });
+
+grp('cvcl', 'Cell voltage current limitation', true);
+s('CCCM_CV_ENABLE', 'True', 'bool', 'Lower charge current near full', 'Charge current drops as the highest cell gets close to full.');
+s('DCCM_CV_ENABLE', 'True', 'bool', 'Lower discharge current near empty', 'Discharge current drops as the lowest cell gets close to empty.');
+s('CELL_VOLTAGES_WHILE_CHARGING', '3.500, 3.450, 3.425, 3.400, 3.375', 'list', 'Charge curve: cell voltages', 'Highest cell voltage at each point of the charge curve.', { pair: 'MAX_CHARGE_CURRENT_CV_FRACTION' });
+s('MAX_CHARGE_CURRENT_CV_FRACTION', '0.000, 0.005, 0.050, 0.250, 1.000', 'list', 'Charge curve: share of max current', 'Share of the highest charge current allowed at each point (1 = 100 %).');
+s('CELL_VOLTAGES_WHILE_DISCHARGING', '2.800, 2.900, 3.000, 3.100, 3.190', 'list', 'Discharge curve: cell voltages', 'Lowest cell voltage at each point of the discharge curve.', { pair: 'MAX_DISCHARGE_CURRENT_CV_FRACTION' });
+s('MAX_DISCHARGE_CURRENT_CV_FRACTION', '0.000, 0.005, 0.050, 0.250, 1.000', 'list', 'Discharge curve: share of max current', 'Share of the highest discharge current allowed at each point.');
+
+grp('temp', 'Temperature current limitation', true);
+s('CCCM_T_ENABLE', 'True', 'bool', 'Limit charging by temperature', 'Charge current drops when the cells are cold or hot. LiFePO4 must not be charged below 0 °C.');
+s('DCCM_T_ENABLE', 'True', 'bool', 'Limit discharging by temperature', 'Discharge current drops when the cells are very cold or hot.');
+s('TEMPERATURES_WHILE_CHARGING', '0, 2, 5, 10, 40, 45, 50, 55', 'list', 'Charge curve: temperatures', 'Temperature points of the charge curve, in °C.', { pair: 'MAX_CHARGE_CURRENT_T_FRACTION' });
+s('MAX_CHARGE_CURRENT_T_FRACTION', '0.00, 0.25, 0.50, 1.00, 1.00, 0.50, 0.25, 0.00', 'list', 'Charge curve: share of max current', 'Share of the highest charge current at each temperature.');
+s('TEMPERATURES_WHILE_DISCHARGING', '-10, 0, 5, 10, 40, 45, 50, 55', 'list', 'Discharge curve: temperatures', 'Temperature points of the discharge curve, in °C.', { pair: 'MAX_DISCHARGE_CURRENT_T_FRACTION' });
+s('MAX_DISCHARGE_CURRENT_T_FRACTION', '0.00, 0.25, 0.50, 1.00, 1.00, 0.50, 0.25, 0.00', 'list', 'Discharge curve: share of max current', 'Share of the highest discharge current at each temperature.');
+
+grp('mos', 'MOSFET temperature current limitation', true);
+s('CCCM_T_MOSFET_ENABLE', 'True', 'bool', 'Limit charging when the BMS gets hot', 'Uses the temperature of the switching transistors (MOSFETs) inside the JK BMS.');
+s('DCCM_T_MOSFET_ENABLE', 'True', 'bool', 'Limit discharging when the BMS gets hot', 'Same for discharging.');
+s('MOSFET_TEMPERATURES_WHILE_CHARGING', '70, 80, 90', 'list', 'Charge curve: MOSFET temperatures', 'In °C.', { pair: 'MAX_CHARGE_CURRENT_T_MOSFET_FRACTION' });
+s('MAX_CHARGE_CURRENT_T_MOSFET_FRACTION', '1.00, 0.25, 0.00', 'list', 'Charge curve: share of max current', '');
+s('MOSFET_TEMPERATURES_WHILE_DISCHARGING', '70, 80, 90', 'list', 'Discharge curve: MOSFET temperatures', 'In °C.', { pair: 'MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION' });
+s('MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION', '1.00, 0.25, 0.00', 'list', 'Discharge curve: share of max current', '');
+
+grp('socl', 'SoC current limitation', true);
+s('CCCM_SOC_ENABLE', 'False', 'bool', 'Lower charge current near 100 %', 'Off by default: the SoC is less exact than the cell voltage, which the cell curves already use.');
+s('DCCM_SOC_ENABLE', 'False', 'bool', 'Lower discharge current near 0 %', 'Off by default, for the same reason.');
+s('SOC_WHILE_CHARGING', '98, 95, 90, 85', 'list', 'Charge curve: SoC', 'In %.', { pair: 'MAX_CHARGE_CURRENT_SOC_FRACTION' });
+s('MAX_CHARGE_CURRENT_SOC_FRACTION', '0.10, 0.20, 0.50, 1.00', 'list', 'Charge curve: share of max current', '');
+s('SOC_WHILE_DISCHARGING', '5, 10, 15, 20', 'list', 'Discharge curve: SoC', 'In %.', { pair: 'MAX_DISCHARGE_CURRENT_SOC_FRACTION' });
+s('MAX_DISCHARGE_CURRENT_SOC_FRACTION', '0.10, 0.20, 0.50, 1.00', 'list', 'Discharge curve: share of max current', '');
+
+grp('recov', 'Recovery after a current limit', true);
+s('CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', '0.015', 'float', 'Charging restarts above', 'Once the charge limit was 0, it must rise above this share of the highest charge current before charging starts again. Stops on/off flapping.', { unit: '× max', min: 0, max: 0.2, step: 0.005 });
+s('DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', '0.015', 'float', 'Discharging restarts above', 'Same for discharging.', { unit: '× max', min: 0, max: 0.2, step: 0.005 });
+s('CCL_RECOVERY_HOLD_SEC', '30', 'int', 'Charge: wait before rising', 'After the reason for a lower charge limit is gone, wait this long before raising it.', { unit: 's', min: 0, max: 300, step: 5 });
+s('CCL_RECOVERY_RATE_A_PER_SEC', '5', 'float', 'Charge: then rise by', 'How fast the charge limit climbs back. 0 = jump back at once.', { unit: 'A/s', min: 0, max: 50, step: 0.5 });
+s('DCL_RECOVERY_HOLD_SEC', '30', 'int', 'Discharge: wait before rising', 'Same for the discharge limit.', { unit: 's', min: 0, max: 300, step: 5 });
+s('DCL_RECOVERY_RATE_A_PER_SEC', '5', 'float', 'Discharge: then rise by', 'How fast the discharge limit climbs back. 0 = at once.', { unit: 'A/s', min: 0, max: 50, step: 0.5 });
+
+grp('ttg', 'Time to go', true);
+s('TIME_TO_GO_ENABLE', 'True', 'bool', 'Show time to go', 'Venus OS shows how long the battery lasts until the low SoC warning level (or the ESS limit).');
+s('TIME_TO_SOC_POINTS', '', 'list', 'Time until these SoC levels', 'For example 50, 25, 0. Empty = off. Each point costs a little CPU.');
+s('TIME_TO_SOC_VALUE_TYPE', '1', 'select', 'Format of those times', '', { opts: [['1', 'Seconds'], ['2', 'Text (1d 2h 3m)'], ['3', 'Both']] });
+s('TIME_TO_SOC_RECALCULATE_EVERY', '60', 'int', 'Recalculate every', 'At least 5 s.', { unit: 's', min: 5, max: 600, step: 5 });
+s('TIME_TO_SOC_INC_FROM', 'False', 'bool', 'Also show points you move away from', 'Shown as negative times.');
+
+grp('hist', 'History', true);
+s('HISTORY_ENABLE', 'True', 'bool', 'Keep battery history', 'Counts values the BMS does not keep itself, like deepest discharge and charged energy.');
+
+grp('extra', 'Additional settings', true);
+s('BMS_TYPE', '', 'text', 'Only look for these BMS types', 'For a cable BMS. Empty = try all. Bluetooth BMS are set above.');
+s('EXCLUDED_DEVICES', '', 'text', 'Skip these serial ports', 'For example /dev/ttyUSB2. Useful when a GPS or other USB device is on the Pi.');
+s('POLL_INTERVAL', '', 'float', 'Read the BMS every', 'Empty = the default of the BMS driver. Raise it (for example to 2 s) if the Pi is busy or you see BMS connection errors.', { unit: 's', min: 0.5, max: 10, step: 0.5, empty: 'default' });
+s('PUBLISH_CONFIG_VALUES', 'False', 'bool', 'Publish these settings on D-Bus', 'Under /Info/Config/. Handy for checking which values the driver really uses.');
+s('PUBLISH_BATTERY_DATA_AS_JSON', 'False', 'bool', 'Publish all battery data as JSON on MQTT', '');
+s('BATTERY_CELL_DATA_FORMAT', '1', 'select', 'Cell voltages on D-Bus', 'Format 1 shows every cell on the Remote Console and on this web page.', { opts: [['0', 'Only min/max'], ['1', 'Format 1'], ['2', 'Format 2'], ['3', 'Both']] });
+s('MIDPOINT_ENABLE', 'False', 'bool', 'Simulate a midpoint graph', '');
+s('TEMPERATURE_SOURCE_BATTERY', '1, 2, 3, 4', 'list', 'Battery temperature from sensors', 'The battery temperature is the average of these sensors.');
+s('TEMPERATURE_1_NAME', 'Temp 1', 'text', 'Name of sensor 1', '');
+s('TEMPERATURE_2_NAME', 'Temp 2', 'text', 'Name of sensor 2', '');
+s('TEMPERATURE_3_NAME', 'Temp 3', 'text', 'Name of sensor 3', '');
+s('TEMPERATURE_4_NAME', 'Temp 4', 'text', 'Name of sensor 4', '');
+s('TEMPERATURE_1_ADJUST', '0, 1', 'list', 'Sensor 1 correction', 'Offset in °C, then slope. 0, 1 = no correction.');
+s('TEMPERATURE_2_ADJUST', '0, 1', 'list', 'Sensor 2 correction', '');
+s('TEMPERATURE_3_ADJUST', '0, 1', 'list', 'Sensor 3 correction', '');
+s('TEMPERATURE_4_ADJUST', '0, 1', 'list', 'Sensor 4 correction', '');
+s('TEMPERATURE_MOS_ADJUST', '0, 1', 'list', 'MOSFET sensor correction', '');
+s('GUI_PARAMETERS_SHOW_ADDITIONAL_INFO', 'False', 'bool', 'Show extra driver info in the Venus GUI', 'Adds what the driver is doing at the bottom of its device page.');
+s('GUI_INSTALL_CUSTOMIZATIONS', 'True', 'bool', 'Install the driver’s GUI additions', 'Extra battery pages and controls in the Venus OS GUI.');
+s('TELEMETRY', 'True', 'bool', 'Send anonymous usage data', 'Once a week: Venus OS and driver version, BMS type, battery count.');
+
+grp('drop', 'Voltage drop', true);
+s('VOLTAGE_DROP', '0.00', 'float', 'Voltage lost in the cables', 'If the BMS sees less than the charger sets (thin or long cables), add the difference here so the battery still reaches full.', { unit: 'V', min: 0, max: 0.5, step: 0.01 });
+
+grp('bms', 'BMS specific', true);
+s('USE_PORT_AS_UNIQUE_ID', 'False', 'bool', 'Use the port as ID', 'Only if the log says another battery has the same serial number.');
+s('BATTERY_CAPACITY', '99', 'float', 'Battery capacity', 'Not needed for a JK BMS: it reports its capacity. Used for Daly, Felicity and some others.', { unit: 'Ah', jk: false, min: 10, max: 1000, step: 1 });
+s('AUTO_RESET_SOC', 'True', 'bool', 'Set the BMS SoC to 100 % at float', 'Works with the JK BMS on Bluetooth: when the driver switches to float, it tells the BMS the battery is full. Needs "Switch to float when full".');
+s('USE_BMS_DVCC_VALUES', 'False', 'bool', 'Use the BMS’s own charge limits', 'Only for Felicity and Seplos V3. Leave off for a JK BMS.', { jk: false });
+s('SOC_LOW_WARNING', '20', 'int', 'Low SoC level for time to go', '"Time to go" counts down to this level. Also the low SoC warning of JBD BMS.', { unit: '%', min: 0, max: 60, step: 1 });
+s('SOC_LOW_ALARM', '10', 'int', 'Low SoC alarm level', 'Used by JBD BMS for the low SoC alarm.', { unit: '%', min: 0, max: 50, step: 1, jk: false });
+s('UP16S_REQUIRE_DIRECT_CONNECTION', 'False', 'bool', 'JBD UP16S: direct connections', 'Only for JBD UP16S batteries.', { jk: false });
+s('INVERT_CURRENT_MEASUREMENT', '1', 'int', 'Daly: invert current', '-1 inverts. Only for Daly.', { jk: false });
+s('GREENMETER_ADDRESS', '1', 'int', 'ECS GreenMeter address', '', { jk: false });
+s('LIPRO_START_ADDRESS', '2', 'int', 'Lipro first address', '', { jk: false });
+s('LIPRO_END_ADDRESS', '4', 'int', 'Lipro last address', '', { jk: false });
+s('LIPRO_CELL_COUNT', '15', 'int', 'Lipro cell count', '', { jk: false });
+s('UBMS_CAN_MODULE_SERIES', '4', 'int', 'U-BMS modules in series', '', { jk: false });
+s('UBMS_CAN_MODULE_PARALLEL', '2', 'int', 'U-BMS modules in parallel', '', { jk: false });
+
+grp('mqtt', 'MQTT battery', false);
+s('MQTT_TOPIC', '', 'text', 'MQTT topic', 'Creates an extra battery from JSON data on this topic. Empty = off.');
+s('MQTT_BROKER_ADDRESS', '127.0.0.1', 'text', 'MQTT broker', '');
+s('MQTT_BROKER_PORT', '1883', 'int', 'MQTT port', '');
+s('MQTT_TLS_ENABLED', 'False', 'bool', 'MQTT with TLS', '');
+s('MQTT_TLS_PATH_TO_CA', '', 'text', 'CA certificate file', '');
+s('MQTT_TLS_INSECURE', 'True', 'bool', 'Skip host name check', '');
+s('MQTT_USERNAME', '', 'text', 'MQTT user', '');
+s('MQTT_PASSWORD', '', 'secret', 'MQTT password', 'Not saved in this page and not put into the backup.');
+
+grp('capture', 'Raw BMS data capture', true);
+s('BMS_CAPTURE_RAW_DATA', 'False', 'bool', 'Record raw BMS data', 'For a bug report only. Wears the SD card: switch it off again afterwards.');
+s('BMS_CAPTURE_RAW_DATA_MAX_SIZE_MB', '5', 'int', 'Largest capture file', '', { unit: 'MB', min: 1, max: 50, step: 1 });
+s('BMS_CAPTURE_RAW_DATA_BACKUP_COUNT', '3', 'int', 'Old capture files to keep', '', { min: 0, max: 20, step: 1 });
+
+const BMS_TYPES = ['Jkbms_Ble', 'Kilovault_Ble', 'LiTime_Ble', 'LltJbd_Ble', 'Xdzn_Ble'];
+const REBOOT_KEYS = ['BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'CAN_PORT'];
+
+// ------------------------------------------------------------------ state
+const STORE = 'jkbms-setup-guide-v1';
+const BAT_DEFAULT = { cells: 4, ah: 280, ovp: 3.65, uvp: 2.8, bms: 200 };
+const st = { vals: {}, extra: {}, bat: Object.assign({}, BAT_DEFAULT), view: 'connect', motion: true, dayTop: false, recDir: 'c', lastV: 3.30, allJk: true, allChanged: false, allQ: '' };
+try { st.motion = !matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { /* keep default */ }
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    for (const [k, v] of Object.entries(d.vals || {})) if (DEF[k]) st.vals[k] = String(v);
+    st.extra = d.extra || {};
+    Object.assign(st.bat, d.bat || {});
+  } catch (e) { /* storage blocked or broken: start from the defaults */ }
+}
+function persist() {
+  try {
+    const vals = {};
+    for (const k of Object.keys(DEF)) if (isChanged(k) && DEF[k].t !== 'secret') vals[k] = get(k);
+    localStorage.setItem(STORE, JSON.stringify({ vals, extra: st.extra, bat: st.bat }));
+  } catch (e) { /* not available here */ }
+}
+
+const get = k => (st.vals[k] !== undefined ? st.vals[k] : DEF[k].d);
+const num = k => parseFloat(get(k));
+const numOr = (k, fb) => { const v = parseFloat(get(k)); return Number.isFinite(v) ? v : fb; };
+const bool = k => /^true$/i.test(String(get(k)).trim());
+const nums = t => String(t).split(',').map(x => x.trim()).filter(x => x !== '').map(Number);
+function same(d, a, b) {
+  a = String(a == null ? '' : a).trim(); b = String(b == null ? '' : b).trim();
+  if (d.t === 'int' || d.t === 'float') return (a === '' || b === '') ? a === b : Number(a) === Number(b);
+  if (d.t === 'list') { const x = nums(a), y = nums(b); return x.length === y.length && x.every((v, i) => v === y[i]); }
+  if (d.t === 'bool' || d.t === 'select') return a.toLowerCase() === b.toLowerCase();
+  if (d.t === 'bms') return a.split(',').map(x => x.trim().replace(/\s+/g, ' ')).join(',') === b.split(',').map(x => x.trim().replace(/\s+/g, ' ')).join(',');
+  return a === b;
+}
+const isChanged = k => !same(DEF[k], get(k), DEF[k].d);
+const changedKeys = () => Object.keys(DEF).filter(isChanged);
+function setVal(k, v) { st.vals[k] = String(v); changed(); }
+const cells = () => clamp(Math.round(st.bat.cells) || 4, 1, 32);
+function bmsEntries() {
+  return String(get('BLUETOOTH_BMS')).split(',').map(x => x.trim()).filter(Boolean).map(x => { const p = x.split(/\s+/); return { type: p[0] || '', mac: p[1] || '' }; });
+}
+const MAC_RE = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i;
+function pairs(xk, yk) {
+  const xs = nums(get(xk)), ys = nums(get(yk));
+  if (!xs.length || xs.length !== ys.length || xs.some(isNaN) || ys.some(isNaN)) return null;
+  return xs.map((x, i) => [x, ys[i]]).sort((a, b) => a[0] - b[0]);
+}
+// same rules as utils.calc_linear_relationship / calc_step_relationship in the driver
+function curveAt(p, x, lowerSide) {
+  if (x <= p[0][0]) return p[0][1];
+  if (x >= p[p.length - 1][0]) return p[p.length - 1][1];
+  let i = 0; while (i < p.length - 1 && !(x >= p[i][0] && x < p[i + 1][0])) i++;
+  if (get('CHARGE_MODE') === '2') return lowerSide === 'upper' ? p[i + 1][1] : lowerSide === 'lower' ? p[i][1] : Math.min(p[i][1], p[i + 1][1]);
+  const [x0, y0] = p[i], [x1, y1] = p[i + 1];
+  return x1 === x0 ? y0 : y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+}
+function zeroPointCharge() { // lowest cell voltage at which the charge curve reaches 0
+  const p = pairs('CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION');
+  if (!p) return null;
+  const z = p.find(q => q[1] <= 0);
+  return z ? z[0] : null;
+}
+
+// ---------------------------------------------------------------- checks
+const PAIRS = Object.values(DEF).filter(d => d.pair).map(d => [d.key, d.pair]);
+function checks() {
+  const out = [], add = (lvl, step, key, msg) => out.push({ lvl, step, key, msg });
+  const B = st.bat, N = cells();
+  const bms = bmsEntries();
+  if (!bms.length) add('warn', 'connect', 'BLUETOOTH_BMS', 'No Bluetooth BMS added yet. Without it the driver does not know which JK BMS to talk to.');
+  bms.forEach((b, i) => {
+    if (!MAC_RE.test(b.mac)) add('bad', 'connect', 'BLUETOOTH_BMS', `BMS ${i + 1}: "${b.mac || '(empty)'}" is not a MAC address. It looks like C8:47:8C:12:34:56.`);
+    if (!BMS_TYPES.includes(b.type)) add('bad', 'connect', 'BLUETOOTH_BMS', `BMS ${i + 1}: unknown type "${b.type}".`);
+  });
+  const maxC = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), mn = num('MIN_CELL_VOLTAGE'), rst = num('SOC_RESET_CELL_VOLTAGE');
+  const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
+  if (maxC > B.ovp - 0.05) add('bad', 'voltages', 'MAX_CELL_VOLTAGE', `Full charge ${fx(maxC, 3)} V is only ${fx((B.ovp - maxC) * 1000, 0)} mV below the BMS cell OVP of ${fx(B.ovp, 3)} V. Keep 50 to 100 mV of room, or one cell trips the BMS.`);
+  if (fl >= maxC) add('bad', 'voltages', 'FLOAT_CELL_VOLTAGE', `Float ${fx(fl, 3)} V must be lower than full charge ${fx(maxC, 3)} V.`);
+  if (mn <= B.uvp) add('warn', 'voltages', 'MIN_CELL_VOLTAGE', `Empty ${fx(mn, 3)} V is at or below the BMS UVP ${fx(B.uvp, 3)} V. The BMS will cut off before the driver lowers the discharge current.`);
+  if (resetOn) {
+    if (rst <= maxC) add('bad', 'charging', 'SOC_RESET_CELL_VOLTAGE', `Top balance ${fx(rst, 3)} V must be higher than full charge ${fx(maxC, 3)} V.`);
+    if (rst > B.ovp - 0.02) add('warn', 'charging', 'SOC_RESET_CELL_VOLTAGE', `Top balance ${fx(rst, 3)} V is too close to the BMS OVP ${fx(B.ovp, 3)} V. Start at ${fx(B.ovp - 0.03, 3)} V (OVP − 0.030) and move in 0.005 V steps.`);
+    const z = zeroPointCharge();
+    if (bool('CCCM_CV_ENABLE') && z !== null && z <= rst) add('bad', 'charging', 'CELL_VOLTAGES_WHILE_CHARGING', `The charge curve stops charging at ${fx(z, 3)} V, so cells never reach the top balance voltage ${fx(rst, 3)} V. Move the last point of the charge curve (step 6) above ${fx(rst, 3)} V.`);
+  }
+  if (bool('CVCM_ENABLE')) {
+    const soc = numOr('SWITCH_TO_BULK_SOC_THRESHOLD', 0), diff = numOr('SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 10);
+    if (soc <= 0 && diff >= 10) add('bad', 'charging', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'Both ways back to a full charge are off: the battery stays at float until the driver restarts.');
+    if (!bool('AUTO_RESET_SOC')) add('info', 'charging', 'AUTO_RESET_SOC', 'The JK BMS SoC is not set to 100 % at float. Its SoC can drift over weeks unless you top balance.');
+  }
+  for (const [a, b] of PAIRS) {
+    const na = nums(get(a)).length, nb = nums(get(b)).length;
+    if (na !== nb) add('bad', stepOf(a), a, `${DEF[a].label} has ${na} points but ${DEF[b].label.toLowerCase()} has ${nb}. Both lists need the same number.`);
+  }
+  const pc = pairs('TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION');
+  if (bool('CCCM_T_ENABLE') && pc && curveAt(pc, 0, 'lower') > 0) add('bad', 'temperature', 'TEMPERATURES_WHILE_CHARGING', 'The charge curve allows current at 0 °C. Charging LiFePO4 below 0 °C damages the cells.');
+  if (!bool('CCCM_T_ENABLE')) add('warn', 'temperature', 'CCCM_T_ENABLE', 'Charging is not limited by temperature. Only the BMS low temperature protection stops charging in the cold.');
+  const cc = num('MAX_BATTERY_CHARGE_CURRENT'), dc = num('MAX_BATTERY_DISCHARGE_CURRENT');
+  if (cc > B.bms) add('bad', 'currents', 'MAX_BATTERY_CHARGE_CURRENT', `${cc} A is more than the ${B.bms} A your BMS can switch.`);
+  if (dc > B.bms) add('bad', 'currents', 'MAX_BATTERY_DISCHARGE_CURRENT', `${dc} A is more than the ${B.bms} A your BMS can switch.`);
+  if (cc / B.ah > 0.5) add('warn', 'currents', 'MAX_BATTERY_CHARGE_CURRENT', `${cc} A is ${fx(cc / B.ah, 2)} C for ${B.ah} Ah. Most LiFePO4 cells want 0.5 C or less for a long life.`);
+  if (num('BLOCK_ON_DISCONNECT_VOLTAGE_MIN') >= num('BLOCK_ON_DISCONNECT_VOLTAGE_MAX')) add('bad', 'disconnect', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'The lowest cell of the safe range must be below the highest.');
+  if (bool('SOC_CALCULATION') && String(get('EXTERNAL_SENSOR_DBUS_PATH_SOC')).trim()) add('bad', 'soc', 'SOC_CALCULATION', 'The driver cannot count the SoC itself while an external SoC sensor is set.');
+  if (bool('SOC_CALCULATION') && !bool('CVCM_ENABLE')) add('warn', 'soc', 'SOC_CALCULATION', 'The driver sets 100 % when it switches to float, which needs "Switch to float when full" (step 5).');
+  if (bool('BMS_CAPTURE_RAW_DATA')) add('warn', 'all', 'BMS_CAPTURE_RAW_DATA', 'Raw data capture is on. It wears the SD card: switch it off once you have the recording.');
+  return out;
+}
+
+// ------------------------------------------------------------------ steps
+const STEPS = [
+  { id: 'connect', title: 'Connect the BMS', short: 'Connect', render: stepConnect,
+    keys: ['BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'BLUETOOTH_USE_POLLING', 'POLL_INTERVAL', 'BLUETOOTH_FORCE_RESET_BLE_STACK', 'BMS_CABLE_ALARM', 'SERIAL_STARTER_ENABLED'] },
+  { id: 'battery', title: 'Your battery', short: 'Battery', render: stepBattery, keys: [] },
+  { id: 'currents', title: 'How much current', short: 'Currents', render: stepCurrents, keys: ['MAX_BATTERY_CHARGE_CURRENT', 'MAX_BATTERY_DISCHARGE_CURRENT'] },
+  { id: 'voltages', title: 'Voltage window', short: 'Voltages', render: stepVoltages, keys: ['MIN_CELL_VOLTAGE', 'MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'VOLTAGE_DROP'] },
+  { id: 'charging', title: 'Full, float and top balance', short: 'Charge cycle', render: stepCharging,
+    keys: ['CVCM_ENABLE', 'SWITCH_TO_FLOAT_WAIT_FOR_SEC', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 'SOC_RESET_CELL_VOLTAGE', 'SOC_RESET_AFTER_DAYS', 'AUTO_RESET_SOC'] },
+  { id: 'cells', title: 'Protect every cell', short: 'Cell curves', render: stepCells,
+    keys: ['CCCM_CV_ENABLE', 'DCCM_CV_ENABLE', 'CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION', 'CELL_VOLTAGES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_CV_FRACTION', 'CHARGE_MODE', 'CVL_CONTROLLER_MODE', 'CVL_ICONTROLLER_FACTOR'] },
+  { id: 'temperature', title: 'Heat and cold', short: 'Temperature', render: stepTemperature,
+    keys: ['CCCM_T_ENABLE', 'DCCM_T_ENABLE', 'TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', 'TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION',
+      'CCCM_T_MOSFET_ENABLE', 'DCCM_T_MOSFET_ENABLE', 'MOSFET_TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_MOSFET_FRACTION', 'MOSFET_TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION'] },
+  { id: 'soc', title: 'State of charge', short: 'SoC', render: stepSoc,
+    keys: ['SOC_CALCULATION', 'SOC_LOW_WARNING', 'TIME_TO_GO_ENABLE', 'CCCM_SOC_ENABLE', 'DCCM_SOC_ENABLE', 'SOC_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_SOC_FRACTION', 'SOC_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_SOC_FRACTION'] },
+  { id: 'disconnect', title: 'If the BMS goes silent', short: 'Lost BMS', render: stepDisconnect,
+    keys: ['BLOCK_ON_DISCONNECT', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX'] },
+  { id: 'recovery', title: 'Smooth recovery', short: 'Recovery', render: stepRecovery,
+    keys: ['CCL_RECOVERY_HOLD_SEC', 'CCL_RECOVERY_RATE_A_PER_SEC', 'DCL_RECOVERY_HOLD_SEC', 'DCL_RECOVERY_RATE_A_PER_SEC', 'CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT'] },
+  { id: 'backup', title: 'Review and back up', short: 'Review & backup', render: stepBackup, keys: [] },
+];
+const EXTRA_VIEWS = [{ id: 'all', title: 'All settings', short: 'All settings', render: viewAll, keys: [] }];
+const VIEWS = STEPS.concat(EXTRA_VIEWS);
+function stepOf(key) { const s = STEPS.find(x => x.keys.includes(key)); return s ? s.id : 'all'; }
+
+// ---------------------------------------------------------- render plumbing
+let anims = [], hooks = [], ctls = {}, dirty = true;
+function viz(viewBox, draw, label) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  node.setAttribute('viewBox', viewBox); node.setAttribute('class', 'viz'); node.setAttribute('role', 'img');
+  node.setAttribute('aria-label', label || 'Animated picture of this setting');
+  anims.push(t => { node.innerHTML = draw(t); });
+  return node;
+}
+let clock = 0, lastTs = null, lastDraw = 0;
+function frame(ts) {
+  if (lastTs !== null && st.motion) clock += Math.min(0.1, (ts - lastTs) / 1000);
+  lastTs = ts;
+  if ((st.motion && ts - lastDraw > 33) || dirty) { lastDraw = ts; dirty = false; const t = st.motion ? clock : 4.2; anims.forEach(f => f(t)); }
+  requestAnimationFrame(frame);
+}
+
+function changed() {
+  persist();
+  hooks.forEach(f => f());
+  refreshChrome();
+  dirty = true;
+}
+function refreshChrome() {
+  const ch = changedKeys(), w = checks();
+  const cBtn = $('#chip-changes');
+  cBtn.textContent = ch.length + ' changed'; cBtn.className = 'chip' + (ch.length ? ' on' : '');
+  const bad = w.filter(x => x.lvl === 'bad').length, warn = w.filter(x => x.lvl === 'warn').length;
+  const wBtn = $('#chip-warn');
+  wBtn.hidden = !(bad || warn);
+  wBtn.textContent = bad ? bad + (bad === 1 ? ' problem' : ' problems') : warn + (warn === 1 ? ' warning' : ' warnings');
+  wBtn.className = 'chip ' + (bad ? 'bad' : 'warn');
+  document.querySelectorAll('.step-btn').forEach(b => {
+    const v = VIEWS.find(x => x.id === b.dataset.view), dot = b.querySelector('.dot');
+    const sw = w.filter(x => x.step === v.id), lvl = sw.some(x => x.lvl === 'bad') ? 'bad' : sw.some(x => x.lvl === 'warn') ? 'warn' : '';
+    const nCh = v.keys.filter(isChanged).length;
+    dot.className = 'dot ' + (lvl || (nCh ? 'changed' : ''));
+    dot.title = lvl ? sw.map(x => x.msg).join('\n') : nCh ? nCh + ' changed' : '';
+  });
+  document.querySelectorAll('.field[data-key]').forEach(r => r.classList.toggle('changed', isChanged(r.dataset.key)));
+  document.querySelectorAll('[data-reset]').forEach(b => { b.hidden = !isChanged(b.dataset.reset); });
+  document.querySelectorAll('.warns[data-step]').forEach(box => {
+    const id = box.dataset.step, list = id === '*' ? w : w.filter(x => x.step === id || (box.dataset.keys || '').split(' ').includes(x.key));
+    box.replaceChildren(...list.map(x => h('div', { class: 'w ' + x.lvl }, h('span', { class: 'tag' }, x.lvl === 'bad' ? 'fix' : x.lvl === 'warn' ? 'check' : 'note'),
+      h('span', {}, x.msg, id === '*' && x.step !== 'all' ? [' ', h('button', { type: 'button', class: 'link', onclick: () => go(x.step) }, 'Go to step')] : null))));
+  });
+}
+function warnBox(stepId, keys) { return h('div', { class: 'warns', 'data-step': stepId, 'data-keys': (keys || []).join(' '), 'aria-live': 'polite' }); }
+
+function renderRail() {
+  const rail = $('#rail');
+  rail.replaceChildren(h('div', { class: 'rail-h' }, 'Setup steps'),
+    ...STEPS.map((s, i) => h('button', { type: 'button', class: 'step-btn', 'data-view': s.id, onclick: () => go(s.id) },
+      h('span', { class: 'n' }, String(i + 1)), h('span', { class: 'lbl' }, s.short), h('span', { class: 'dot' }))),
+    h('div', { class: 'rail-h' }, 'Reference'),
+    ...EXTRA_VIEWS.map(s => h('button', { type: 'button', class: 'step-btn', 'data-view': s.id, onclick: () => go(s.id) },
+      h('span', { class: 'n' }, '≡'), h('span', { class: 'lbl' }, s.short), h('span', { class: 'dot' }))));
+}
+function go(id, focusKey) {
+  if (!VIEWS.find(v => v.id === id)) id = 'connect';
+  st.view = id;
+  if (location.hash !== '#' + id) { try { history.replaceState(null, '', '#' + id); } catch (e) { location.hash = id; } }
+  render(focusKey);
+}
+function render(focusKey) {
+  anims = []; hooks = []; ctls = {};
+  const v = VIEWS.find(x => x.id === st.view), i = STEPS.indexOf(v);
+  const main = $('#main');
+  main.replaceChildren();
+  main.append(h('div', { class: 'eyebrow' }, i >= 0 ? `Step ${i + 1} of ${STEPS.length}` : 'Reference'), h('h1', {}, v.title));
+  v.render(main);
+  if (i >= 0) main.append(h('div', { class: 'nav-foot' },
+    i > 0 ? h('button', { type: 'button', class: 'btn', onclick: () => go(STEPS[i - 1].id) }, '← ' + STEPS[i - 1].short) : h('span'),
+    i < STEPS.length - 1 ? h('button', { type: 'button', class: 'btn primary', onclick: () => go(STEPS[i + 1].id) }, 'Next: ' + STEPS[i + 1].short + ' →') : h('span')));
+  document.querySelectorAll('.step-btn').forEach(b => b.setAttribute('aria-current', b.dataset.view === st.view ? 'page' : 'false'));
+  const cur = document.querySelector('.step-btn[aria-current="page"]');
+  if (cur && cur.scrollIntoView && window.innerWidth <= 900) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
+  refreshChrome(); dirty = true;
+  if (focusKey) { const r = main.querySelector(`.field[data-key="${focusKey}"]`); if (r) { r.scrollIntoView({ block: 'center' }); const inp = r.querySelector('input,select'); if (inp) inp.focus({ preventScroll: true }); } }
+  else window.scrollTo(0, 0);
+}
+
+// --------------------------------------------------------------- controls
+function control(key, o) {
+  const d = DEF[key], id = 'in-' + key;
+  if (d.t === 'bms') return bmsControl(key);
+  if (d.t === 'bool') {
+    const inp = h('input', { type: 'checkbox', id, role: 'switch' }); inp.checked = bool(key);
+    const txt = h('span', { class: 'unit' }, inp.checked ? 'On' : 'Off');
+    inp.addEventListener('change', () => { txt.textContent = inp.checked ? 'On' : 'Off'; setVal(key, inp.checked ? 'True' : 'False'); });
+    return { node: h('label', { class: 'switch' }, inp, h('span', { class: 'track' }), txt), set: v => { inp.checked = /^true$/i.test(v); txt.textContent = inp.checked ? 'On' : 'Off'; } };
+  }
+  if (d.t === 'select' && d.seg) {
+    const box = h('div', { class: 'seg', role: 'group', id });
+    const paint = () => box.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === String(get(key)))));
+    d.opts.forEach(([v, l]) => box.append(h('button', { type: 'button', 'data-v': v, onclick: () => { setVal(key, v); paint(); } }, l)));
+    paint();
+    return { node: box, set: paint };
+  }
+  if (d.t === 'select') {
+    const sel = h('select', { id }, d.opts.map(([v, l]) => h('option', { value: v }, l)));
+    sel.value = d.opts.some(([v]) => v.toLowerCase() === String(get(key)).toLowerCase()) ? d.opts.find(([v]) => v.toLowerCase() === String(get(key)).toLowerCase())[0] : get(key);
+    sel.addEventListener('change', () => setVal(key, sel.value));
+    return { node: sel, set: v => { sel.value = v; } };
+  }
+  if (d.t === 'int' || d.t === 'float') {
+    const box = h('div', { class: 'f-ctl' });
+    const nIn = h('input', { type: 'number', id, inputmode: 'decimal', step: d.step || 'any', placeholder: d.empty || '' }); nIn.value = get(key);
+    const dec = d.step ? Math.max(0, (String(d.step).split('.')[1] || '').length) : 0;
+    let range = null;
+    if (d.min !== undefined && (o || {}).range !== false) {
+      range = h('input', { type: 'range', min: d.min, max: d.max, step: d.step, 'aria-label': d.label });
+      range.value = get(key) === '' ? d.min : get(key);
+      range.addEventListener('input', () => { const v = Number(range.value).toFixed(dec); nIn.value = v; setVal(key, v); });
+      box.append(range);
+    }
+    nIn.addEventListener('input', () => { if (range && nIn.value !== '') range.value = nIn.value; setVal(key, nIn.value.trim()); });
+    box.append(nIn, d.unit ? h('span', { class: 'unit' }, d.unit) : null);
+    if (d.empty) box.append(h('button', { type: 'button', class: 'link', onclick: () => { nIn.value = ''; setVal(key, ''); } }, d.empty === 'off' ? 'Turn off' : 'Use default'));
+    return { node: box, set: v => { nIn.value = v; if (range && v !== '') range.value = v; } };
+  }
+  if (d.t === 'secret') {
+    const inp = h('input', { type: 'password', id, autocomplete: 'off', placeholder: 'Typed on the Pi only' }); inp.disabled = true;
+    return { node: inp, set: () => {} };
+  }
+  const inp = h('input', { type: 'text', id, class: 'wide', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' }); inp.value = get(key);
+  inp.addEventListener('input', () => setVal(key, inp.value));
+  return { node: inp, set: v => { inp.value = v; } };
+}
+function bmsControl(key) {
+  const rows = h('div', { class: 'stack', style: 'gap:8px' }), box = h('div', { class: 'stack', style: 'gap:8px;width:100%' });
+  const write = () => {
+    const parts = Array.from(rows.children).map(r => r.querySelector('select').value + ' ' + r.querySelector('input').value.trim().toUpperCase()).filter(x => x.split(' ')[1]);
+    setVal(key, parts.join(', '));
+  };
+  const addRow = (type, mac) => {
+    const sel = h('select', { 'aria-label': 'BMS type' }, (BMS_TYPES.includes(type) ? BMS_TYPES : BMS_TYPES.concat([type])).map(t => h('option', { value: t }, t)));
+    sel.value = type;
+    const inp = h('input', { type: 'text', placeholder: 'C8:47:8C:12:34:56', 'aria-label': 'MAC address', autocapitalize: 'characters', spellcheck: 'false', style: 'width:200px' }); inp.value = mac;
+    const ok = h('span', { class: 'unit' });
+    const paint = () => { const v = inp.value.trim(); ok.textContent = !v ? '' : MAC_RE.test(v) ? '✓ valid' : 'not a MAC yet'; ok.style.color = !v ? '' : MAC_RE.test(v) ? 'var(--ok)' : 'var(--warn)'; };
+    sel.addEventListener('change', write); inp.addEventListener('input', () => { paint(); write(); });
+    const row = h('div', { class: 'row' }, sel, inp, ok, h('button', { type: 'button', class: 'btn small', onclick: () => { row.remove(); write(); } }, 'Remove'));
+    paint(); rows.append(row);
+  };
+  const fill = () => { rows.replaceChildren(); bmsEntries().forEach(b => addRow(b.type, b.mac)); };
+  fill();
+  box.append(rows, h('div', {}, h('button', { type: 'button', class: 'btn small', onclick: () => { addRow('Jkbms_Ble', ''); rows.lastChild.querySelector('input').focus(); } }, '+ Add a BMS')));
+  return { node: box, set: fill };
+}
+function field(key, o) {
+  o = o || {};
+  const d = DEF[key], c = control(key, o);
+  (ctls[key] = ctls[key] || []).push(c);
+  const reset = h('button', { type: 'button', class: 'link', 'data-reset': key, hidden: !isChanged(key), onclick: () => { st.vals[key] = d.d; (ctls[key] || []).forEach(x => x.set(d.d)); changed(); } }, 'Back to default');
+  const dShown = d.t === 'secret' ? '–' : d.d === '' ? (d.empty || 'empty') : (d.opts ? (d.opts.find(x => x[0] === d.d) || [0, d.d])[1] : d.d + (d.unit && d.t !== 'list' ? ' ' + d.unit : ''));
+  return h('div', { class: 'field' + (isChanged(key) ? ' changed' : ''), 'data-key': key },
+    h('div', { class: 'f-head' }, h('label', { class: 'f-label', for: 'in-' + key }, o.label || d.label), h('code', {}, key),
+      REBOOT_KEYS.includes(key) ? h('span', { class: 'chip warn' }, 'reboot') : null),
+    (o.plain || d.plain) ? h('p', { class: 'f-plain' }, o.plain || d.plain) : null,
+    h('div', { class: 'f-ctl' }, c.node),
+    h('div', { class: 'f-meta' }, h('span', {}, 'Default: ' + dShown), reset));
+}
+const fields = (keys, o) => h('div', { class: 'card' }, keys.map(k => field(k, o)));
+function callout(...kids) { return h('div', { class: 'callout' }, ...kids); }
+function batField(prop, label, unit, min, max, step, plain) {
+  const id = 'bat-' + prop, dec = (String(step).split('.')[1] || '').length;
+  const nIn = h('input', { type: 'number', id, step, min, max }); nIn.value = st.bat[prop];
+  const r = h('input', { type: 'range', min, max, step, 'aria-label': label }); r.value = st.bat[prop];
+  const upd = v => { const x = parseFloat(v); if (!Number.isFinite(x)) return; st.bat[prop] = x; changed(); };
+  r.addEventListener('input', () => { nIn.value = Number(r.value).toFixed(dec); upd(r.value); });
+  nIn.addEventListener('input', () => { r.value = nIn.value; upd(nIn.value); });
+  return h('div', { class: 'field' }, h('div', { class: 'f-head' }, h('label', { class: 'f-label', for: id }, label)),
+    plain ? h('p', { class: 'f-plain' }, plain) : null, h('div', { class: 'f-ctl' }, r, nIn, h('span', { class: 'unit' }, unit)));
+}
+
+// ------------------------------------------------------------ step 1 connect
+function stepConnect(main) {
+  main.append(h('p', { class: 'lead' }, 'dbus-serialbattery runs on the Pi and talks to the JK BMS over Bluetooth. Tell it which BMS to use, then reboot the Pi. Everything else on this page is optional fine tuning.'));
+  const cap = h('p', { class: 'viz-cap' });
+  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 220', t => {
+    const list = bmsEntries(), usb = bool('BLUETOOTH_USE_USB'), poll = bool('BLUETOOTH_USE_POLLING');
+    const ivSet = String(get('POLL_INTERVAL')).trim() !== '', iv = Math.max(0.4, numOr('POLL_INTERVAL', 1));
+    let o = `<rect x="20" y="66" width="170" height="80" rx="6" class="box"/>` + T(105, 100, 'Venus OS on the Pi', 't-strong', 'middle') + T(105, 120, usb ? 'USB Bluetooth stick' : 'built-in Bluetooth', '', 'middle');
+    const shown = list.length ? list.slice(0, 3) : [null], n = shown.length;
+    shown.forEach((b, i) => {
+      const hh = n === 1 ? 80 : 54, y = n === 1 ? 66 : 8 + i * 66, x = 450, y1 = y + hh / 2, y0 = 106;
+      o += `<line x1="190" y1="${y0}" x2="${x}" y2="${y1}" class="link-line${b && MAC_RE.test(b.mac) ? '' : ' off'}"/>`;
+      o += `<rect x="${x}" y="${y}" width="170" height="${hh}" rx="6" class="${b ? 'box' : 'box dashed'}"/>`;
+      o += T(x + 85, y1 - 3, b ? b.type.replace('_Ble', ' BLE') : 'No BMS yet', 't-strong', 'middle') + T(x + 85, y1 + 14, b ? (b.mac || 'MAC missing') : 'add it below', b && !MAC_RE.test(b.mac) ? 't-warn' : '', 'middle');
+      if (b && MAC_RE.test(b.mac)) {
+        const ph = ((t + i * 0.3) % iv) / iv;
+        if (poll) { const out = ph < 0.5, a = out ? ph * 2 : 1 - (ph - 0.5) * 2; o += `<circle cx="${190 + (x - 190) * a}" cy="${y0 + (y1 - y0) * a}" r="5" class="${out ? 'pk-req' : 'pk-res'}"/>`; }
+        else { const a = 1 - ph; o += `<circle cx="${190 + (x - 190) * a}" cy="${y0 + (y1 - y0) * a}" r="5" class="pk-res"/>`; }
+      }
+    });
+    if (list.length > 3) o += T(535, 214, '+ ' + (list.length - 3) + ' more', '', 'middle');
+    if (list.length) {
+      o += `<circle cx="240" cy="206" r="4" class="pk-req"/>` + T(250, 210, poll ? 'question' : '', 't-small');
+      o += `<circle cx="310" cy="206" r="4" class="pk-res"/>` + T(320, 210, 'BMS data', 't-small');
+    }
+    cap.replaceChildren(...(list.length
+      ? [poll ? 'The Pi asks, the BMS answers, ' : 'The BMS sends its data by itself, ', h('b', {}, ivSet ? 'every ' + iv + ' s' : 'at the driver’s default rate'), '. ' + list.length + (list.length === 1 ? ' BMS' : ' BMS') + ' set up.']
+      : ['Add your JK BMS below to see the link.']));
+    return o;
+  }, 'The Pi and the BMS with data going back and forth'), cap));
+  main.append(warnBox('connect'));
+  main.append(h('h2', {}, 'Which BMS'), fields(['BLUETOOTH_BMS']));
+  main.append(callout(h('b', {}, 'Where is the MAC address? '), 'Open the JK BMS app, connect, and look under device info, or run ', h('code', {}, 'bluetoothctl scan on'), ' on the Pi and look for a name starting with JK-. It looks like C8:47:8C:12:34:56.'));
+  main.append(h('h2', {}, 'If the connection is unstable'), fields(['POLL_INTERVAL', 'BLUETOOTH_USE_POLLING', 'BLUETOOTH_USE_USB', 'BLUETOOTH_FORCE_RESET_BLE_STACK', 'BMS_CABLE_ALARM']));
+  main.append(h('h2', {}, 'Save a little CPU'), fields(['SERIAL_STARTER_ENABLED']));
+}
+
+// ------------------------------------------------------------ step 2 battery
+function stepBattery(main) {
+  main.append(h('p', { class: 'lead' }, 'Copy a few numbers from the JK BMS app. They are not settings of the driver, but this guide uses them to draw the pictures, convert cell voltages to battery voltages and warn you when a setting is too close to a BMS limit.'));
+  const cap = h('p', { class: 'viz-cap' });
+  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 170', t => {
+    const N = cells(), shown = Math.min(N, 16), gap = 6, w = Math.min(64, (600 - gap * (shown - 1)) / shown), x0 = (640 - (w * shown + gap * (shown - 1))) / 2;
+    let o = '';
+    for (let i = 0; i < shown; i++) {
+      const x = x0 + i * (w + gap), lvl = clamp(0.55 + 0.35 * Math.sin(t * 0.6) + 0.04 * Math.sin(t * 1.3 + i * 1.7), 0.05, 1);
+      o += `<rect x="${x}" y="22" width="${w}" height="96" rx="4" class="cell"/>`;
+      o += `<rect x="${x + 3}" y="${22 + 3 + (90 * (1 - lvl))}" width="${w - 6}" height="${90 * lvl}" rx="2" class="cell-fill"/>`;
+      o += `<rect x="${x + w / 2 - 6}" y="16" width="12" height="6" rx="1" class="cell"/>`;
+      if (w > 28) o += T(x + w / 2, 136, String(i + 1), 't-small', 'middle');
+    }
+    if (N > shown) o += T(620, 74, '+' + (N - shown), '', 'end');
+    const nom = N * 3.2, kwh = nom * st.bat.ah / 1000;
+    cap.replaceChildren(h('b', {}, N + ' cells in series'), ' = ' + fx(nom, 1) + ' V nominal · ' + st.bat.ah + ' Ah · ' + fx(kwh, 2) + ' kWh. Each cell can be between ' + fx(st.bat.uvp, 2) + ' V and ' + fx(st.bat.ovp, 2) + ' V before the BMS steps in.');
+    return o + T(320, 160, 'one LiFePO4 cell = 3.2 V nominal', 't-small', 'middle');
+  }, 'Cells of the battery'), cap));
+  main.append(callout(h('b', {}, 'Example values. '), 'A 12 V camper battery has 4 cells. Change these to your battery; they are saved with your backup.'));
+  main.append(h('div', { class: 'card' },
+    batField('cells', 'Cells in series', 'cells', 1, 24, 1, 'JK app: Settings → Cell count. 4 for 12 V, 8 for 24 V, 16 for 48 V.'),
+    batField('ah', 'Capacity', 'Ah', 20, 1000, 5, 'JK app: Battery capacity. Used for the C-rate advice.'),
+    batField('ovp', 'Cell over-voltage protection (OVP)', 'V', 3.5, 3.8, 0.005, 'JK app: Cell OVP. The BMS stops charging when any cell reaches this.'),
+    batField('uvp', 'Cell under-voltage protection (UVP)', 'V', 2.5, 3.1, 0.005, 'JK app: Cell UVP. The BMS stops discharging when any cell falls to this.'),
+    batField('bms', 'BMS rated current', 'A', 40, 600, 5, 'The current your JK model is built for, for example 200 A for a B2A24S20P.')));
+}
+
+// ----------------------------------------------------------- step 3 currents
+function stepCurrents(main) {
+  main.append(h('p', { class: 'lead' }, 'These two values are the ceiling. Every other limit in this guide (cell voltage, temperature, SoC) can only lower the current from here, never raise it.'));
+  const cap = h('p', { class: 'viz-cap' });
+  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 200', t => {
+    const cc = numOr('MAX_BATTERY_CHARGE_CURRENT', 0), dc = numOr('MAX_BATTERY_DISCHARGE_CURRENT', 0), top = Math.max(cc, dc, 1), V = cells() * 3.3;
+    const wc = 2 + 14 * cc / top, wd = 2 + 14 * dc / top;
+    let o = `<rect x="20" y="60" width="150" height="70" rx="6" class="box"/>` + T(95, 92, 'Solar, DC-DC,', 't-strong', 'middle') + T(95, 110, 'shore charger', 't-strong', 'middle');
+    o += `<rect x="250" y="44" width="140" height="102" rx="8" class="box"/>` + `<rect x="300" y="36" width="40" height="8" rx="2" class="box"/>` + T(320, 92, 'Battery', 't-strong', 'middle') + T(320, 110, cells() + ' cells · ' + st.bat.ah + ' Ah', '', 'middle');
+    o += `<rect x="470" y="60" width="150" height="70" rx="6" class="box"/>` + T(545, 92, 'Inverter and', 't-strong', 'middle') + T(545, 110, '12 V loads', 't-strong', 'middle');
+    const offC = -(t * (10 + cc / 4)) % 24, offD = -(t * (10 + dc / 4)) % 24;
+    o += `<line x1="176" y1="95" x2="244" y2="95" class="flow-c" stroke-width="${wc}" stroke-dasharray="10 14" stroke-dashoffset="${offC}"/>`;
+    o += `<line x1="396" y1="95" x2="464" y2="95" class="flow-d" stroke-width="${wd}" stroke-dasharray="10 14" stroke-dashoffset="${offD}"/>`;
+    o += T(210, 30, 'charge', 't-charge', 'middle') + T(210, 162, fx(cc, 0) + ' A', 't-charge', 'middle') + T(210, 180, fx(cc / st.bat.ah, 2) + ' C · ≈' + fx(cc * V, 0) + ' W', 't-small', 'middle');
+    o += T(430, 30, 'discharge', 't-dis', 'middle') + T(430, 162, fx(dc, 0) + ' A', 't-dis', 'middle') + T(430, 180, fx(dc / st.bat.ah, 2) + ' C · ≈' + fx(dc * V, 0) + ' W', 't-small', 'middle');
+    cap.replaceChildren('At most ', h('b', {}, fx(cc, 0) + ' A'), ' goes in and ', h('b', {}, fx(dc, 0) + ' A'), ' comes out. Venus OS (DVCC) tells all chargers to stay below the charge limit together.');
+    return o;
+  }, 'Charge current in, discharge current out'), cap));
+  main.append(warnBox('currents'));
+  main.append(fields(['MAX_BATTERY_CHARGE_CURRENT', 'MAX_BATTERY_DISCHARGE_CURRENT']));
+  main.append(callout(h('b', {}, 'Rule of thumb: '), 'charge at 0.2 to 0.5 C (for ' + st.bat.ah + ' Ah: ' + Math.round(st.bat.ah * 0.2) + ' to ' + Math.round(st.bat.ah * 0.5) + ' A), and set both values a little below the BMS over-current protection so the driver limits first and the BMS never has to cut off. DVCC must be on in Venus OS for the limits to reach your chargers.'));
+}
+
+// ----------------------------------------------------------- step 4 voltages
+function lfp(p) { // a LiFePO4 voltage curve shape 0..1 → 0..1: steep ends, flat middle
+  return p < 0.1 ? 0.35 * p / 0.1 : p > 0.9 ? 0.55 + 0.45 * (p - 0.9) / 0.1 : 0.35 + 0.2 * (p - 0.1) / 0.8;
+}
+function stepVoltages(main) {
+  main.append(h('p', { class: 'lead' }, 'All voltages here are per cell. The driver multiplies them by the number of cells (' + cells() + ') and sends the result to your chargers. The JK BMS has its own hard limits; these settings keep the battery comfortably inside them.'));
+  const cap = h('p', { class: 'viz-cap' }), tbl = h('div', { class: 'tbl' });
+  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 190', t => {
+    const B = st.bat, N = cells(), mn = num('MIN_CELL_VOLTAGE'), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
+    const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
+    const lo = Math.min(B.uvp, mn) - 0.12, hi = Math.max(B.ovp, resetOn ? rs : mx) + 0.08, X = v => 20 + (v - lo) / (hi - lo) * 600;
+    const zones = [[lo, B.uvp, 'z-bad'], [B.uvp, mn, 'z-warn'], [mn, fl, 'z-ok'], [fl, mx, 'z-charge']];
+    if (resetOn && rs > mx) zones.push([mx, rs, 'z-top']);
+    zones.push([resetOn ? Math.max(mx, rs) : mx, B.ovp, 'z-none'], [B.ovp, hi, 'z-bad']);
+    let o = '';
+    zones.forEach(([a, b, c]) => { if (b > a) o += `<rect x="${X(a)}" y="78" width="${X(b) - X(a)}" height="28" class="${c}"/>`; });
+    o += `<rect x="20" y="78" width="600" height="28" class="grid"/>`;
+    const marks = [[B.uvp, 'BMS UVP', 't-bad'], [mn, 'Empty', 't-warn'], [fl, 'Float', 't-ok'], [mx, 'Full', 't-charge']];
+    if (resetOn) marks.push([rs, 'Top balance', 't-top']);
+    marks.push([B.ovp, 'BMS OVP', 't-bad']);
+    marks.sort((a, b) => a[0] - b[0]).forEach(([v, l, c], i) => {
+      const row = i % 4, up = row % 2 === 0, y = up ? (row === 0 ? 66 : 40) : (row === 1 ? 126 : 152), x = X(v);
+      o += `<line x1="${x}" y1="${up ? y + 4 : 106}" x2="${x}" y2="${up ? 78 : y - 12}" class="axis"/>`;
+      o += T(x, y - (up ? 12 : 0), l, c, 'middle') + T(x, y + (up ? 2 : 13), fx(v, 3) + ' V', 't-small', 'middle');
+    });
+    const p = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI / 14), topV = resetOn ? Math.max(rs, mx) : mx, cv = mn + (topV - mn) * lfp(p);
+    const zone = cv < mn ? 'below empty' : cv < fl ? 'normal use' : cv <= mx ? 'charging up to full' : 'top balancing';
+    o += `<line x1="${X(cv)}" y1="72" x2="${X(cv)}" y2="112" stroke-width="3" class="l-ink"/><circle cx="${X(cv)}" cy="72" r="4" class="f-ink"/>`;
+    cap.replaceChildren('A cell going through a day: ', h('b', {}, fx(cv, 3) + ' V'), ' per cell = ', h('b', {}, fx(cv * N, 2) + ' V'), ' for the battery, ' + zone + '.');
+    return o;
+  }, 'Cell voltage scale with the BMS limits and your settings'), cap));
+  const table = () => {
+    const B = st.bat, N = cells(), drop = numOr('VOLTAGE_DROP', 0), resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
+    const rows = [['BMS OVP', B.ovp, 'The BMS stops charging. Your settings should never get here.'],
+      resetOn ? ['Top balance', num('SOC_RESET_CELL_VOLTAGE'), 'Every ' + get('SOC_RESET_AFTER_DAYS') + ' days, so the JK BMS can balance and reset its SoC.'] : null,
+      ['Full', num('MAX_CELL_VOLTAGE'), 'Chargers are asked for this (plus ' + fx(drop, 2) + ' V cable drop).'],
+      ['Float', num('FLOAT_CELL_VOLTAGE'), 'Held after the battery is full.'],
+      ['Empty', num('MIN_CELL_VOLTAGE'), 'Counts as 0 % if the driver counts the SoC.'],
+      ['BMS UVP', B.uvp, 'The BMS stops discharging.']].filter(Boolean);
+    tbl.replaceChildren(h('table', {}, h('thead', {}, h('tr', {}, ['', 'Per cell', 'Battery (×' + N + ')', 'What happens'].map(x => h('th', {}, x)))),
+      h('tbody', {}, rows.map(([l, v, w]) => h('tr', {}, h('td', {}, h('b', {}, l)), h('td', {}, fx(v, 3) + ' V'), h('td', {}, fx(v * N + (l === 'Full' || l === 'Top balance' ? drop : 0), 2) + ' V'), h('td', { class: 'muted' }, w))))));
+  };
+  hooks.push(table); table();
+  main.append(h('div', { class: 'card', style: 'margin-top:12px' }, tbl));
+  main.append(warnBox('voltages'));
+  main.append(h('h2', {}, 'Your voltages'), fields(['MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'MIN_CELL_VOLTAGE']));
+  main.append(callout(h('b', {}, 'Good starting point for LiFePO4: '), 'full 3.45 V, float 3.375 V, empty 2.90 V. That leaves about 0.2 V below the usual JK OVP of 3.65 V, so a single cell running ahead does not trip the BMS.'));
+  main.append(h('h2', {}, 'Long or thin cables'), fields(['VOLTAGE_DROP']));
+}
+
+// ------------------------------------------------------- step 5 charge cycle
+function dayModel() {
+  const N = cells(), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
+  const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '', top = st.dayTop && resetOn, target = top ? Math.max(rs, mx) : mx;
+  const cvcm = bool('CVCM_ENABLE'), thr = numOr('SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 10), diffOn = thr > 0 && thr < 10;
+  const waitH = Math.max(0, numOr('SWITCH_TO_FLOAT_WAIT_FOR_SEC', 0)) / 3600;
+  const bulkSoc = numOr('SWITCH_TO_BULK_SOC_THRESHOLD', 0);
+  const tFull = 5.5, d0 = top ? 0.045 : 0.030, k = 1.3, tDis = 11;
+  const balH = diffOn ? Math.max(0, Math.log(d0 / Math.max(thr, 0.001)) / k) : 0;
+  const absH = Math.min(balH + waitH, 5), tBal = tFull + Math.min(balH, 5), tFloat = tFull + absH;
+  const socEnd = 35;
+  const soc = h_ => h_ < tFull ? 40 + 59 * h_ / tFull : h_ < tDis ? 100 : 100 - (100 - socEnd) * (h_ - tDis) / 13;
+  let tBulk = null;
+  if (cvcm && bulkSoc > 0) tBulk = bulkSoc >= 100 ? tDis : bulkSoc > socEnd ? tDis + (100 - bulkSoc) / (100 - socEnd) * 13 : null;
+  const cvl = h_ => !cvcm ? target : h_ < tFloat ? target : (tBulk !== null && h_ >= tBulk) ? mx : fl;
+  const restV = cvcm ? fl : target;
+  const cellV = h_ => h_ < tFull ? 3.28 + (target - 3.28) * Math.pow(h_ / tFull, 6) : h_ < tFloat ? target : h_ < tDis ? (cvcm ? fl + (target - fl) * Math.exp(-(h_ - tFloat) * 3) : target) : 3.24 + (restV - 3.24) * Math.exp(-(h_ - tDis) * 1.6) - 0.002 * (h_ - tDis);
+  const diff = h_ => h_ < tFull - 1 ? 0.005 : h_ < tFull ? 0.005 + (d0 - 0.005) * (h_ - tFull + 1) : h_ < tDis ? Math.max(0.004, d0 * Math.exp(-k * (h_ - tFull))) : 0.006;
+  const phase = h_ => {
+    if (!cvcm) return h_ < tFull ? ['bulk', 'Charging'] : h_ < tDis ? ['abs', 'Held at full voltage'] : ['dis', 'Discharging'];
+    if (h_ < tFull) return ['bulk', 'Bulk'];
+    if (h_ < tBal) return ['abs', 'Absorption: balancing'];
+    if (h_ < tFloat) return ['abs', 'Absorption: timer'];
+    if (tBulk !== null && h_ >= tBulk) return ['rebulk', 'Ready for a full charge'];
+    return ['float', h_ < tDis ? 'Float' : 'Float, discharging'];
+  };
+  return { N, mx, fl, target, top, cvcm, thr, diffOn, waitH, balH, tFull, tBal, tFloat, tDis, tBulk, bulkSoc, soc, cvl, cellV, diff, phase };
+}
+const clockOf = h_ => { const m = Math.round((7 + h_) * 60) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+function stepCharging(main) {
+  main.append(h('p', { class: 'lead' }, 'A good charge cycle fills the battery, gives the balancer time to even out the cells, and then lets the battery rest at a lower float voltage. Every few days it can charge a bit higher so the JK BMS resets its SoC and top balances.'));
+  const pills = h('div', { class: 'pills' }), cap = h('p', { class: 'viz-cap' });
+  const resetOn = () => String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Which day to show' });
+  const paintSeg = () => {
+    seg.replaceChildren(...[[false, 'Normal day'], [true, 'Top balance day']].map(([v, l]) => h('button', { type: 'button', 'aria-pressed': String(st.dayTop === v), disabled: v && !resetOn() ? true : null,
+      onclick: () => { st.dayTop = v; paintSeg(); dirty = true; } }, l)));
+    if (!resetOn() && st.dayTop) { st.dayTop = false; paintSeg(); }
+  };
+  paintSeg(); hooks.push(paintSeg);
+  main.append(h('div', { class: 'card viz-card' }, h('div', { class: 'row', style: 'justify-content:space-between' }, pills, seg),
+    viz('0 0 640 300', t => {
+      const M = dayModel(), X = h_ => 52 + h_ / 24 * 568;
+      const vLo = 3.18, vHi = Math.max(M.target, M.mx) + 0.04, Y = v => 170 - (v - vLo) / (vHi - vLo) * 150, YS = s => 272 - s / 100 * 70;
+      let o = '';
+      // phase bands
+      const band = (a, b, c) => { if (b > a) o += `<rect x="${X(a)}" y="20" width="${X(b) - X(a)}" height="150" class="${c}"/>`; };
+      if (M.cvcm) { band(M.tFull, M.tFloat, M.top ? 'z-top' : 'z-charge'); band(M.tFloat, M.tBulk !== null ? M.tBulk : 24, 'z-ok'); }
+      else band(M.tFull, M.tDis, 'z-charge');
+      // grid + axes
+      [3.2, 3.3, 3.4, 3.5, 3.6, 3.7].filter(v => v > vLo && v < vHi).forEach(v => { o += `<line x1="52" x2="620" y1="${Y(v)}" y2="${Y(v)}" class="grid"/>` + T(46, Y(v) + 4, fx(v * M.N, 1), 't-small', 'end'); });
+      o += T(46, 14, 'V', 't-small', 'end');
+      for (let i = 0; i <= 6; i++) { const hh = i * 4; o += T(X(hh), 296, clockOf(hh), 't-small', 'middle'); }
+      o += `<rect x="52" y="202" width="568" height="70" class="grid"/>` + T(46, 206, '100%', 't-small', 'end') + T(46, 274, '0%', 't-small', 'end');
+      // lines
+      let cv = '', pv = '', sp = '';
+      for (let i = 0; i <= 240; i++) { const hh = i / 10; cv += (i ? 'L' : 'M') + X(hh).toFixed(1) + ',' + Y(M.cvl(hh)).toFixed(1); pv += (i ? 'L' : 'M') + X(hh).toFixed(1) + ',' + Y(M.cellV(hh)).toFixed(1); sp += 'L' + X(hh).toFixed(1) + ',' + YS(M.soc(hh)).toFixed(1); }
+      o += `<path d="M52,272${sp}L620,272Z" class="a-charge"/><path d="${'M' + sp.slice(1)}" class="l-charge" stroke-width="1.5"/>`;
+      o += `<path d="${pv}" class="l-ink"/><path d="${cv}" class="l-charge"/>`;
+      if (M.cvcm && M.bulkSoc > 0 && M.bulkSoc < 100) o += `<line x1="52" x2="620" y1="${YS(M.bulkSoc)}" y2="${YS(M.bulkSoc)}" class="l-warn"/>` + T(616, YS(M.bulkSoc) - 4, 'full charge again below ' + M.bulkSoc + ' %', 't-warn', 'end');
+      o += T(58, 196, 'State of charge', 't-small');
+      o += `<line x1="430" x2="450" y1="12" y2="12" class="l-charge"/>` + T(454, 16, 'charge voltage (CVL)', 't-small') + `<line x1="560" x2="580" y1="12" y2="12" class="l-ink"/>` + T(584, 16, 'battery', 't-small');
+      // playhead
+      const hh = (t % 20) / 20 * 24, x = X(hh);
+      o += `<line x1="${x}" x2="${x}" y1="20" y2="272" class="playhead"/><circle cx="${x}" cy="${Y(M.cvl(hh))}" r="4" class="f-charge"/><circle cx="${x}" cy="${Y(M.cellV(hh))}" r="3.5" class="f-ink"/><circle cx="${x}" cy="${YS(M.soc(hh))}" r="3.5" class="f-charge"/>`;
+      // texts
+      const [pid, pname] = M.phase(hh), d = M.diff(hh), soc = M.soc(hh);
+      const order = M.cvcm ? [['bulk', 'Bulk'], ['abs', 'Absorption'], ['float', 'Float'], ['rebulk', 'Full charge again']] : [['bulk', 'Charging'], ['abs', 'Held at full'], ['dis', 'Discharging']];
+      pills.replaceChildren(...order.map(([id, l]) => h('span', { class: 'pill' + (id === pid ? ' now' : '') }, l)));
+      let why = '';
+      if (pid === 'bulk') why = `Chargers push current until the battery reaches ${fx(M.target * M.N, 2)} V (${fx(M.target, 3)} V per cell)${M.top ? ', the top balance voltage' : ''}.`;
+      else if (pname.includes('balancing')) why = `Cells are ${fx(d * 1000, 0)} mV apart. Float waits until they are within ${fx(M.thr * 1000, 0)} mV.`;
+      else if (pname.includes('timer')) why = `Cells are balanced. Holding full voltage ${fx(M.waitH * 60, 0)} min more.`;
+      else if (pid === 'float') why = `Battery is full. Chargers hold ${fx(M.fl * M.N, 2)} V so the cells can rest.${bool('AUTO_RESET_SOC') ? ' The JK BMS SoC was set to 100 %.' : ''}`;
+      else if (pid === 'rebulk') why = `SoC ${fx(soc, 0)} % is below ${M.bulkSoc} %: the next charge goes up to full again.`;
+      else if (pid === 'abs') why = 'Without float, chargers keep the full voltage all day.';
+      else why = 'Loads run from the battery.';
+      cap.replaceChildren(h('b', {}, clockOf(hh) + ' · ' + pname), ' — ' + why, h('br'), `SoC ${fx(soc, 0)} % · cells ${fx(d * 1000, 0)} mV apart · charge voltage ${fx(M.cvl(hh) * M.N, 2)} V`);
+      return o;
+    }, 'A simulated day: charge voltage, battery voltage and state of charge'), cap));
+  // calendar of top balance days
+  const cal = h('div', { class: 'cal' }), calCap = h('p', { class: 'viz-cap' });
+  anims.push(t => {
+    const n = parseInt(get('SOC_RESET_AFTER_DAYS'), 10), today = Math.floor(t / 2) % 28;
+    cal.replaceChildren(...Array.from({ length: 28 }, (_, i) => h('div', { class: (n > 0 && i % n === 0 ? 'reset' : '') + (i === today ? ' today' : '') }, String(i + 1))));
+    calCap.replaceChildren(...(n > 0 ? ['Top balance to ', h('b', {}, fx(num('SOC_RESET_CELL_VOLTAGE'), 3) + ' V'), ` on day 1, ${1 + n}${1 + 2 * n <= 28 ? ', ' + (1 + 2 * n) : ''}… (needs a sunny enough day: if the voltage is not reached, it tries again the next day).`]
+      : ['Top balancing is off. Set "Top balance every" below to plan it.']));
+  });
+  main.append(h('div', { class: 'card viz-card', style: 'margin-top:12px' }, h('h3', {}, 'Four weeks of top balancing'), cal, calCap));
+  main.append(warnBox('charging'));
+  main.append(h('h2', {}, 'Float'), fields(['CVCM_ENABLE', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 'SWITCH_TO_FLOAT_WAIT_FOR_SEC', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 'AUTO_RESET_SOC']));
+  main.append(h('h2', {}, 'Top balance and SoC reset'), callout('The JK BMS only resets its SoC to 100 % when a cell reaches its OVP. Charging a little higher every few days does that and also gives the balancer a chance at the top. Start at ', h('b', {}, fx(st.bat.ovp - 0.03, 3) + ' V'), ' (your OVP − 0.030). Raise it by 0.005 V if the battery never switches to float; lower it if the BMS trips on OVP.'),
+    h('div', { style: 'height:12px' }), fields(['SOC_RESET_AFTER_DAYS', 'SOC_RESET_CELL_VOLTAGE']));
+  main.append(h('details', { class: 'grp', style: 'margin-top:12px' }, h('summary', {}, 'Fine tuning'), h('div', { class: 'body' }, field('SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION'))));
+}
+
+// ------------------------------------------------------- curve editor (shared)
+function curveEditor(o) {
+  // o: {title, xKey, yKey, enKey, maxKey, dir:'c'|'d', unit, dec, sweep:[a,b], period, side, note}
+  const cap = h('p', { class: 'viz-cap' }), tbody = h('tbody'), err = h('div', { class: 'f-err' });
+  const en = o.enKey ? control(o.enKey) : null;
+  if (en) (ctls[o.enKey] = ctls[o.enKey] || []).push(en);
+  const head = h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', {}, o.title), en ? en.node : null);
+  const svgNode = viz('0 0 520 230', t => {
+    const p = pairs(o.xKey, o.yKey), max = numOr(o.maxKey, 0), on = o.enKey ? bool(o.enKey) : true, isC = o.dir === 'c';
+    if (!p) { cap.textContent = 'The two lists need the same number of points.'; return T(260, 115, 'Lists do not match', 't-bad', 'middle'); }
+    const xs = p.map(q => q[0]).concat(o.sweep), lo = Math.min(...xs), hi = Math.max(...xs), pad = (hi - lo) * 0.06 || 1;
+    const X = v => 50 + (v - (lo - pad)) / ((hi + pad) - (lo - pad)) * 455, Y = f => 190 - f * 165;
+    let s = '';
+    [0, 0.25, 0.5, 0.75, 1].forEach(f => { s += `<line x1="50" x2="505" y1="${Y(f)}" y2="${Y(f)}" class="grid"/>` + T(44, Y(f) + 4, fx(f * max, 0) + ' A', 't-small', 'end'); });
+    const ticks = 6; for (let i = 0; i <= ticks; i++) { const v = lo + (hi - lo) * i / ticks; s += T(X(v), 210, fx(v, o.dec), 't-small', 'middle'); }
+    s += T(505, 226, o.unit === 'V' ? 'cell voltage (V)' : o.unit === '°C' ? 'temperature (°C)' : 'state of charge (%)', 't-small', 'end');
+    let d = '', a = '';
+    const x0 = lo - pad, x1 = hi + pad, steps = 160;
+    for (let i = 0; i <= steps; i++) { const v = x0 + (x1 - x0) * i / steps, f = curveAt(p, v, o.side); d += (i ? 'L' : 'M') + X(v).toFixed(1) + ',' + Y(f).toFixed(1); }
+    a = d + `L${X(x1)},${Y(0)}L${X(x0)},${Y(0)}Z`;
+    s += `<path d="${a}" class="${on ? (isC ? 'a-charge' : 'a-dis') : 'z-none'}"/><path d="${d}" class="${on ? (isC ? 'l-charge' : 'l-dis') : 'l-muted'}"/>`;
+    p.forEach(([x, f]) => { s += `<circle cx="${X(x)}" cy="${Y(f)}" r="4" class="f-surface"/>`; });
+    const ph = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI / (o.period || 10)), v = o.sweep[0] + (o.sweep[1] - o.sweep[0]) * ph, f = on ? curveAt(p, v, o.side) : 1;
+    s += `<line x1="${X(v)}" x2="${X(v)}" y1="25" y2="190" class="playhead"/><circle cx="${X(v)}" cy="${Y(f)}" r="5.5" class="${isC ? 'f-charge' : 'f-dis'}"/>`;
+    s += `<rect x="512" y="${Y(f)}" width="8" height="${Y(0) - Y(f)}" class="${isC ? 'f-charge' : 'f-dis'}"/>`;
+    cap.replaceChildren(o.what + ' ', h('b', {}, fx(v, o.dec) + ' ' + o.unit), ' → ', h('b', {}, fx(f * max, 1) + ' A'), ` allowed (${fx(f * 100, 0)} % of ${fx(max, 0)} A)` + (on ? '' : '. This limit is off.'));
+    return s;
+  }, o.title);
+  const fill = () => {
+    const xs = nums(get(o.xKey)), ys = nums(get(o.yKey)), n = Math.max(xs.length, ys.length);
+    tbody.replaceChildren();
+    for (let i = 0; i < n; i++) {
+      const xi = h('input', { type: 'number', step: o.unit === 'V' ? 0.005 : 1, 'aria-label': 'Point ' + (i + 1) + ' ' + o.unit }); xi.value = xs[i] !== undefined ? xs[i] : '';
+      const yi = h('input', { type: 'number', step: 0.5, min: 0, max: 100, 'aria-label': 'Point ' + (i + 1) + ' percent' }); yi.value = ys[i] !== undefined ? +(ys[i] * 100).toFixed(2) : '';
+      xi.addEventListener('input', write); yi.addEventListener('input', write);
+      tbody.append(h('tr', {}, h('td', {}, xi, ' ', h('span', { class: 'unit' }, o.unit)), h('td', {}, yi, ' ', h('span', { class: 'unit' }, '%')),
+        h('td', {}, n > 2 ? h('button', { type: 'button', class: 'btn small', onclick: () => { const X_ = nums(get(o.xKey)), Y_ = nums(get(o.yKey)); X_.splice(i, 1); Y_.splice(i, 1); st.vals[o.xKey] = fmtList(X_, o.dec); st.vals[o.yKey] = fmtList(Y_, 3); changed(); fill(); } }, 'Remove') : null)));
+    }
+  };
+  function write() {
+    const rows = Array.from(tbody.children);
+    st.vals[o.xKey] = rows.map(r => r.children[0].querySelector('input').value.trim()).filter(x => x !== '').join(', ');
+    st.vals[o.yKey] = rows.map(r => r.children[1].querySelector('input').value.trim()).filter(x => x !== '').map(x => (Number(x) / 100).toFixed(3)).join(', ');
+    changed();
+  }
+  fill();
+  (ctls[o.xKey] = ctls[o.xKey] || []).push({ set: fill }); (ctls[o.yKey] = ctls[o.yKey] || []).push({ set: fill });
+  const resetBtn = h('button', { type: 'button', class: 'link', onclick: () => { st.vals[o.xKey] = DEF[o.xKey].d; st.vals[o.yKey] = DEF[o.yKey].d; changed(); fill(); } }, 'Back to default curve');
+  const addBtn = h('button', { type: 'button', class: 'btn small', onclick: () => {
+    const p = pairs(o.xKey, o.yKey) || []; const last = p.length ? p[p.length - 1] : [o.sweep[1], 1];
+    st.vals[o.xKey] = fmtList(nums(get(o.xKey)).concat([last[0] + (o.unit === 'V' ? 0.025 : 5)]), o.dec); st.vals[o.yKey] = fmtList(nums(get(o.yKey)).concat([last[1]]), 3); changed(); fill();
+  } }, '+ Add point');
+  return h('div', { class: 'card viz-card', 'data-key': o.xKey }, head, o.note ? h('p', { class: 'f-plain' }, o.note) : null, svgNode, cap,
+    h('details', {}, h('summary', { style: 'cursor:pointer;color:var(--charge);font-size:.88rem;margin-top:6px' }, 'Edit the points'),
+      h('div', { class: 'tbl' }, h('table', { class: 'pts' }, h('thead', {}, h('tr', {}, h('th', {}, o.unit === 'V' ? 'Cell voltage' : o.unit === '°C' ? 'Temperature' : 'SoC'), h('th', {}, 'Current allowed'), h('th'))), tbody)),
+      h('div', { class: 'row', style: 'margin-top:8px' }, addBtn, resetBtn, h('code', { class: 'muted' }, o.xKey + ' / ' + o.yKey)), err));
+}
+const fmtList = (arr, dec) => arr.map(v => Number(v).toFixed(dec)).join(', ');
+
+// ------------------------------------------------------------ step 6 cells
+function stepCells(main) {
+  main.append(h('p', { class: 'lead' }, 'Cells never sit at exactly the same voltage. These curves look at the highest cell while charging and the lowest cell while discharging, and turn the current down before that one cell reaches a BMS limit. The dot shows the current allowed as a cell moves along the curve.'));
+  main.append(warnBox('cells', ['CELL_VOLTAGES_WHILE_CHARGING']));
+  const B = st.bat, rsOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
+  main.append(h('div', { class: 'two' },
+    curveEditor({ title: 'Charging: highest cell', xKey: 'CELL_VOLTAGES_WHILE_CHARGING', yKey: 'MAX_CHARGE_CURRENT_CV_FRACTION', enKey: 'CCCM_CV_ENABLE', maxKey: 'MAX_BATTERY_CHARGE_CURRENT', dir: 'c', unit: 'V', dec: 3,
+      sweep: [3.33, Math.max(3.52, rsOn ? num('SOC_RESET_CELL_VOLTAGE') : 0)], period: 11, side: 'lower', what: 'Highest cell at' }),
+    curveEditor({ title: 'Discharging: lowest cell', xKey: 'CELL_VOLTAGES_WHILE_DISCHARGING', yKey: 'MAX_DISCHARGE_CURRENT_CV_FRACTION', enKey: 'DCCM_CV_ENABLE', maxKey: 'MAX_BATTERY_DISCHARGE_CURRENT', dir: 'd', unit: 'V', dec: 3,
+      sweep: [Math.min(2.78, B.uvp), 3.26], period: 11, side: 'upper', what: 'Lowest cell at' })));
+  main.append(h('h2', {}, 'How the curves are followed'), fields(['CHARGE_MODE']));
+  main.append(h('h2', {}, 'Lowering the charge voltage for one high cell'), fields(['CVL_CONTROLLER_MODE']),
+    h('details', { class: 'grp', style: 'margin-top:12px' }, h('summary', {}, 'Fine tuning'), h('div', { class: 'body' }, field('CVL_ICONTROLLER_FACTOR'))));
+}
+
+// ------------------------------------------------------- step 7 temperature
+function stepTemperature(main) {
+  main.append(h('p', { class: 'lead' }, 'LiFePO4 must not be charged below 0 °C, and both cold and heat age the cells. The JK BMS has temperature sensors on the cells; the driver uses the worst one and turns the current down before the BMS has to stop.'));
+  main.append(warnBox('temperature'));
+  main.append(h('div', { class: 'two' },
+    curveEditor({ title: 'Charging', xKey: 'TEMPERATURES_WHILE_CHARGING', yKey: 'MAX_CHARGE_CURRENT_T_FRACTION', enKey: 'CCCM_T_ENABLE', maxKey: 'MAX_BATTERY_CHARGE_CURRENT', dir: 'c', unit: '°C', dec: 0, sweep: [-5, 58], period: 13, side: 'lower', what: 'Cells at' }),
+    curveEditor({ title: 'Discharging', xKey: 'TEMPERATURES_WHILE_DISCHARGING', yKey: 'MAX_DISCHARGE_CURRENT_T_FRACTION', enKey: 'DCCM_T_ENABLE', maxKey: 'MAX_BATTERY_DISCHARGE_CURRENT', dir: 'd', unit: '°C', dec: 0, sweep: [-14, 58], period: 13, side: 'lower', what: 'Cells at' })));
+  main.append(callout(h('b', {}, 'Winter camping: '), 'with the default curve, charging stops at 0 °C and only reaches full current at 10 °C. A heating pad that the BMS switches on below a few degrees lets solar charge again on cold mornings.'));
+  main.append(h('h2', {}, 'Hot BMS (MOSFET temperature)'), h('p', { class: 'muted' }, 'The switching transistors in the BMS warm up with high currents. Defaults are fine for almost everyone.'),
+    h('div', { class: 'two' },
+      curveEditor({ title: 'Charging', xKey: 'MOSFET_TEMPERATURES_WHILE_CHARGING', yKey: 'MAX_CHARGE_CURRENT_T_MOSFET_FRACTION', enKey: 'CCCM_T_MOSFET_ENABLE', maxKey: 'MAX_BATTERY_CHARGE_CURRENT', dir: 'c', unit: '°C', dec: 0, sweep: [40, 95], period: 12, side: 'lower', what: 'MOSFETs at' }),
+      curveEditor({ title: 'Discharging', xKey: 'MOSFET_TEMPERATURES_WHILE_DISCHARGING', yKey: 'MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION', enKey: 'DCCM_T_MOSFET_ENABLE', maxKey: 'MAX_BATTERY_DISCHARGE_CURRENT', dir: 'd', unit: '°C', dec: 0, sweep: [40, 95], period: 12, side: 'lower', what: 'MOSFETs at' })));
+}
+
+// --------------------------------------------------------------- step 8 soc
+function stepSoc(main) {
+  main.append(h('p', { class: 'lead' }, 'The JK BMS measures current with its own shunt and keeps the SoC. Normally you keep its value; the top balance in step 5 keeps it honest.'));
+  const cap = h('p', { class: 'viz-cap' });
+  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 130', t => {
+    const warn = numOr('SOC_LOW_WARNING', 0), X = s => 30 + s / 100 * 560, p = 0.5 + 0.5 * Math.cos(t * 2 * Math.PI / 16), soc = 4 + 96 * p;
+    let o = `<rect x="30" y="30" width="560" height="54" rx="6" class="box"/><rect x="590" y="46" width="10" height="22" rx="2" class="box"/>`;
+    o += `<rect x="30" y="30" width="${X(warn) - 30}" height="54" rx="6" class="z-warn"/>`;
+    o += `<rect x="34" y="34" width="${Math.max(0, X(soc) - 34)}" height="46" rx="4" class="${soc < warn ? 's-warn' : 's-ok'}" opacity=".8"/>`;
+    o += `<line x1="${X(warn)}" x2="${X(warn)}" y1="22" y2="92" class="l-warn"/>` + T(X(warn), 16, 'low SoC ' + warn + ' %', 't-warn', 'middle');
+    [0, 25, 50, 75, 100].forEach(v => { o += T(X(v), 108, v + ' %', 't-small', 'middle'); });
+    const ah = st.bat.ah, rate = 8, hours = (soc - warn) / 100 * ah / rate;
+    cap.replaceChildren(h('b', {}, 'SoC ' + fx(soc, 0) + ' %'), soc > warn ? (bool('TIME_TO_GO_ENABLE') ? ` · time to go at ${rate} A: ${fx(hours, 1)} h until ${warn} %` : ' · time to go is off') : ' · below the low SoC level');
+    return o;
+  }, 'Battery state of charge with the low level'), cap));
+  main.append(warnBox('soc'));
+  main.append(fields(['SOC_CALCULATION', 'SOC_LOW_WARNING', 'TIME_TO_GO_ENABLE']));
+  main.append(h('h2', {}, 'Limit current by SoC (usually off)'), h('p', { class: 'muted' }, 'The cell voltage curves in step 6 do this job better. Turn these on only if you have a reason.'),
+    h('div', { class: 'two' },
+      curveEditor({ title: 'Charging near 100 %', xKey: 'SOC_WHILE_CHARGING', yKey: 'MAX_CHARGE_CURRENT_SOC_FRACTION', enKey: 'CCCM_SOC_ENABLE', maxKey: 'MAX_BATTERY_CHARGE_CURRENT', dir: 'c', unit: '%', dec: 0, sweep: [75, 100], period: 10, side: 'lower', what: 'SoC' }),
+      curveEditor({ title: 'Discharging near 0 %', xKey: 'SOC_WHILE_DISCHARGING', yKey: 'MAX_DISCHARGE_CURRENT_SOC_FRACTION', enKey: 'DCCM_SOC_ENABLE', maxKey: 'MAX_BATTERY_DISCHARGE_CURRENT', dir: 'd', unit: '%', dec: 0, sweep: [0, 30], period: 10, side: 'lower', what: 'SoC' })));
+}
+
+// -------------------------------------------------------- step 9 disconnect
+function stepDisconnect(main) {
+  main.append(h('p', { class: 'lead' }, 'Bluetooth can drop out. The JK BMS still protects the cells on its own, but the driver no longer knows their voltages. Decide whether chargers and inverter stop at once, or carry on for a while if the battery was in a safe middle range.'));
+  const cap = h('p', { class: 'viz-cap' });
+  const lv = h('input', { type: 'range', min: 3.0, max: 3.5, step: 0.005, id: 'last-v', 'aria-label': 'Last cell voltage before the connection was lost' }); lv.value = st.lastV;
+  const lvOut = h('span', { class: 'unit' }, fx(st.lastV, 3) + ' V');
+  lv.addEventListener('input', () => { st.lastV = Number(lv.value); lvOut.textContent = fx(st.lastV, 3) + ' V'; dirty = true; });
+  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 200', t => {
+    const block = bool('BLOCK_ON_DISCONNECT'), to = Math.max(1, numOr('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 30)), vmin = num('BLOCK_ON_DISCONNECT_VOLTAGE_MIN'), vmax = num('BLOCK_ON_DISCONNECT_VOLTAGE_MAX');
+    const inRange = st.lastV >= vmin && st.lastV <= vmax, lost = 5, stopAt = block ? lost : inRange ? lost + to : lost + 1;
+    const span = Math.max(lost + to, lost + 1) + 8, X = m => 130 + m / span * 490;
+    let o = '';
+    o += T(120, 52, 'BMS data', 't-strong', 'end') + `<rect x="${X(0)}" y="38" width="${X(lost) - X(0)}" height="20" class="s-ok" opacity=".75"/><rect x="${X(lost)}" y="38" width="${X(span) - X(lost)}" height="20" class="s-muted"/>`;
+    o += T(120, 92, 'Charge & discharge', 't-strong', 'end') + `<rect x="${X(0)}" y="78" width="${X(stopAt) - X(0)}" height="20" class="s-ok" opacity=".75"/><rect x="${X(stopAt)}" y="78" width="${X(span) - X(stopAt)}" height="20" class="s-bad" opacity=".75"/>`;
+    o += T(120, 132, 'Alarm in Venus OS', 't-strong', 'end');
+    if (bool('BMS_CABLE_ALARM')) o += `<rect x="${X(lost + 1)}" y="118" width="${X(span) - X(lost + 1)}" height="20" class="s-warn" opacity=".75"/>`; else o += T(X(lost + 1), 132, 'off', 't-small');
+    o += `<line x1="${X(lost)}" x2="${X(lost)}" y1="28" y2="150" class="l-bad"/>` + T(X(lost), 20, 'link lost', 't-bad', 'middle');
+    if (stopAt > lost) o += `<line x1="${X(stopAt)}" x2="${X(stopAt)}" y1="70" y2="150" class="axis"/>` + T(X(stopAt), 164, (stopAt - lost) + ' min later: stop', '', 'middle');
+    [0, Math.round(span / 2), Math.round(span)].forEach(m => { o += T(X(m), 190, m + ' min', 't-small', 'middle'); });
+    const m = (t % 14) / 14 * span;
+    o += `<line x1="${X(m)}" x2="${X(m)}" y1="30" y2="145" class="playhead"/>`;
+    const running = m < stopAt;
+    cap.replaceChildren(h('b', {}, running ? 'Charging and discharging allowed' : 'Charging and discharging blocked'), ' — ',
+      block ? 'stops the moment the link is lost.' : inRange ? `the last cells (${fx(st.lastV, 3)} V) were inside ${fx(vmin, 3)}–${fx(vmax, 3)} V, so the system carries on for ${to} min, then stops.`
+        : `the last cells (${fx(st.lastV, 3)} V) were outside ${fx(vmin, 3)}–${fx(vmax, 3)} V, so it stops after 60 s.`);
+    return o;
+  }, 'Timeline after the BMS connection is lost'), cap,
+  h('div', { class: 'row', style: 'margin-top:6px' }, h('label', { for: 'last-v', class: 'muted' }, 'Try it: last cell voltage before the link dropped'), lv, lvOut)));
+  main.append(warnBox('disconnect'));
+  main.append(fields(['BLOCK_ON_DISCONNECT', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX']));
+  main.append(callout(h('b', {}, 'For a camper: '), 'leaving it off (carry on for 30 min in the middle range) keeps the fridge running through a short Bluetooth hiccup. The JK BMS still cuts off at its own limits either way.'));
+}
+
+// ---------------------------------------------------------- step 10 recovery
+function stepRecovery(main) {
+  main.append(h('p', { class: 'lead' }, 'When a limit is gone (a cell came back down, the battery warmed up), the driver does not jump straight back to full current. It waits a moment, then ramps up, so inverter and chargers are not hit with a sudden step.'));
+  const cap = h('p', { class: 'viz-cap' }), seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Charge or discharge' });
+  const paint = () => seg.replaceChildren(...[['c', 'Charge'], ['d', 'Discharge']].map(([v, l]) => h('button', { type: 'button', 'aria-pressed': String(st.recDir === v), onclick: () => { st.recDir = v; paint(); dirty = true; } }, l)));
+  paint();
+  main.append(h('div', { class: 'card viz-card' }, h('div', { class: 'row', style: 'justify-content:flex-end' }, seg), viz('0 0 640 220', t => {
+    const c = st.recDir === 'c', max = numOr(c ? 'MAX_BATTERY_CHARGE_CURRENT' : 'MAX_BATTERY_DISCHARGE_CURRENT', 0);
+    const hold = Math.max(0, numOr(c ? 'CCL_RECOVERY_HOLD_SEC' : 'DCL_RECOVERY_HOLD_SEC', 0)), rate = Math.max(0, numOr(c ? 'CCL_RECOVERY_RATE_A_PER_SEC' : 'DCL_RECOVERY_RATE_A_PER_SEC', 0));
+    const thr = numOr(c ? 'CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT' : 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', 0) * max;
+    const tDown = 10, tClear = 40, ramp = rate > 0 ? max / rate : 0, span = tClear + hold + ramp + 20;
+    const lim = s => s < tDown ? max : s < tClear ? 0 : s < tClear + hold ? 0 : rate > 0 ? Math.min(max, (s - tClear - hold) * rate) : max;
+    const X = s => 50 + s / span * 560, Y = a => 180 - (max ? a / max : 0) * 150;
+    let o = `<rect x="${X(tDown)}" y="30" width="${X(tClear) - X(tDown)}" height="150" class="z-bad"/>` + T((X(tDown) + X(tClear)) / 2, 24, 'limit active', 't-bad', 'middle');
+    if (hold) o += `<rect x="${X(tClear)}" y="30" width="${X(tClear + hold) - X(tClear)}" height="150" class="z-warn"/>` + T((X(tClear) + X(tClear + hold)) / 2, 44, 'wait ' + hold + ' s', 't-warn', 'middle');
+    if (ramp) o += T((X(tClear + hold) + X(tClear + hold + ramp)) / 2, 44, 'ramp ' + rate + ' A/s', c ? 't-charge' : 't-dis', 'middle');
+    [0, 0.5, 1].forEach(f => { o += `<line x1="50" x2="610" y1="${Y(f * max)}" y2="${Y(f * max)}" class="grid"/>` + T(44, Y(f * max) + 4, fx(f * max, 0) + ' A', 't-small', 'end'); });
+    if (thr > 0) o += `<line x1="50" x2="610" y1="${Y(thr)}" y2="${Y(thr)}" class="l-warn"/>` + T(606, Y(thr) - 4, 'restart above ' + fx(thr, 2) + ' A', 't-warn', 'end');
+    let d = ''; for (let i = 0; i <= 300; i++) { const s_ = span * i / 300; d += (i ? 'L' : 'M') + X(s_).toFixed(1) + ',' + Y(lim(s_)).toFixed(1); }
+    o += `<path d="${d}" class="${c ? 'l-charge' : 'l-dis'}"/>`;
+    [0, Math.round(span / 2), Math.round(span)].forEach(s_ => { o += T(X(s_), 204, s_ + ' s', 't-small', 'middle'); });
+    const s0 = (t % 12) / 12 * span;
+    o += `<line x1="${X(s0)}" x2="${X(s0)}" y1="30" y2="180" class="playhead"/><circle cx="${X(s0)}" cy="${Y(lim(s0))}" r="5" class="${c ? 'f-charge' : 'f-dis'}"/>`;
+    cap.replaceChildren(h('b', {}, (c ? 'Charge' : 'Discharge') + ' limit ' + fx(lim(s0), 1) + ' A'), ` · back to the full ${fx(max, 0)} A ${fx(hold + ramp, 0)} s after the reason is gone.`);
+    return o;
+  }, 'Current limit dropping and recovering'), cap));
+  main.append(warnBox('recovery'));
+  main.append(h('h2', {}, 'Charging'), fields(['CCL_RECOVERY_HOLD_SEC', 'CCL_RECOVERY_RATE_A_PER_SEC', 'CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT']));
+  main.append(h('h2', {}, 'Discharging'), fields(['DCL_RECOVERY_HOLD_SEC', 'DCL_RECOVERY_RATE_A_PER_SEC', 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT']));
+  main.append(callout('These options come with the newest dbus-serialbattery. If your Pi runs an older version, the Venus page shows only the settings your version knows.'));
+}
+
+// ------------------------------------------------------------ export / import
+function iniText() {
+  const ch = changedKeys().filter(k => DEF[k].t !== 'secret'), B = st.bat, now = new Date();
+  const lines = ['; dbus-serialbattery config.ini', '; Made with the JK BMS Setup guide on ' + now.toISOString().slice(0, 10) + '.',
+    '; Only settings that differ from config.default.ini are listed; the driver uses the defaults for the rest.',
+    '; Goes to /data/apps/dbus-serialbattery/config.ini on the Pi.',
+    `; guide-battery: cells=${B.cells} ah=${B.ah} ovp=${B.ovp} uvp=${B.uvp} bms=${B.bms}`, '', '[DEFAULT]'];
+  let lastG = null;
+  for (const g of GROUPS) for (const k of g.keys) {
+    if (!ch.includes(k)) continue;
+    if (g.id !== lastG) { lines.push('', '; --- ' + g.title); lastG = g.id; }
+    lines.push(k + ' = ' + get(k));
+  }
+  const ex = Object.entries(st.extra || {});
+  if (ex.length) { lines.push('', '; --- Kept from your file (not known to this guide)'); ex.forEach(([k, v]) => lines.push(k + ' = ' + v)); }
+  if (!ch.length && !ex.length) lines.push('; (nothing changed: all defaults)');
+  return lines.join('\n') + '\n';
+}
+function jsonText() {
+  const config = {}; changedKeys().filter(k => DEF[k].t !== 'secret').forEach(k => { config[k] = get(k); });
+  return JSON.stringify({ app: 'jk-bms-setup-guide', version: 1, created: new Date().toISOString(), driver: 'dbus-serialbattery', battery: st.bat, config, unknown: st.extra || {} }, null, 2) + '\n';
+}
+function parseIni(text) {
+  const values = {}, bat = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const g = line.match(/^[;#]\s*guide-battery:\s*(.*)$/i);
+    if (g) { g[1].split(/\s+/).forEach(p => { const [k, v] = p.split('='); if (k && v !== undefined && Number.isFinite(parseFloat(v))) bat[k] = parseFloat(v); }); continue; }
+    if (!line || line[0] === ';' || line[0] === '#' || line[0] === '[') continue;
+    const m = line.match(/^([A-Za-z0-9_]+)\s*[=:]\s*(.*)$/);
+    if (m) values[m[1].toUpperCase()] = m[2].trim();
+  }
+  return { values, bat };
+}
+function parseAny(text) {
+  const t = text.trim();
+  if (t.startsWith('{')) {
+    const d = JSON.parse(t);
+    if (!d || typeof d !== 'object' || !d.config) throw new Error('This JSON file is not a backup from this guide.');
+    return { values: Object.assign({}, d.unknown || {}, d.config), bat: d.battery || {} };
+  }
+  const r = parseIni(text);
+  if (!Object.keys(r.values).length && !Object.keys(r.bat).length) throw new Error('No settings found. A config.ini has lines like MAX_CELL_VOLTAGE = 3.45.');
+  return r;
+}
+function applyImport(r) {
+  st.vals = {}; st.extra = {};
+  let known = 0;
+  for (const [k, v] of Object.entries(r.values)) { if (DEF[k]) { if (DEF[k].t !== 'secret') { st.vals[k] = String(v); known++; } } else st.extra[k] = String(v); }
+  for (const k of Object.keys(BAT_DEFAULT)) if (Number.isFinite(parseFloat(r.bat[k]))) st.bat[k] = parseFloat(r.bat[k]);
+  changed();
+  return { known, unknown: Object.keys(st.extra).length };
+}
+let dl = null;
+async function saveFile(name, text) {
+  if (!dl) { toast('Saving files is not available here. Use Copy instead.'); return; }
+  try { await dl.save({ filename: name, data: text }); toast('Saved ' + name); }
+  catch (e) { if (e && e.code === 'declined') return; toast(e && e.code === 'rate_limited' ? 'A save is already open.' : 'Could not save the file. Use Copy instead.'); }
+}
+function copyText(text, ta) {
+  const fallback = () => { if (ta) { ta.focus(); ta.select(); } toast('Copy blocked here: the text is selected, press Ctrl+C / ⌘C.'); };
+  try { navigator.clipboard.writeText(text).then(() => toast('Copied'), fallback); } catch (e) { fallback(); }
+}
+
+// ------------------------------------------------------------ step 11 backup
+function stepBackup(main) {
+  main.append(h('p', { class: 'lead' }, 'Check what you changed, then save it. The backup is the same config.ini the driver reads, so you can put it straight back on the Pi or load it here again later.'));
+  main.append(warnBox('*'));
+  // summary of changes
+  const sumBox = h('div', { class: 'card tbl' });
+  const paintSum = () => {
+    const ch = changedKeys();
+    sumBox.replaceChildren(ch.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Setting', 'Default', 'Yours', ''].map(x => h('th', {}, x)))),
+      h('tbody', {}, ch.map(k => h('tr', {}, h('td', {}, h('div', {}, DEF[k].label), h('code', { class: 'muted' }, k)), h('td', { class: 'muted' }, DEF[k].d === '' ? '(empty)' : DEF[k].d),
+        h('td', { style: 'font-weight:600' }, get(k) === '' ? '(empty)' : get(k)), h('td', {}, h('button', { type: 'button', class: 'link', onclick: () => go(stepOf(k), k) }, 'edit'))))))
+      : h('p', { class: 'muted', style: 'margin:0' }, 'Nothing changed yet: the driver would run on its defaults. Go through the steps, or load a backup below.'));
+  };
+  hooks.push(paintSum); paintSum();
+  main.append(h('h2', {}, 'What you changed'), sumBox);
+
+  // export
+  const ta = h('textarea', { class: 'preview', id: 'ini-preview', readonly: true, spellcheck: 'false', 'aria-label': 'config.ini preview' });
+  const paintIni = () => { ta.value = iniText(); }; hooks.push(paintIni); paintIni();
+  const saveIni = h('button', { type: 'button', class: 'btn primary', onclick: () => saveFile('dbus-serialbattery-config.ini.txt', iniText()) }, 'Save config.ini backup');
+  const saveJson = h('button', { type: 'button', class: 'btn', onclick: () => saveFile('jk-bms-settings-' + new Date().toISOString().slice(0, 10) + '.json', jsonText()) }, 'Save as JSON');
+  const saveBtns = [saveIni, saveJson];
+  saveBtns.forEach(b => { b.hidden = !dl; });
+  hooks.push(() => saveBtns.forEach(b => { b.hidden = !dl; }));
+  main.append(h('h2', {}, 'Export'), h('div', { class: 'card stack' },
+    h('div', { class: 'row' }, ...saveBtns, h('button', { type: 'button', class: 'btn', onclick: () => copyText(iniText(), ta) }, 'Copy config.ini')),
+    h('p', { class: 'f-plain' }, 'The file is saved as .ini.txt because the browser frame only allows a few file types; rename it to config.ini if you copy it to the Pi. Your battery numbers from step 2 travel along as a comment line.'),
+    ta));
+
+  // import
+  const status = h('div', { 'aria-live': 'polite' });
+  const fileIn = h('input', { type: 'file', id: 'import-file', accept: '.ini,.txt,.json,text/plain,application/json', hidden: true });
+  const paste = h('textarea', { id: 'import-paste', rows: 5, placeholder: 'Or paste the contents of a config.ini here…', spellcheck: 'false', style: 'font-family:var(--mono);font-size:.8rem' });
+  let pending = null;
+  const offer = (text, from) => {
+    let r;
+    try { r = parseAny(text); } catch (e) { status.replaceChildren(h('div', { class: 'w bad' }, h('span', { class: 'tag' }, 'fix'), h('span', {}, from + ': ' + e.message))); return; }
+    pending = r;
+    const nKnown = Object.keys(r.values).filter(k => DEF[k]).length, nNew = Object.keys(r.values).length - nKnown, nNow = changedKeys().length;
+    status.replaceChildren(h('div', { class: 'confirm' }, h('span', {}, `${from}: ${nKnown} settings${nNew ? ', ' + nNew + ' not known to this guide (kept)' : ''}${Object.keys(r.bat).length ? ', battery numbers' : ''}. `,
+      nNow ? h('b', {}, `This replaces your ${nNow} current change${nNow === 1 ? '' : 's'}.`) : ''),
+      h('button', { type: 'button', class: 'btn primary small', onclick: () => { const res = applyImport(pending); pending = null; render(); toast(`Loaded ${res.known} settings${res.unknown ? ', kept ' + res.unknown + ' unknown' : ''}`); } }, 'Load it'),
+      h('button', { type: 'button', class: 'btn small', onclick: () => { pending = null; status.replaceChildren(); } }, 'Cancel')));
+  };
+  const readFile = f => { if (!f) return; const rd = new FileReader(); rd.onload = () => offer(String(rd.result), f.name); rd.onerror = () => toast('Could not read ' + f.name); rd.readAsText(f); };
+  fileIn.addEventListener('change', () => { readFile(fileIn.files[0]); fileIn.value = ''; });
+  const drop = h('div', { class: 'drop' }, 'Drop a config.ini, .txt or .json backup here, or ', h('button', { type: 'button', class: 'link', onclick: () => fileIn.click() }, 'choose a file'), fileIn);
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); readFile(e.dataTransfer.files[0]); });
+  main.append(h('h2', {}, 'Import'), h('div', { class: 'card stack' }, drop, paste,
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: () => paste.value.trim() ? offer(paste.value, 'Pasted text') : toast('Paste a config.ini first') }, 'Load pasted text')), status));
+
+  // reset all
+  const resetBox = h('div');
+  const askReset = () => resetBox.replaceChildren(h('div', { class: 'confirm' }, h('span', {}, 'Set every setting back to the dbus-serialbattery default?'),
+    h('button', { type: 'button', class: 'btn danger small', onclick: () => { st.vals = {}; st.extra = {}; changed(); render(); toast('All settings are back to default'); } }, 'Yes, reset all'),
+    h('button', { type: 'button', class: 'btn small', onclick: () => resetBox.replaceChildren() }, 'Cancel')));
+  main.append(h('h2', {}, 'On the Pi'), h('div', { class: 'card' }, h('ol', { style: 'margin:0;padding-left:20px;display:grid;gap:6px' },
+    h('li', {}, 'Venus web page → ', h('b', {}, 'Files & logs'), ' → dbus-serialbattery: config.ini. Paste the text and save. (Or copy the file to ', h('code', {}, '/data/apps/dbus-serialbattery/config.ini'), '.)'),
+    h('li', {}, 'Restart dbus-serialbattery from the Overview tab. Changed Bluetooth settings need a reboot of the Pi.'),
+    h('li', {}, 'To back up from the Pi: open the same config.ini, copy everything, and load it here with ', h('b', {}, 'Import'), '. config.ini survives driver updates; keep a copy anyway before you reinstall Venus OS.'))),
+  h('div', { class: 'row', style: 'margin-top:12px' }, h('button', { type: 'button', class: 'btn danger', onclick: askReset }, 'Reset all to default')), resetBox);
+}
+
+// ------------------------------------------------------------- all settings
+function viewAll(main) {
+  main.append(h('p', { class: 'lead' }, 'Every setting of dbus-serialbattery in one place, in the order of config.default.ini. Settings that a JK BMS on Bluetooth does not use are hidden unless you ask for them.'));
+  const q = h('input', { type: 'search', id: 'all-q', placeholder: 'Search: name, key or words…', 'aria-label': 'Search settings' }); q.value = st.allQ;
+  const jk = h('input', { type: 'checkbox', id: 'all-jk' }); jk.checked = st.allJk;
+  const onlyCh = h('input', { type: 'checkbox', id: 'all-ch' }); onlyCh.checked = st.allChanged;
+  main.append(h('div', { class: 'toolbar' }, q, h('label', { for: 'all-jk' }, jk, 'Only what a JK BMS uses'), h('label', { for: 'all-ch' }, onlyCh, 'Only changed')));
+  main.append(warnBox('all'));
+  const box = h('div'), empty = h('p', { class: 'muted', hidden: true }, 'No setting matches.');
+  const groups = GROUPS.map(g => {
+    const rows = g.keys.map(k => { const r = field(k); const st_ = stepOf(k); if (st_ !== 'all') r.querySelector('.f-meta').append(h('button', { type: 'button', class: 'link', onclick: () => go(st_, k) }, 'Explained in step ' + (STEPS.findIndex(x => x.id === st_) + 1))); return { k, r }; });
+    const det = h('details', { class: 'grp' }, h('summary', {}, g.title, h('span', { class: 'chip' }, String(g.keys.length))), h('div', { class: 'body' }, rows.map(x => x.r)));
+    box.append(det);
+    return { g, det, rows };
+  });
+  const filter = () => {
+    st.allQ = q.value; st.allJk = jk.checked; st.allChanged = onlyCh.checked;
+    const s_ = q.value.trim().toLowerCase(); let total = 0;
+    groups.forEach(({ det, rows }) => {
+      let n = 0;
+      rows.forEach(({ k, r }) => {
+        const d = DEF[k], text = (k + ' ' + d.label + ' ' + d.plain).toLowerCase();
+        const ok = (!s_ || text.includes(s_)) && (!jk.checked || d.jk || isChanged(k)) && (!onlyCh.checked || isChanged(k));
+        r.hidden = !ok; if (ok) n++;
+      });
+      det.hidden = !n; det.querySelector('.chip').textContent = String(n); if ((s_ || onlyCh.checked) && n) det.open = true;
+      total += n;
+    });
+    empty.hidden = total > 0;
+  };
+  [q, jk, onlyCh].forEach(x => x.addEventListener('input', filter));
+  main.append(box, empty);
+  filter();
+}
+
+// ------------------------------------------------------------------ boot
+load();
+renderRail();
+$('#chip-changes').addEventListener('click', () => go('backup'));
+$('#chip-warn').addEventListener('click', () => go('backup'));
+const motionBtn = $('#chip-motion');
+const paintMotion = () => { motionBtn.textContent = st.motion ? 'Animations on' : 'Animations off'; motionBtn.setAttribute('aria-pressed', String(st.motion)); motionBtn.className = 'chip' + (st.motion ? ' on' : ''); };
+motionBtn.addEventListener('click', () => { st.motion = !st.motion; paintMotion(); dirty = true; });
+paintMotion();
+window.addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && id !== st.view) go(id); });
+go(location.hash.slice(1) || 'connect');
+requestAnimationFrame(frame);
+(async () => {
+  try { if (window.claude && window.claude.use) dl = await window.claude.use('downloads'); } catch (e) { dl = null; }
+  hooks.forEach(f => f());
+})();
+</script>
