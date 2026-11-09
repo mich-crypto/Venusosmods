@@ -1046,3 +1046,32 @@ def venus_checks(service, bat, settings, system, eff=None):
     if cvl and cells and cvl > cells * LFP['cell_max'] + 0.05:
         add('live_cvl', 'bad', 'Charge voltage', 'The driver asks for %.2f V, above %d × 3.65 V = %.2f V.' % (cvl, cells, cells * LFP['cell_max']))
     return out
+
+
+# ------------------------------------------------ dbus-serialbattery versions
+
+SB_VERSION_RE = re.compile(r'^\s*DRIVER_VERSION\s*(?::\s*str\s*)?=\s*["\']([^"\']+)["\']', re.M)
+SB_INSTALL_URL = ('https://raw.githubusercontent.com/mr-manuel/venus-os_dbus-serialbattery/master/'
+                  'dbus-serialbattery/install.sh')
+SB_RELEASES_API = 'https://api.github.com/repos/mr-manuel/venus-os_dbus-serialbattery/releases/latest'
+SB_RELEASES_URL = 'https://github.com/mr-manuel/venus-os_dbus-serialbattery/releases'
+
+
+def driver_version_from_utils(text):
+    """DRIVER_VERSION from dbus-serialbattery's utils.py, e.g. '2.0.20250729', or None."""
+    m = SB_VERSION_RE.search(text or '')
+    return m.group(1).strip() if m else None
+
+
+def parse_driver_version(v):
+    """'v2.0.20250729' -> (2, 0, 20250729, 1); a dev/beta/rc build sorts before its release (last item 0)."""
+    m = re.match(r'^\s*v?(\d+)\.(\d+)\.(\d+)\s*([A-Za-z].*)?$', str(v or ''))
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), 0 if m.group(4) else 1
+
+
+def driver_update_available(installed, latest):
+    """Is the latest stable release newer than what is installed? (False when either is unknown.)"""
+    a, b = parse_driver_version(installed), parse_driver_version(latest)
+    return bool(a and b and b > a)

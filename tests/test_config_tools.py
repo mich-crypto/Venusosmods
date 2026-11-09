@@ -311,5 +311,17 @@ class VenusChecksTests(unittest.TestCase):
         self.assertEqual(self.levels(bat=dict(self.BAT, **{'/Info/MaxChargeVoltage': 15.0}))['live_cvl'], 'bad')
 
 
+class DriverVersionTests(unittest.TestCase):
+    def test_versions(self):
+        self.assertEqual(ct.driver_version_from_utils('x = 1\nDRIVER_VERSION: str = "2.1.20260729dev"\n'), '2.1.20260729dev')
+        self.assertEqual(ct.driver_version_from_utils("DRIVER_VERSION = '1.6.20250131'"), '1.6.20250131')
+        self.assertIsNone(ct.driver_version_from_utils('nothing'))
+        self.assertTrue(ct.driver_update_available('1.6.20250131', 'v2.0.20250729'))
+        self.assertFalse(ct.driver_update_available('2.0.20250729', 'v2.0.20250729'))
+        self.assertFalse(ct.driver_update_available('2.1.20260729dev', 'v2.0.20250729'))   # a newer dev build
+        self.assertTrue(ct.driver_update_available('2.0.20250729rc', 'v2.0.20250729'))     # rc before its release
+        self.assertFalse(ct.driver_update_available(None, 'v2.0.20250729'))
+
+
 if __name__ == '__main__':
     unittest.main()

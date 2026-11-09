@@ -941,6 +941,42 @@ class BatterySafetyApiTests(AppTestCase):
         self.assertEqual(levels['driver'], 'bad')
 
 
+class SerialBatteryVersionTests(AppTestCase):
+    def test_version_from_files_and_release(self):
+        with open(os.path.join(self.sb, 'utils.py'), 'w') as f:
+            f.write('DRIVER_VERSION: str = "1.6.20250131"\n')
+        self.app.sb_release = {'checked': time.time(), 'checking': False, 'tag': 'v2.0.20250729',
+                               'date': '2025-07-29T10:00:00Z', 'url': 'https://example.invalid/r', 'error': None}
+        d = body_of(self.get('/api/serialbattery_version'))
+        self.assertEqual((d['installed'], d['source'], d['latest'], d['available']),
+                         ('1.6.20250131', 'installed files', 'v2.0.20250729', True))
+
+    def test_update_runs_the_stable_installer_and_keeps_a_copy(self):
+        with open(os.path.join(self.sb, 'config.ini'), 'w') as f:
+            f.write('[DEFAULT]\nLOGGING = DEBUG\n')
+        calls = []
+
+        class FakeProc(object):
+            def __init__(self, argv, **kw):
+                calls.append(argv)
+
+            def poll(self):
+                return 0
+        old = web_ui.subprocess.Popen
+        web_ui.subprocess.Popen = FakeProc
+        self.addCleanup(lambda: setattr(web_ui.subprocess, 'Popen', old))
+        self.app.SB_UPDATE_LOG = os.path.join(self.tmp, 'sb-update.log')
+        r = self.post('/api/serialbattery_update', {})
+        self.assertEqual(r.status, 200, r.body)
+        d = body_of(r)
+        self.assertIn('--stable', calls[0][-1])
+        self.assertIn('install.sh', calls[0][-1])
+        with open(d['backup']) as f:
+            self.assertIn('LOGGING = DEBUG', f.read())
+        self.assertIn('config.ini saved', body_of(self.get('/api/serialbattery_update_log'))['text'])
+        self.assertEqual(self.post('/api/serialbattery_update', {}, auth=False).status, 401)
+
+
 class RawFileTests(AppTestCase):
     def test_read_and_write_driver_config(self):
         d = body_of(self.get('/api/raw', query='file=driver'))

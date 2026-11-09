@@ -364,6 +364,9 @@ class App(object):
             'POST /api/serialbattery': self.api_serialbattery_save,
             'POST /api/serialbattery_facts': self.api_serialbattery_facts,
             'GET /api/serialbattery_system': self.api_serialbattery_system,
+            'GET /api/serialbattery_version': self.api_serialbattery_version,
+            'POST /api/serialbattery_update': self.api_serialbattery_update,
+            'GET /api/serialbattery_update_log': self.api_serialbattery_update_log,
             'GET /api/raw': self.api_raw,
             'POST /api/raw': self.api_raw_save,
             'GET /api/log': self.api_log,
@@ -1426,6 +1429,93 @@ class App(object):
             out['safety'] = self.safety_of(self.read_text(os.path.join(path, 'config.default.ini')),
                                            self.read_text(os.path.join(path, 'config.ini')))
         return jsonr(out)
+
+    # ------------------------------------------- dbus-serialbattery version
+
+    sb_release = None                       # {'checked', 'checking', 'tag', 'date', 'url', 'error'}
+    SB_UPDATE_LOG = '/tmp/serialbattery-update.log'
+
+    def serialbattery_version(self):
+        """(version, where it came from): the running driver on D-Bus, else its utils.py."""
+        _, values = self.serialbattery_service()
+        v = values.get('/FirmwareVersion')
+        if v:
+            return str(v), 'running driver'
+        path = self.serialbattery_path()
+        if path:
+            v = ct.driver_version_from_utils(self.read_text(os.path.join(path, 'utils.py')))
+            if v:
+                return v, 'installed files'
+        return None, None
+
+    def sb_update_running(self):
+        proc = getattr(self, 'sb_update_proc', None)
+        return proc is not None and proc.poll() is None
+
+    def api_serialbattery_version(self, req):
+        info = self.sb_release or {}
+        stale = time.time() - info.get('checked', 0) > 6 * 3600
+        if (req.query.get('refresh') == '1' or stale) and not info.get('checking'):
+            self.sb_release = info = dict(info, checking=True)
+
+            def got(rc, out):
+                text = out.decode('utf-8', 'replace') if rc == 0 and out else ''
+                try:
+                    data = json.loads(text) if text else {}
+                except ValueError:
+                    data = {}
+                tag = data.get('tag_name') if isinstance(data, dict) else None
+                self.sb_release = {'checked': time.time(), 'checking': False,
+                                   'error': None if tag else 'could not reach GitHub',
+                                   'tag': tag or info.get('tag'),
+                                   'date': (data.get('published_at') if tag else None) or info.get('date'),
+                                   'url': (data.get('html_url') if tag else None) or info.get('url')}
+            starlink_hub.run_async(['curl', '-s', '-m', '10', ct.SB_RELEASES_API], got, timeout=14)
+        installed, source = self.serialbattery_version()
+        info = self.sb_release or {}
+        return jsonr({'ok': True, 'installed_driver': bool(self.serialbattery_path()), 'installed': installed,
+                      'source': source, 'latest': info.get('tag'), 'date': info.get('date'),
+                      'notes': info.get('url') or ct.SB_RELEASES_URL, 'error': info.get('error'),
+                      'checking': bool(info.get('checking')),
+                      'available': ct.driver_update_available(installed, info.get('tag')),
+                      'running': self.sb_update_running()})
+
+    def api_serialbattery_update(self, req):
+        """Install the latest stable release with the driver's own installer (it keeps config.ini)."""
+        path = self.serialbattery_path()
+        if not path:
+            return jsonr({'ok': False, 'error': 'dbus-serialbattery is not installed'}, 400)
+        if self.sb_update_running() or self.update_running():
+            return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
+        user = os.path.join(path, 'config.ini')
+        backup = None
+        if os.path.isfile(user):                    # our own copy as well, before anything is touched
+            os.makedirs(self.state_dir, exist_ok=True)
+            backup = os.path.join(self.state_dir, 'serialbattery-config-%s.ini' % time.strftime('%Y%m%d-%H%M%S'))
+            with open(user) as src, open(backup, 'w') as dst:
+                dst.write(src.read())
+        cmd = 'wget -q -O /tmp/serialbattery-install.sh "%s" && bash /tmp/serialbattery-install.sh --stable' % ct.SB_INSTALL_URL
+        try:
+            log_file = open(self.SB_UPDATE_LOG, 'w')
+            if backup:
+                log_file.write('config.ini saved to %s\n' % backup)
+                log_file.flush()
+            self.sb_update_proc = subprocess.Popen(['sh', '-c', cmd], stdout=log_file, stderr=subprocess.STDOUT,
+                                                   stdin=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:
+            return jsonr({'ok': False, 'error': 'could not start the update: %s' % e}, 500)
+        return jsonr({'ok': True, 'backup': backup,
+                      'message': 'Updating dbus-serialbattery. Reboot the Pi when it is done.'})
+
+    def api_serialbattery_update_log(self, req):
+        try:
+            with open(self.SB_UPDATE_LOG) as f:
+                text = f.read()[-8000:]
+        except OSError:
+            text = ''
+        proc = getattr(self, 'sb_update_proc', None)
+        return jsonr({'ok': True, 'text': text, 'running': self.sb_update_running(),
+                      'exit': proc.poll() if proc is not None else None})
 
     def dump_or_empty(self, name):
         try:

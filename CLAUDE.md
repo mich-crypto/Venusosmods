@@ -12,6 +12,15 @@ repo; the web UI only reads and edits its settings.
 
 Use these as the reference for anything about the driver's settings or behaviour.
 
+Versions: the latest stable release is v2.0.20250729 (check GitHub releases before
+relying on this). The setup guide prototype and `tests/data/serialbattery_config.full.ini`
+come from master, 2.1.20260729dev, which has 26 settings the stable release lacks
+(marked `v2.1+` in the guide). The Venus page always reads the installed driver's own
+`config.default.ini`, so it only shows what that version has. The Overview tab shows
+the installed version (D-Bus `/FirmwareVersion`, else `DRIVER_VERSION` in `utils.py`)
+and can update to the latest stable release with the driver's own
+`install.sh --stable`, which keeps `config.ini`; the page saves a copy in `state/` first.
+
 On the Pi:
 - Install folder: `/data/apps/dbus-serialbattery/` (`config_tools.find_serialbattery()`
   also checks `/data/etc/` and `/data/`).

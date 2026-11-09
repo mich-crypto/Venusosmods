@@ -418,10 +418,12 @@ async function tabOverview(main) {
   });
   main.append(h('div', { class: 'card' }, h('table', {}, h('tr', {}, h('th', {}, 'Driver'), h('th', {}, 'Status'), h('th', {}, '')), rows)));
   if (st.serialbattery) {
-    main.append(h('div', { class: 'card row' }, h('div', {}, h('b', {}, 'dbus-serialbattery'), h('div', { class: 'muted' }, 'Battery driver (JK BMS etc.), settings on the Battery tab')),
+    const ver = h('div', { class: 'muted' }, 'Version: checking…'), actions = h('div', { class: 'row', style: 'margin-top:8px' });
+    main.append(h('div', { class: 'card' }, h('div', { class: 'row' }, h('div', {}, h('b', {}, 'dbus-serialbattery'), h('div', { class: 'muted' }, 'Battery driver (JK BMS etc.), settings on the Battery tab'), ver),
       h('span', { class: 'spacer' }),
       h('button', { class: 'btn small', onclick: () => showLog('dbus-serialbattery') }, 'Log'),
-      h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => confirmThen('Restart dbus-serialbattery?', () => post('/api/restart', { target: 'serialbattery' })) }, 'Restart')));
+      h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => confirmThen('Restart dbus-serialbattery?', () => post('/api/restart', { target: 'serialbattery' })) }, 'Restart')), actions));
+    sbVersion(ver, actions, false);
   }
   if (!canEdit()) main.append(lockedNotice());
   main.append(h('h2', {}, 'System'));
@@ -2300,6 +2302,59 @@ async function slSettings(box) {
     out.append(card);
   }
   out.append(h('div', { class: 'muted' }, 'Telegram messages are set up on the Notifications tab. Saving restarts this page (a few seconds): these settings are read when it starts. Settings that are not in config.ini use the defaults shown.'));
+}
+
+// ------------------------------------------- dbus-serialbattery version and update
+async function sbVersion(ver, actions, refresh) {
+  const r = await api('/api/serialbattery_version' + (refresh ? '?refresh=1' : ''));
+  if (!document.body.contains(ver)) return;
+  if (!r.ok) { ver.textContent = 'Version unknown'; return; }
+  const d = r.data, vIn = d.installed ? 'v' + d.installed.replace(/^v/, '') : 'unknown';
+  const test = d.installed && /[a-z]/i.test(d.installed.replace(/^v/, ''));
+  clear(ver).append(...['Installed ', h('b', {}, vIn), d.source ? ' (' + d.source + ')' : '', ' · latest stable ',
+    h('b', {}, d.latest || (d.checking ? 'checking…' : '–')), d.date ? ' from ' + d.date.slice(0, 10) : '', ' ',
+    d.available ? h('span', { class: 'chip warn' }, 'update available')
+      : (d.installed && d.latest ? h('span', { class: 'chip ' + (test ? '' : 'ok') }, test ? 'test build, newer than stable' : 'up to date') : null)].filter(x => x !== null && x !== ''));
+  clear(actions).append(...[h('button', { class: 'btn small', onclick: () => sbVersion(ver, actions, true) }, 'Check for update'),
+    h('a', { class: 'btn small', href: d.notes, target: '_blank', rel: 'noopener' }, 'Release notes'),
+    (d.available || d.running) ? h('button', { class: 'btn small primary', disabled: !canEdit() || d.running, onclick: () => sbUpdate(d, () => sbVersion(ver, actions, false)) },
+      d.running ? 'Updating…' : 'Update to ' + d.latest) : null,
+    d.error ? h('span', { class: 'muted' }, d.error) : null].filter(Boolean));
+  if (d.checking) setTimeout(() => sbVersion(ver, actions, false), 2500);
+}
+
+function sbUpdate(d, done) {
+  const dlg = $('#dlg'), body = h('div', {});
+  const start = async () => {
+    const x = await api('/api/serialbattery_update', {});
+    if (!x.ok) { toast(x.data.error || 'Could not start the update', true); return; }
+    const pre = h('pre', {}, 'starting…');
+    clear(body).append(h('div', { class: 'muted' }, x.data.message), pre);
+    for (let i = 0; i < 300; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const l = await api('/api/serialbattery_update_log');
+      if (!l.ok) continue;
+      pre.textContent = l.data.text || '(no output yet)'; pre.scrollTop = pre.scrollHeight;
+      if (!l.data.running) {
+        const good = l.data.exit === 0;
+        body.append(h('div', { class: 'banner ' + (good ? 'ok' : 'bad'), style: 'margin-top:10px' },
+          good ? 'Installed. Reboot the Pi so the new driver starts with its Bluetooth set-up.' : 'The installer stopped with an error (code ' + l.data.exit + '). Your config.ini is kept; see the log above.'),
+          h('div', { class: 'row' }, h('span', { class: 'spacer' }), h('button', { class: 'btn', onclick: () => { dlg.close(); done(); } }, 'Close'),
+            good ? h('button', { class: 'btn danger', onclick: () => { dlg.close(); post('/api/reboot', {}); } }, 'Reboot now') : null));
+        return;
+      }
+    }
+  };
+  clear(dlg).append(h('h3', {}, 'Update dbus-serialbattery to ' + d.latest + '?'),
+    h('ul', { style: 'margin:8px 0 14px;padding-left:20px;display:grid;gap:6px' },
+      h('li', {}, 'Runs the driver’s own installer (install.sh --stable) from GitHub. Installed now: ' + (d.installed || 'unknown') + '.'),
+      h('li', {}, 'Your config.ini is kept; this page also saves a copy first.'),
+      h('li', {}, 'Read the release notes first: settings can change between versions.'),
+      h('li', {}, 'The battery driver stops for a moment, and the Pi needs a reboot afterwards.')),
+    body);
+  body.append(h('div', { class: 'row' }, h('a', { class: 'btn', href: d.notes, target: '_blank', rel: 'noopener' }, 'Release notes'), h('span', { class: 'spacer' }),
+    h('button', { class: 'btn', onclick: () => dlg.close() }, 'Cancel'), h('button', { class: 'btn primary', onclick: start }, 'Update')));
+  dlg.showModal();
 }
 
 async function updatePanel() {
