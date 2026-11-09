@@ -167,6 +167,12 @@ input[type=range] { flex:1 1 180px; min-width:120px; max-width:360px; accent-col
 .btn.danger { color:var(--bad); }
 .btn:disabled { opacity:.45; cursor:default; }
 .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.bms-row { display:grid; grid-template-columns:minmax(0,6.2rem) minmax(0,14rem) auto; gap:4px 8px; align-items:center; }
+.bms-row select, .bms-row input { width:100%; }
+.bms-row input { font-family:var(--mono); font-size:.82rem; padding-inline:8px; }
+.bms-row select { padding-inline:8px; }
+.bms-row .bms-ok { grid-column:2; font-size:.8rem; }
+.bms-row .bms-ok:empty { display:none; }
 
 .callout { border:1px solid var(--line); border-left:3px solid var(--charge); background:var(--surface); padding:10px 14px; border-radius:4px; font-size:.92rem; color:var(--muted); }
 .callout b { color:var(--ink); }
@@ -279,7 +285,7 @@ s('CURRENT_REPORTED_BY_BMS', '-300, 300', 'list', 'Current the BMS reports', 'Wi
 s('CURRENT_MEASURED_BY_USER', '-300, 300', 'list', 'Current you measured', 'What a good clamp meter showed for each value in the list above.');
 
 grp('bt', 'Bluetooth', true);
-s('BLUETOOTH_BMS', '', 'bms', 'Bluetooth BMS', 'Type and MAC address of each BMS. For a JK BMS pick Jkbms_Ble. The MAC is in the JK app (device info) or shown by a BLE scanner. Needs a reboot of the Pi.');
+s('BLUETOOTH_BMS', '', 'bms', 'Bluetooth BMS', 'Type and MAC address of each BMS. For a JK BMS pick JK BMS (Jkbms_Ble in config.ini). Needs a reboot of the Pi.');
 s('BLUETOOTH_USE_POLLING', 'True', 'bool', 'Ask the BMS for data', 'On: the driver asks for new data each time (polling). Off: the BMS pushes data by itself. Switch only if the connection keeps dropping.');
 s('BLUETOOTH_FORCE_RESET_BLE_STACK', 'False', 'bool', 'Reset Bluetooth after a lost connection', 'Restarts the Bluetooth hardware and driver when the connection is lost. Try it if the BMS never comes back without a reboot.');
 s('BLUETOOTH_USE_USB', 'False', 'bool', 'Use a USB Bluetooth stick', 'Turns off the Bluetooth built into the Pi and uses a USB stick (Bluetooth 4.0 / BLE or newer). Helps with a weak or unstable link. Needs a reboot.');
@@ -436,6 +442,7 @@ s('BMS_CAPTURE_RAW_DATA_BACKUP_COUNT', '3', 'int', 'Old capture files to keep', 
 
 const BMS_TYPES = ['Jkbms_Ble', 'Kilovault_Ble', 'LiTime_Ble', 'LltJbd_Ble', 'Xdzn_Ble'];
 const REBOOT_KEYS = ['BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'CAN_PORT'];
+const BMS_NAMES = { Jkbms_Ble: 'JK BMS', Kilovault_Ble: 'Kilovault', LiTime_Ble: 'LiTime', LltJbd_Ble: 'JBD', Xdzn_Ble: 'XDZN' };
 // Written from config.default.ini of dbus-serialbattery 2.1.20260729dev (master). These keys are not in the
 // stable release v2.0.20250729; the Venus page only shows the settings the installed driver knows.
 const DRIVER_SOURCE = '2.1.20260729dev', DRIVER_STABLE = 'v2.0.20250729';
@@ -776,13 +783,13 @@ function bmsControl(key) {
     setVal(key, parts.join(', '));
   };
   const addRow = (type, mac) => {
-    const sel = h('select', { 'aria-label': 'BMS type' }, (BMS_TYPES.includes(type) ? BMS_TYPES : BMS_TYPES.concat([type])).map(t => h('option', { value: t }, t)));
+    const sel = h('select', { 'aria-label': 'BMS type' }, (BMS_TYPES.includes(type) ? BMS_TYPES : BMS_TYPES.concat([type])).map(t => h('option', { value: t }, BMS_NAMES[t] || t)));
     sel.value = type;
-    const inp = h('input', { type: 'text', placeholder: 'C8:47:8C:12:34:56', 'aria-label': 'MAC address', autocapitalize: 'characters', spellcheck: 'false', style: 'width:200px' }); inp.value = mac;
-    const ok = h('span', { class: 'unit' });
+    const inp = h('input', { type: 'text', placeholder: 'C8:47:8C:12:34:56', 'aria-label': 'MAC address', autocapitalize: 'characters', spellcheck: 'false' }); inp.value = mac;
+    const ok = h('span', { class: 'unit bms-ok' });
     const paint = () => { const v = inp.value.trim(); ok.textContent = !v ? '' : MAC_RE.test(v) ? '✓ valid' : 'not a MAC yet'; ok.style.color = !v ? '' : MAC_RE.test(v) ? 'var(--ok)' : 'var(--warn)'; };
     sel.addEventListener('change', write); inp.addEventListener('input', () => { paint(); write(); });
-    const row = h('div', { class: 'row' }, sel, inp, ok, h('button', { type: 'button', class: 'btn small', onclick: () => { row.remove(); write(); } }, 'Remove'));
+    const row = h('div', { class: 'bms-row' }, sel, inp, h('button', { type: 'button', class: 'btn small', 'aria-label': 'Remove this BMS', title: 'Remove this BMS', onclick: () => { row.remove(); write(); } }, '✕'), ok);
     paint(); rows.append(row);
   };
   const fill = () => { rows.replaceChildren(); bmsEntries().forEach(b => addRow(b.type, b.mac)); };
@@ -801,9 +808,9 @@ function field(key, o) {
   row.append(...[h('div', { class: 'f-head' }, h('label', { class: 'f-label', for: 'in-' + key }, o.label || d.label), info, h('code', {}, key),
       d.since ? h('span', { class: 'chip', title: 'Not in the stable release ' + DRIVER_STABLE }, 'v2.1+') : null,
       REBOOT_KEYS.includes(key) ? h('span', { class: 'chip warn' }, 'reboot') : null),
+    h('div', { class: 'f-ctl' }, c.node),
     plain ? h('p', { class: 'f-plain' }, plain) : null,
     tip ? h('div', { class: 'f-tip' }, tip) : null,
-    h('div', { class: 'f-ctl' }, c.node),
     h('div', { class: 'f-meta' }, h('span', {}, 'Default: ' + dShown), reset)].filter(Boolean));
   return row;
 }
