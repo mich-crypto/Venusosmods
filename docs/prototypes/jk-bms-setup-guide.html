@@ -958,7 +958,7 @@ function lfp(p) { // a LiFePO4 voltage curve shape 0..1 → 0..1: steep ends, fl
   return p < 0.1 ? 0.35 * p / 0.1 : p > 0.9 ? 0.55 + 0.45 * (p - 0.9) / 0.1 : 0.35 + 0.2 * (p - 0.1) / 0.8;
 }
 function stepVoltages(main) {
-  const cap = h('p', { class: 'viz-cap' }), tbl = h('div', { class: 'tbl' });
+  const cap = h('p', { class: 'viz-cap' });
   main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 245', t => {
     const B = st.bat, N = cells(), mn = num('MIN_CELL_VOLTAGE'), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
     const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '', dy = 52;
@@ -992,19 +992,6 @@ function stepVoltages(main) {
     cap.replaceChildren(h('b', {}, rising ? 'Charging' : 'Discharging'), ': ', h('b', {}, fx(cv, 3) + ' V'), ' per cell = ', h('b', {}, fx(cv * N, 2) + ' V'), ' battery, ' + zone + '.');
     return o;
   }, 'Charger, battery and load above the cell voltage scale with the BMS limits and your settings'), cap));
-  const table = () => {
-    const B = st.bat, N = cells(), drop = numOr('VOLTAGE_DROP', 0), resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
-    const rows = [['BMS OVP', B.ovp, 'BMS stops charging'],
-      resetOn ? ['Top balance', num('SOC_RESET_CELL_VOLTAGE'), 'every ' + get('SOC_RESET_AFTER_DAYS') + ' days'] : null,
-      ['100 % SoC', num('MAX_CELL_VOLTAGE'), 'full: chargers aim for this'],
-      ['Float', num('FLOAT_CELL_VOLTAGE'), 'held when full'],
-      ['0 % SoC', num('MIN_CELL_VOLTAGE'), 'empty'],
-      ['BMS UVP', B.uvp, 'BMS stops discharging']].filter(Boolean);
-    tbl.replaceChildren(h('table', {}, h('thead', {}, h('tr', {}, ['', 'Per cell', 'Battery (×' + N + ')', ''].map(x => h('th', {}, x)))),
-      h('tbody', {}, rows.map(([l, v, w]) => h('tr', {}, h('td', {}, h('b', {}, l)), h('td', {}, fx(v, 3) + ' V'), h('td', {}, fx(v * N + (l === '100 % SoC' || l === 'Top balance' ? drop : 0), 2) + ' V'), h('td', { class: 'muted' }, w))))));
-  };
-  hooks.push(table); table();
-  main.append(h('div', { class: 'card', style: 'margin-top:12px' }, tbl));
   main.append(warnBox('voltages'));
   main.append(h('h2', {}, 'Your voltages'), fields(['MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'MIN_CELL_VOLTAGE']));
   main.append(h('h2', {}, 'Long or thin cables'), fields(['VOLTAGE_DROP']));
