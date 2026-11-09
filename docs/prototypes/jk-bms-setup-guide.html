@@ -125,8 +125,8 @@ p { max-width:68ch; }
 .field:focus-within .f-plain, .field.open .f-plain, .field.changed .f-plain, .field:focus-within .f-tip, .field.open .f-tip { display:block; }
 .f-tip { font-size:.88rem; color:var(--muted); border-left:2px solid var(--charge); padding:4px 10px; margin:0; }
 .f-tip b { color:var(--ink); }
-.info { width:20px; height:20px; border-radius:50%; border:1px solid var(--faint); background:none; color:var(--muted); font:600 .72rem var(--display); cursor:pointer; padding:0; display:inline-grid; place-items:center; align-self:center; }
-.info:hover, .field.open .info { color:var(--ink); border-color:var(--ink); }
+.info-btn { width:20px; height:20px; border-radius:50%; border:1px solid var(--faint); background:none; color:var(--muted); font:600 .72rem var(--display); cursor:pointer; padding:0; display:inline-grid; place-items:center; align-self:center; }
+.info-btn:hover, .field.open .info-btn { color:var(--ink); border-color:var(--ink); }
 .status { display:grid; grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(0,1fr)); gap:10px 16px; align-items:end; margin-top:10px; padding-top:12px; border-top:1px solid var(--line); }
 .status .ph { font-family:var(--display); font-size:1.45rem; font-weight:600; line-height:1.1; }
 .status .ph small { display:block; font-family:var(--body); font-size:.78rem; color:var(--faint); font-weight:500; letter-spacing:.08em; font-variant-numeric:tabular-nums; }
@@ -178,6 +178,8 @@ input[type=range] { flex:1 1 180px; min-width:120px; max-width:360px; accent-col
 .callout b { color:var(--ink); }
 .warns { display:flex; flex-direction:column; gap:6px; }
 .warns:empty { display:none; }
+.warns:not(:empty) { margin:12px 0; }
+.numu { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 .w { display:flex; gap:10px; align-items:flex-start; padding:9px 12px; border-radius:4px; font-size:.9rem; }
 .w.bad { background:var(--bad-soft); } .w.warn { background:var(--warn-soft); } .w.info { background:var(--charge-soft); }
 .w .tag { font-size:.62rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; padding:2px 7px; border-radius:99px; flex:0 0 auto; margin-top:2px; }
@@ -720,7 +722,7 @@ function control(key, o) {
       box.append(range);
     }
     nIn.addEventListener('input', () => { if (range && nIn.value !== '') range.value = nIn.value; setVal(key, nIn.value.trim()); });
-    box.append(nIn, d.unit ? h('span', { class: 'unit' }, d.unit) : null);
+    box.append(h('span', { class: 'numu' }, nIn, d.unit ? h('span', { class: 'unit' }, d.unit) : ''));
     if (d.empty) box.append(h('button', { type: 'button', class: 'link', onclick: () => { nIn.value = ''; setVal(key, ''); } }, d.empty === 'off' ? 'Turn off' : 'Use default'));
     return { node: box, set: v => { nIn.value = v; if (range && v !== '') range.value = v; } };
   }
@@ -760,7 +762,7 @@ function field(key, o) {
   const reset = h('button', { type: 'button', class: 'link', 'data-reset': key, hidden: !isChanged(key), onclick: () => { st.vals[key] = d.d; (ctls[key] || []).forEach(x => x.set(d.d)); changed(); } }, 'Back to default');
   const dShown = d.t === 'secret' ? '–' : d.d === '' ? (d.empty || 'empty') : (d.opts ? (d.opts.find(x => x[0] === d.d) || [0, d.d])[1] : d.d + (d.unit && d.t !== 'list' ? ' ' + d.unit : ''));
   const row = h('div', { class: 'field' + (isChanged(key) ? ' changed' : ''), 'data-key': key });
-  const info = (plain || tip) ? h('button', { type: 'button', class: 'info', title: 'About this setting', 'aria-label': 'About ' + (o.label || d.label), onclick: () => row.classList.toggle('open') }, 'i') : null;
+  const info = (plain || tip) ? h('button', { type: 'button', class: 'info-btn', title: 'About this setting', 'aria-label': 'About ' + (o.label || d.label), onclick: () => row.classList.toggle('open') }, 'i') : null;
   row.append(...[h('div', { class: 'f-head' }, h('label', { class: 'f-label', for: 'in-' + key }, o.label || d.label), info, h('code', {}, key),
       REBOOT_KEYS.includes(key) ? h('span', { class: 'chip warn' }, 'reboot') : null),
     h('div', { class: 'f-ctl' }, c.node),
