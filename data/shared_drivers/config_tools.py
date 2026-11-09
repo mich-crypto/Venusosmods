@@ -1088,3 +1088,62 @@ def driver_update_available(installed, latest):
     """Is the latest stable release newer than what is installed? (False when either is unknown.)"""
     a, b = parse_driver_version(installed), parse_driver_version(latest)
     return bool(a and b and b > a)
+
+
+# -------------------------------- a new driver version: what changed in its settings
+#
+# dbus-serialbattery compares config.ini with its own config.default.ini when it starts. A
+# setting it does not know puts the battery in error 119 ("settings incorrect") and blocks
+# charging and discharging. So after an update every leftover setting must be found.
+
+# The settings the safety check needs; if the installed driver has one of them no more, say so.
+SAFETY_KEYS = ('MAX_BATTERY_CHARGE_CURRENT', 'MAX_BATTERY_DISCHARGE_CURRENT', 'MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE',
+               'MIN_CELL_VOLTAGE', 'CCCM_CV_ENABLE', 'DCCM_CV_ENABLE', 'CELL_VOLTAGES_WHILE_CHARGING',
+               'MAX_CHARGE_CURRENT_CV_FRACTION', 'CELL_VOLTAGES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_CV_FRACTION',
+               'CCCM_T_ENABLE', 'TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', 'DCCM_T_ENABLE',
+               'TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION', 'CVL_CONTROLLER_MODE')
+
+
+def unknown_settings(default_text, user_text):
+    """Keys in config.ini the installed driver does not know (as spelled in config.ini)."""
+    known = set(e['key'].lower() for g in parse_default_ini(default_text) for e in g['entries'])
+    user = parse_ini(user_text).get('DEFAULT', {})
+    spelled = {}
+    for line in user_text.splitlines():           # keep the user's own spelling for the message
+        m = KEY_RE.match(line)
+        if m and not COMMENT_RE.match(line) and not line[:1].isspace():
+            spelled[m.group(2).lower()] = m.group(2)
+    return [spelled.get(k, k.upper()) for k in user if k not in known]
+
+
+def settings_findings(default_text, user_text):
+    """Findings about the file as a whole, next to battery_safety()."""
+    out = []
+    for key in unknown_settings(default_text, user_text):
+        out.append({'id': 'unknown_' + key.upper(), 'level': 'block', 'keys': [key.upper()],
+                    'text': '%s is not a setting of the installed driver. At its next start the driver blocks charging '
+                            'and discharging (error 119) until it is removed from config.ini.' % key})
+    known = set(e['key'] for g in parse_default_ini(default_text) for e in g['entries'])
+    missing = [k for k in SAFETY_KEYS if k not in known]
+    if missing and known:
+        out.append({'id': 'safety_keys_missing', 'level': 'warn', 'keys': [],
+                    'text': 'The installed driver has no setting %s, so the safety check cannot check %s. Check the '
+                            'driver’s release notes for what replaced %s.' % (
+                                ', '.join(missing), 'it' if len(missing) == 1 else 'them', 'it' if len(missing) == 1 else 'them')})
+    return out
+
+
+def defaults_diff(old_text, new_text):
+    """What changed between two config.default.ini files: added, removed and changed defaults."""
+    old = dict((e['key'], e) for g in parse_default_ini(old_text) for e in g['entries'])
+    new = dict((e['key'], e) for g in parse_default_ini(new_text) for e in g['entries'])
+    changed = [{'key': k, 'label': new[k]['label'], 'old': old[k]['default'], 'new': new[k]['default']}
+               for k in new if k in old and not same_value(new[k], old[k]['default'], new[k]['default'])]
+    return {'added': [{'key': k, 'label': new[k]['label'], 'default': new[k]['default']} for k in new if k not in old],
+            'removed': [{'key': k, 'label': old[k]['label'], 'default': old[k]['default']} for k in old if k not in new],
+            'changed': changed}
+
+
+def remove_settings(user_text, keys):
+    """config.ini without these keys (whatever their case)."""
+    return set_values(user_text, 'DEFAULT', dict((k, None) for k in keys)) if keys else user_text

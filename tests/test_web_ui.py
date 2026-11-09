@@ -22,8 +22,8 @@ import fakes  # noqa: E402,F401
 import config_tools as ct  # noqa: E402
 import web_ui  # noqa: E402
 
-with open(os.path.join(HERE, 'data', 'serialbattery_config.default.ini')) as f:
-    SB_DEFAULT = f.read()
+with open(os.path.join(HERE, 'data', 'serialbattery_config.full.ini')) as f:
+    SB_DEFAULT = f.read()        # the stable release's defaults, complete
 with open(os.path.join(HERE, '..', 'data', 'shared_drivers', 'config.ini.example')) as f:
     EXAMPLE = f.read()
 
@@ -939,6 +939,55 @@ class BatterySafetyApiTests(AppTestCase):
         d = body_of(self.get('/api/serialbattery_system'))
         levels = dict((c['id'], c['level']) for c in d['checks'])
         self.assertEqual(levels['driver'], 'bad')
+
+
+class DriverUpdateApiTests(AppTestCase):
+    user_text = SerialBatteryTests.user_text
+
+    def new_driver(self):
+        """What an update could do: rename a setting, change a default, add one."""
+        with open(os.path.join(self.sb, 'config.default.ini'), 'w') as f:
+            f.write(SB_DEFAULT.replace('MIDPOINT_ENABLE = False', 'MIDPOINT_GRAPH = False')
+                    .replace('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES = 20', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES = 30')
+                    + 'NEW_THING = 1\n')
+
+    def test_changes_after_an_update(self):
+        self.assertEqual(self.post('/api/serialbattery', {'s.MIDPOINT_ENABLE': 'True'}).status, 200)
+        d = body_of(self.get('/api/serialbattery'))
+        self.assertIsNone(d['driver_changes'])                      # first look: the baseline
+        self.new_driver()
+        d = body_of(self.get('/api/serialbattery'))
+        ch = d['driver_changes']
+        self.assertEqual([r['key'] for r in ch['removed']], ['MIDPOINT_ENABLE'])
+        self.assertEqual(ch['removed'][0]['yours'], 'True')
+        self.assertEqual([c['key'] for c in ch['changed']], ['BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES'])
+        self.assertIn('NEW_THING', [a['key'] for a in ch['added']])
+        self.assertEqual(d['unknown'], ['MIDPOINT_ENABLE'])
+        self.assertIn('unknown_MIDPOINT_ENABLE', [f['id'] for f in d['safety'] if f['level'] == 'block'])
+        # an old leftover does not hold up other saves
+        self.assertEqual(self.post('/api/serialbattery', {'s.LOGGING': 'DEBUG'}).status, 200)
+        # only unknown settings can be removed this way
+        self.assertEqual(self.post('/api/serialbattery_remove', {'keys': 'LOGGING'}).status, 400)
+        r = self.post('/api/serialbattery_remove', {'keys': 'MIDPOINT_ENABLE'})
+        self.assertEqual(r.status, 200, r.body)
+        self.assertNotIn('midpoint_enable', ct.parse_ini(self.user_text())['DEFAULT'])
+        self.assertEqual(body_of(self.get('/api/serialbattery'))['unknown'], [])
+        self.assertEqual(self.post('/api/serialbattery_reviewed', {}).status, 200)
+        self.assertIsNone(body_of(self.get('/api/serialbattery'))['driver_changes'])
+
+    def test_raw_editor_cannot_add_an_unknown_setting(self):
+        r = self.post('/api/raw', {'file': 'serialbattery', 'text': '[DEFAULT]\nNOT_A_SETTING = 1\n'})
+        self.assertEqual(r.status, 400)
+        self.assertIn('error 119', body_of(r)['errors']['NOT_A_SETTING'])
+
+    def test_driver_defaults_file_is_still_never_written(self):
+        path = os.path.join(self.sb, 'config.default.ini')
+        with open(path) as f:
+            before = f.read()
+        self.get('/api/serialbattery')
+        self.post('/api/serialbattery_reviewed', {})
+        with open(path) as f:
+            self.assertEqual(f.read(), before)
 
 
 class SerialBatteryVersionTests(AppTestCase):

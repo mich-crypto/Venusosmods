@@ -53,6 +53,22 @@ back to what the BMS reports on D-Bus. `config_tools.venus_checks()` checks the
 Venus OS side: DVCC on, dbus-serialbattery as controlling BMS and battery monitor,
 and no charge current allowed at or below 0 °C.
 
+## After a driver update
+
+A setting in `config.ini` that the installed driver does not know makes dbus-serialbattery
+block charging and discharging (error 119). So:
+- `config_tools.settings_findings()` reports every unknown setting as `block` (so no save
+  can add one, the raw editor included) and says when a setting the safety check needs is
+  missing from the installed driver.
+- The web UI keeps the defaults the user last reviewed in
+  `state/serialbattery-defaults-reviewed.ini` (a copy, never the driver's file). When the
+  driver's `config.default.ini` differs, the Battery tab shows what was added, removed and
+  changed (`defaults_diff()`), with "Keep old value" for changed defaults the user relies on
+  and "Mark as reviewed". Unknown settings get a Remove button
+  (`POST /api/serialbattery_remove`, which only removes unknown keys). The Overview card
+  links there.
+- The setup guide never exports a setting it does not know.
+
 When changing these rules, keep `docs/prototypes/jk-bms-setup-guide.html`
 (`checks()`) in step, and back new limits with the cell datasheet or the driver docs.
 - Bluetooth/CAN changes (`BLUETOOTH_BMS`, `BLUETOOTH_USE_USB`, `CAN_PORT`) need a

@@ -365,6 +365,8 @@ class App(object):
             'POST /api/serialbattery_facts': self.api_serialbattery_facts,
             'GET /api/serialbattery_system': self.api_serialbattery_system,
             'GET /api/serialbattery_version': self.api_serialbattery_version,
+            'POST /api/serialbattery_reviewed': self.api_serialbattery_reviewed,
+            'POST /api/serialbattery_remove': self.api_serialbattery_remove,
             'POST /api/serialbattery_update': self.api_serialbattery_update,
             'GET /api/serialbattery_update_log': self.api_serialbattery_update_log,
             'GET /api/raw': self.api_raw,
@@ -1335,7 +1337,60 @@ class App(object):
                     e['value'] = None if not e.get('value') else ''
         facts, sources = self.battery_facts()
         return jsonr({'ok': True, 'installed': True, 'dir': path, 'view': view, 'facts': facts,
-                      'fact_sources': sources, 'safety': self.safety_of(default, user, facts)})
+                      'fact_sources': sources, 'safety': self.safety_of(default, user, facts),
+                      'unknown': ct.unknown_settings(default, user), 'driver_changes': self.driver_changes(default, user)})
+
+    # ------------------------------------- a new driver version changed its settings
+
+    def reviewed_path(self):
+        return os.path.join(self.state_dir, 'serialbattery-defaults-reviewed.ini')
+
+    def remember_defaults(self, default):
+        """Keep the driver's defaults as the user has seen them (never the driver's own file)."""
+        os.makedirs(self.state_dir, exist_ok=True)
+        ct.write_file(self.reviewed_path(), default)
+
+    def driver_changes(self, default, user):
+        """What changed in the driver's settings since they were last reviewed; None if nothing."""
+        if not default.strip():
+            return None
+        if not os.path.isfile(self.reviewed_path()):
+            self.remember_defaults(default)        # first look: this is the baseline
+            return None
+        old = self.read_text(self.reviewed_path())
+        diff = ct.defaults_diff(old, default)
+        if not (diff['added'] or diff['removed'] or diff['changed']):
+            return None
+        mine = dict((k.upper(), v) for k, v in ct.parse_ini(user).get('DEFAULT', {}).items())
+        for c in diff['changed']:
+            c['yours'] = mine.get(c['key'])         # set in config.ini: the new default does not apply
+        for r in diff['removed']:
+            r['yours'] = mine.get(r['key'])
+        return diff
+
+    def api_serialbattery_reviewed(self, req):
+        path = self.serialbattery_path()
+        if not path:
+            return jsonr({'ok': False, 'error': 'dbus-serialbattery is not installed'}, 400)
+        self.remember_defaults(self.read_text(os.path.join(path, 'config.default.ini')))
+        return jsonr({'ok': True, 'message': 'Marked as reviewed'})
+
+    def api_serialbattery_remove(self, req):
+        """Remove settings the installed driver does not know (they would block the battery)."""
+        path = self.serialbattery_path()
+        if not path:
+            return jsonr({'ok': False, 'error': 'dbus-serialbattery is not installed'}, 400)
+        default = self.read_text(os.path.join(path, 'config.default.ini'))
+        user_path = os.path.join(path, 'config.ini')
+        user = self.read_text(user_path)
+        wanted = [k.strip() for k in req.form.get('keys', '').split(',') if k.strip()]
+        unknown = dict((k.lower(), k) for k in ct.unknown_settings(default, user))
+        bad = [k for k in wanted if k.lower() not in unknown]
+        if not wanted or bad:
+            return jsonr({'ok': False, 'error': 'only settings the driver does not know can be removed here: %s'
+                          % ', '.join(bad or ['(none given)'])}, 400)
+        ct.write_file(user_path, ct.remove_settings(user, [unknown[k.lower()] for k in wanted]))
+        return jsonr({'ok': True, 'message': 'Removed ' + ', '.join(wanted) + '. Restart the driver to apply it.'})
 
     # ------------------------------------------------------ battery safety
 
@@ -1379,7 +1434,7 @@ class App(object):
     def safety_of(self, default, user, facts=None):
         if facts is None:
             facts, _ = self.battery_facts()
-        return ct.battery_safety(ct.serialbattery_effective(default, user), facts)
+        return ct.battery_safety(ct.serialbattery_effective(default, user), facts) + ct.settings_findings(default, user)
 
     def safety_answer(self, default, before, after, confirm):
         """None if the change may be written, else the response that refuses it or asks to confirm."""
@@ -1473,12 +1528,18 @@ class App(object):
             starlink_hub.run_async(['curl', '-s', '-m', '10', ct.SB_RELEASES_API], got, timeout=14)
         installed, source = self.serialbattery_version()
         info = self.sb_release or {}
+        unknown_count, changes = 0, False
+        sbp = self.serialbattery_path()
+        if sbp:
+            default, user = (self.read_text(os.path.join(sbp, 'config.default.ini')),
+                             self.read_text(os.path.join(sbp, 'config.ini')))
+            unknown_count, changes = len(ct.unknown_settings(default, user)), bool(self.driver_changes(default, user))
         return jsonr({'ok': True, 'installed_driver': bool(self.serialbattery_path()), 'installed': installed,
                       'source': source, 'latest': info.get('tag'), 'date': info.get('date'),
                       'notes': info.get('url') or ct.SB_RELEASES_URL, 'error': info.get('error'),
                       'checking': bool(info.get('checking')),
                       'available': ct.driver_update_available(installed, info.get('tag')),
-                      'running': self.sb_update_running()})
+                      'running': self.sb_update_running(), 'unknown_count': unknown_count, 'changes': changes})
 
     def api_serialbattery_update(self, req):
         """Install the latest stable release with the driver's own installer (it keeps config.ini)."""
@@ -1487,6 +1548,8 @@ class App(object):
             return jsonr({'ok': False, 'error': 'dbus-serialbattery is not installed'}, 400)
         if self.sb_update_running() or self.update_running():
             return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
+        if not os.path.isfile(self.reviewed_path()):
+            self.remember_defaults(self.read_text(os.path.join(path, 'config.default.ini')))
         user = os.path.join(path, 'config.ini')
         backup = None
         if os.path.isfile(user):                    # our own copy as well, before anything is touched

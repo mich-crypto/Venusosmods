@@ -1368,6 +1368,48 @@ async function venusCheckCard() {
   return card;
 }
 
+// ------------------------- a new driver version: leftovers and changed settings
+function unknownCard(keys, after) {
+  if (!keys || !keys.length) return null;
+  const remove = async list => {
+    const r = await api('/api/serialbattery_remove', { keys: list.join(',') });
+    toast(r.ok ? r.data.message : (r.data.error || 'Not removed'), !r.ok);
+    if (r.ok) after();
+  };
+  return h('div', { class: 'card', style: 'border-color:var(--bad)' },
+    h('h3', {}, h('span', { class: 'chip bad' }, 'blocks the battery'), ' Settings the installed driver does not know'),
+    h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'dbus-serialbattery stops charging and discharging (error 119) while config.ini holds a setting it does not know. That happens after an update renamed or dropped a setting. Remove them, then restart the driver.'),
+    keys.map(k => h('div', { class: 'find' }, h('span', { class: 'dot bad' }), h('div', { class: 'row', style: 'flex:1' }, h('code', {}, k), h('span', { class: 'spacer' }),
+      h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => remove([k]) }, 'Remove')))),
+    keys.length > 1 ? h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn danger small', disabled: !canEdit(), onclick: () => remove(keys) }, 'Remove all ' + keys.length)) : null);
+}
+
+function driverChangesCard(ch, after) {
+  if (!ch) return null;
+  const keepOld = (c) => {
+    const ctl = S.sbCtl && S.sbCtl[c.key];
+    if (!ctl) { goSetting(c.key); return; }
+    ctl.set(c.old); updateSbBar(); ctl.row.scrollIntoView({ block: 'center' });
+    toast('Set back to ' + c.old + ': press Save to keep it');
+  };
+  const rows = [];
+  ch.removed.forEach(r => rows.push(h('div', { class: 'find' }, h('span', { class: 'dot ' + (r.yours != null ? 'bad' : '') }),
+    h('div', {}, h('span', { class: 'lvl warn' }, 'Gone'), h('code', {}, r.key), r.yours != null ? ' · you had set it to ' + r.yours + ': remove it above' : ''))));
+  ch.changed.forEach(c => rows.push(h('div', { class: 'find' }, h('span', { class: 'dot ' + (c.yours != null ? '' : 'warn') }),
+    h('div', { style: 'flex:1' }, h('span', { class: 'lvl warn' }, 'New default'), c.label, ' ', h('code', {}, c.key), ': ', h('b', {}, (c.old === '' ? '(empty)' : c.old) + ' → ' + (c.new === '' ? '(empty)' : c.new)),
+      c.yours != null ? h('span', { class: 'muted' }, ' · you set ' + c.yours + ', so nothing changes for you')
+        : h('div', { class: 'row', style: 'margin-top:4px' }, h('span', { class: 'muted' }, 'This now applies to your battery.'),
+          h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => keepOld(c) }, 'Keep ' + (c.old === '' ? '(empty)' : c.old)))))));
+  ch.added.forEach(a => rows.push(h('div', { class: 'find' }, h('span', { class: 'dot ok' }),
+    h('div', {}, h('span', { class: 'lvl ok' }, 'New'), a.label, ' ', h('code', {}, a.key), ' · default ' + (a.default === '' ? '(empty)' : a.default), ' ', link(a.key, 'show')))));
+  return h('div', { class: 'card', style: 'border-color:var(--warn)' },
+    h('h3', {}, 'The driver\u2019s settings changed'),
+    h('div', { class: 'muted', style: 'margin-bottom:6px' }, 'Since you last looked, a new version of dbus-serialbattery added, removed or changed settings. Check the ones marked orange.'),
+    rows, h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn primary', disabled: !canEdit(), onclick: async () => {
+      const r = await api('/api/serialbattery_reviewed', {}); toast(r.ok ? r.data.message : (r.data.error || 'Not saved'), !r.ok); if (r.ok) after();
+    } }, 'Mark as reviewed')));
+}
+
 async function tabBatterySettings(main) {
   S.sbCtl = {};
   if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
@@ -1381,7 +1423,7 @@ async function tabBatterySettings(main) {
   const ro = !canEdit();
   if (ro) main.append(lockedNotice());
   S.sbSafetyBox = h('div', {});
-  main.append(S.sbSafetyBox);
+  main.append(...[unknownCard(r.data.unknown, () => renderTab()), driverChangesCard(r.data.driver_changes, () => renderTab()), S.sbSafetyBox].filter(Boolean));
   const missing = ['capacity', 'ovp', 'uvp', 'bms_current'].some(k => r.data.facts == null || r.data.facts[k] == null);
   main.append(h('details', { class: 'group', open: missing }, h('summary', {}, 'Your battery (used by the safety check)'),
     h('div', { class: 'body' }, factsCard(r.data.facts, r.data.fact_sources, () => scheduleSafety()))));
@@ -1421,9 +1463,6 @@ async function tabBatterySettings(main) {
   };
   search.addEventListener('input', filter); onlyMod.addEventListener('change', filter);
   if (S.sbSearch) { search.value = S.sbSearch; S.sbSearch = ''; filter(); }
-  if (Object.keys(view.unknown || {}).length) {
-    main.append(h('div', { class: 'banner' }, 'Settings in config.ini this page does not know (kept as they are): ' + Object.keys(view.unknown).join(', ')));
-  }
   showSafety(r.data.safety);
   updateSbBar();
 }
@@ -1855,6 +1894,7 @@ async function tabBatteryLimits(box) {
   S.sb = sb.data;
   const venus = await venusCheckCard();
   if (S.tab !== 'battery' || S.sbView !== 'limits') return;
+  box.append(...[unknownCard(sb.data.unknown, () => renderTab()), driverChangesCard(sb.data.driver_changes, () => { S.sbView = 'settings'; renderTab(); })].filter(Boolean));
   box.append(h('div', { class: 'two' }, safetyCard(sb.data.safety), venus),
     factsCard(sb.data.facts, sb.data.fact_sources, () => renderTab()));
   const byKey = {};
@@ -2330,6 +2370,8 @@ async function sbVersion(ver, actions, refresh) {
     (d.available || d.running) ? h('button', { class: 'btn small primary', disabled: !canEdit() || d.running, onclick: () => sbUpdate(d, () => sbVersion(ver, actions, false)) },
       d.running ? 'Updating…' : 'Update to ' + d.latest) : null,
     d.error ? h('span', { class: 'muted' }, d.error) : null].filter(Boolean));
+  if (d.unknown_count) actions.prepend(h('button', { class: 'btn small danger', onclick: () => { S.sbView = 'settings'; selectTab('battery'); } }, d.unknown_count + ' unknown setting' + (d.unknown_count > 1 ? 's' : '') + ': fix now'));
+  else if (d.changes) actions.prepend(h('button', { class: 'btn small', onclick: () => { S.sbView = 'settings'; selectTab('battery'); } }, 'Driver settings changed: review'));
   if (d.checking) setTimeout(() => sbVersion(ver, actions, false), 2500);
 }
 

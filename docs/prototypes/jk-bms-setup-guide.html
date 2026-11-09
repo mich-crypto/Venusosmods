@@ -592,6 +592,7 @@ function checks() {
   }
   if (bool('SOC_CALCULATION') && String(get('EXTERNAL_SENSOR_DBUS_PATH_SOC')).trim()) add('bad', 'soc', 'SOC_CALCULATION', 'The driver cannot count the SoC itself while an external SoC sensor is set.');
   if (bool('SOC_CALCULATION') && !bool('CVCM_ENABLE')) add('info', 'soc', 'SOC_CALCULATION', 'The driver sets 100 % when it switches to float, which needs "Switch to float when full" (step 5).');
+  Object.keys(st.extra || {}).forEach(k => add('bad', 'backup', k, `${k} from your imported file is not a setting of dbus-serialbattery ${DRIVER_SOURCE}. The driver would block charging and discharging (error 119), so it is left out of the export.`));
   if (bool('USE_BMS_DVCC_VALUES')) add('info', 'all', 'USE_BMS_DVCC_VALUES', 'Only Felicity and Seplos V3 BMS send their own limits; for a JK BMS leave it off.');
   if (!bool('AUTO_RESET_SOC') && bool('CVCM_ENABLE')) add('info', 'charging', 'AUTO_RESET_SOC', 'The JK BMS SoC is not set to 100 % at float. Its SoC can drift over weeks unless you top balance.');
   return out;
@@ -667,7 +668,7 @@ function refreshChrome() {
   document.querySelectorAll('.warns[data-step]').forEach(box => {
     const id = box.dataset.step, list = id === '*' ? w : w.filter(x => x.step === id || (box.dataset.keys || '').split(' ').includes(x.key));
     box.replaceChildren(...list.map(x => h('div', { class: 'w ' + x.lvl }, h('span', { class: 'tag' }, x.lvl === 'bad' ? 'refused' : x.lvl === 'warn' ? 'risky' : 'note'),
-      h('span', {}, x.msg, id === '*' && x.step !== 'all' ? [' ', h('button', { type: 'button', class: 'link', onclick: () => go(x.step) }, 'Go to step')] : null))));
+      h('span', {}, x.msg, id === '*' && x.step !== 'all' && x.step !== 'backup' ? [' ', h('button', { type: 'button', class: 'link', onclick: () => go(x.step) }, 'Go to step')] : null))));
   });
 }
 function warnBox(stepId, keys) { return h('div', { class: 'warns', 'data-step': stepId, 'data-keys': (keys || []).join(' '), 'aria-live': 'polite' }); }
@@ -1384,9 +1385,8 @@ function iniText() {
     if (g.id !== lastG) { lines.push('', '; --- ' + g.title); lastG = g.id; }
     lines.push(k + ' = ' + get(k));
   }
-  const ex = Object.entries(st.extra || {});
-  if (ex.length) { lines.push('', '; --- Kept from your file (not known to this guide)'); ex.forEach(([k, v]) => lines.push(k + ' = ' + v)); }
-  if (!ch.length && !ex.length) lines.push('; (nothing changed: all defaults)');
+  // settings the driver does not know are never written: they would make it block the battery (error 119)
+  if (!ch.length) lines.push('; (nothing changed: all defaults)');
   return lines.join('\n') + '\n';
 }
 function jsonText() {
@@ -1490,9 +1490,9 @@ function stepBackup(main) {
     try { r = parseAny(text); } catch (e) { status.replaceChildren(h('div', { class: 'w bad' }, h('span', { class: 'tag' }, 'fix'), h('span', {}, from + ': ' + e.message))); return; }
     pending = r;
     const nKnown = Object.keys(r.values).filter(k => DEF[k]).length, nNew = Object.keys(r.values).length - nKnown, nNow = changedKeys().length;
-    status.replaceChildren(h('div', { class: 'confirm' }, h('span', {}, `${from}: ${nKnown} settings${nNew ? ', ' + nNew + ' not known to this guide (kept)' : ''}${Object.keys(r.bat).length ? ', battery numbers' : ''}. `,
+    status.replaceChildren(h('div', { class: 'confirm' }, h('span', {}, `${from}: ${nKnown} settings${nNew ? ', ' + nNew + ' the driver does not know (left out: they would block the battery)' : ''}${Object.keys(r.bat).length ? ', battery numbers' : ''}. `,
       nNow ? h('b', {}, `This replaces your ${nNow} current change${nNow === 1 ? '' : 's'}.`) : ''),
-      h('button', { type: 'button', class: 'btn primary small', onclick: () => { const res = applyImport(pending); pending = null; render(); toast(`Loaded ${res.known} settings${res.unknown ? ', kept ' + res.unknown + ' unknown' : ''}`); } }, 'Load it'),
+      h('button', { type: 'button', class: 'btn primary small', onclick: () => { const res = applyImport(pending); pending = null; render(); toast(`Loaded ${res.known} settings${res.unknown ? ', left out ' + res.unknown + ' unknown' : ''}`); } }, 'Load it'),
       h('button', { type: 'button', class: 'btn small', onclick: () => { pending = null; status.replaceChildren(); } }, 'Cancel')));
   };
   const readFile = f => { if (!f) return; const rd = new FileReader(); rd.onload = () => offer(String(rd.result), f.name); rd.onerror = () => toast('Could not read ' + f.name); rd.readAsText(f); };

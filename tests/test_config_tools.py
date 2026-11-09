@@ -291,6 +291,33 @@ class BatterySafetyTests(unittest.TestCase):
         ct.write_file(os.path.join(d, 'config.ini'), '[DEFAULT]\n')
 
 
+class DriverUpdateTests(unittest.TestCase):
+    NEW = (FULL.replace('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES = 20', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES = 30')
+           .replace('MIDPOINT_ENABLE = False', 'MIDPOINT_GRAPH = False') + 'NEW_THING = 1\n')
+
+    def test_diff(self):
+        d = ct.defaults_diff(FULL, self.NEW)
+        self.assertEqual([a['key'] for a in d['added']], ['MIDPOINT_GRAPH', 'NEW_THING'])
+        self.assertEqual([r['key'] for r in d['removed']], ['MIDPOINT_ENABLE'])
+        self.assertEqual([(c['key'], c['old'], c['new']) for c in d['changed']], [('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', '20', '30')])
+        self.assertEqual(ct.defaults_diff(FULL, FULL), {'added': [], 'removed': [], 'changed': []})
+
+    def test_leftover_setting_is_found_and_removed(self):
+        user = '[DEFAULT]\nMidpoint_Enable = True\nLOGGING = DEBUG\n'
+        self.assertEqual(ct.unknown_settings(self.NEW, user), ['Midpoint_Enable'])
+        f = ct.settings_findings(self.NEW, user)
+        self.assertEqual((f[0]['id'], f[0]['level']), ('unknown_MIDPOINT_ENABLE', 'block'))
+        self.assertIn('error 119', f[0]['text'])
+        self.assertEqual(ct.remove_settings(user, ['Midpoint_Enable']), '[DEFAULT]\nLOGGING = DEBUG\n')
+
+    def test_safety_check_says_what_it_cannot_check(self):
+        new = FULL.replace('CCCM_T_ENABLE = True', 'CHARGE_TEMP_LIMIT = True')
+        f = ct.settings_findings(new, '')
+        self.assertEqual(f[0]['id'], 'safety_keys_missing')
+        self.assertIn('CCCM_T_ENABLE', f[0]['text'])
+        self.assertEqual(ct.settings_findings(FULL, ''), [])
+
+
 class VenusChecksTests(unittest.TestCase):
     SVC = 'com.victronenergy.battery.jkbms_ble'
     BAT = {'/Mgmt/ProcessName': '/data/apps/dbus-serialbattery/dbushelper.py', '/ProductName': 'SerialBattery(Jkbms_Ble)',
