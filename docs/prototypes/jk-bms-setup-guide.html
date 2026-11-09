@@ -192,6 +192,7 @@ input[type=range] { flex:1 1 180px; min-width:120px; max-width:360px; accent-col
 .pills { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 2px; }
 .pill { font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; padding:3px 9px; border-radius:99px; border:1px solid var(--line); color:var(--faint); }
 .pill.now { color:var(--bg); background:var(--ink); border-color:var(--ink); font-weight:600; }
+button.pill { background:none; cursor:pointer; font:inherit; font-size:.72rem; } button.pill.now { background:var(--ink); }
 
 table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
 th, td { text-align:left; padding:8px 8px; border-bottom:1px solid var(--line); font-size:.9rem; vertical-align:top; }
@@ -420,7 +421,7 @@ const DRIVER_SOURCE = 'v2.0.20250729', DRIVER_STABLE = 'v2.0.20250729';
 // ------------------------------------------------------------------ state
 const STORE = 'jkbms-setup-guide-v1';
 const BAT_DEFAULT = { cells: 4, ah: 280, ovp: 3.65, uvp: 2.8, bms: 200 };
-const st = { vals: {}, extra: {}, bat: Object.assign({}, BAT_DEFAULT), view: 'connect', motion: true, dayTop: false, recDir: 'c', lastV: 3.30, allJk: true, allChanged: false, allQ: '' };
+const st = { daySeg: 0, vals: {}, extra: {}, bat: Object.assign({}, BAT_DEFAULT), view: 'connect', motion: true, dayTop: false, recDir: 'c', lastV: 3.30, allJk: true, allChanged: false, allQ: '' };
 function load() {
   try {
     const raw = localStorage.getItem(STORE);
@@ -1025,37 +1026,34 @@ function dayModel() {
   };
   return { N, mx, fl, target, top, cvcm, thr, diffOn, waitH, balH, tFull, tBal, tFloat, tDis, tBulk, bulkSoc, soc, cvl, cellV, diff, phase };
 }
-// The playhead does not move at one speed: every phase stays on screen for at least ~3 s,
-// so a 20 min absorption is as readable as a 10 h night.
-function dayHour(M, t) {
+// The day split into its phases; the user steps through them, the marker moves slowly inside one phase.
+function daySegs(M) {
   const cuts = [0, M.tFull, M.tBal, M.tFloat, M.tDis, M.tBulk, 24].filter(v => v !== null && v !== undefined).sort((a, b) => a - b);
   const segs = [];
   for (let i = 0; i < cuts.length - 1; i++) if (cuts[i + 1] - cuts[i] > 0.01) segs.push([cuts[i], cuts[i + 1]]);
-  const dur = segs.map(([a, b]) => Math.max(3, (b - a) * 0.7));
-  const total = dur.reduce((x, y) => x + y, 0);
-  let r = t % total;
-  for (let i = 0; i < segs.length; i++) {
-    if (r < dur[i]) return segs[i][0] + (segs[i][1] - segs[i][0]) * r / dur[i];
-    r -= dur[i];
-  }
-  return 24;
+  return segs;
 }
 const clockOf = h_ => { const m = Math.round((7 + h_) * 60) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
 function stepCharging(main) {
   main.append(h('p', { class: 'lead' }, 'Fill, balance, then rest at float. Every few days a little higher to top balance.'));
   const pills = h('div', { class: 'pills' }), cap = h('div', { class: 'status', 'aria-live': 'off' });
+  const stepOf_ = h('span', { class: 'muted' });
+  const goSeg = d => { const n = daySegs(dayModel()).length; st.daySeg = (st.daySeg + d + n) % n; dirty = true; };
+  const stepper = h('div', { class: 'row', style: 'margin-top:10px' },
+    h('button', { type: 'button', class: 'btn', onclick: () => goSeg(-1) }, '◀ Previous'), stepOf_,
+    h('span', { style: 'flex:1' }), h('button', { type: 'button', class: 'btn primary', onclick: () => goSeg(1) }, 'Next ▶'));
   const resetOn = () => String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Which day to show' });
   const paintSeg = () => {
     seg.replaceChildren(...[[false, 'Normal day'], [true, 'Top balance day']].map(([v, l]) => h('button', { type: 'button', 'aria-pressed': String(st.dayTop === v), disabled: v && !resetOn() ? true : null,
-      onclick: () => { st.dayTop = v; paintSeg(); dirty = true; } }, l)));
+      onclick: () => { st.dayTop = v; st.daySeg = 0; paintSeg(); dirty = true; } }, l)));
     if (!resetOn() && st.dayTop) { st.dayTop = false; paintSeg(); }
   };
   paintSeg(); hooks.push(paintSeg);
   main.append(h('div', { class: 'card viz-card' }, h('div', { class: 'row', style: 'justify-content:space-between' }, pills, seg),
-    viz('0 0 640 300', t => {
+    viz('0 0 640 335', t => {
       const M = dayModel(), X = h_ => 52 + h_ / 24 * 568;
-      const vLo = 3.18, vHi = Math.max(M.target, M.mx) + 0.04, Y = v => 170 - (v - vLo) / (vHi - vLo) * 150, YS = s => 272 - s / 100 * 70;
+      const vLo = 3.18, vHi = Math.max(M.target, M.mx) + 0.04, Y = v => 170 - (v - vLo) / (vHi - vLo) * 150, YS = s => 305 - s / 100 * 70;
       let o = '';
       // phase bands
       const band = (a, b, c) => { if (b > a) o += `<rect x="${X(a)}" y="20" width="${X(b) - X(a)}" height="150" class="${c}"/>`; };
@@ -1063,24 +1061,29 @@ function stepCharging(main) {
       else band(M.tFull, M.tDis, 'z-charge');
       // grid + axes
       [3.2, 3.3, 3.4, 3.5, 3.6, 3.7].filter(v => v > vLo && v < vHi).forEach(v => { o += `<line x1="52" x2="620" y1="${Y(v)}" y2="${Y(v)}" class="grid"/>` + T(46, Y(v) + 4, fx(v * M.N, 1), 't-small', 'end'); });
-      o += T(46, 14, 'V', 't-small', 'end');
-      for (let i = 0; i <= 6; i++) { const hh = i * 4; o += T(X(hh), 296, clockOf(hh), 't-small', 'middle'); }
-      o += `<rect x="52" y="202" width="568" height="70" class="grid"/>` + T(46, 206, '100%', 't-small', 'end') + T(46, 274, '0%', 't-small', 'end');
+      
+      for (let i = 0; i <= 6; i++) { const hh = i * 4; o += T(X(hh), 186, clockOf(hh), 't-small', 'middle') + T(X(hh), 328, clockOf(hh), 't-small', 'middle'); }
+      o += `<rect x="52" y="235" width="568" height="70" class="grid"/>` + T(46, 239, '100%', 't-small', 'end') + T(46, 307, '0%', 't-small', 'end');
       // lines
       let cv = '', pv = '', sp = '';
       for (let i = 0; i <= 240; i++) { const hh = i / 10; cv += (i ? 'L' : 'M') + X(hh).toFixed(1) + ',' + Y(M.cvl(hh)).toFixed(1); pv += (i ? 'L' : 'M') + X(hh).toFixed(1) + ',' + Y(M.cellV(hh)).toFixed(1); sp += 'L' + X(hh).toFixed(1) + ',' + YS(M.soc(hh)).toFixed(1); }
-      o += `<path d="M52,272${sp}L620,272Z" class="a-charge"/><path d="${'M' + sp.slice(1)}" class="l-charge" stroke-width="1.5"/>`;
+      o += `<path d="M52,305${sp}L620,305Z" class="a-charge"/><path d="${'M' + sp.slice(1)}" class="l-charge" stroke-width="1.5"/>`;
       o += `<path d="${pv}" class="l-ink"/><path d="${cv}" class="l-charge"/>`;
       if (M.cvcm && M.bulkSoc > 0 && M.bulkSoc < 100) o += `<line x1="52" x2="620" y1="${YS(M.bulkSoc)}" y2="${YS(M.bulkSoc)}" class="l-warn"/>` + T(616, YS(M.bulkSoc) - 4, 'full charge again below ' + M.bulkSoc + ' %', 't-warn', 'end');
-      o += T(58, 196, 'State of charge', 't-small');
+      o += T(52, 224, 'State of charge', 't-strong') + T(52, 13, 'Voltage', 't-strong');
       o += `<line x1="430" x2="450" y1="12" y2="12" class="l-charge"/>` + T(454, 16, 'charge voltage (CVL)', 't-small') + `<line x1="560" x2="580" y1="12" y2="12" class="l-ink"/>` + T(584, 16, 'battery', 't-small');
       // playhead
-      const hh = dayHour(M, t), x = X(hh);
-      o += `<line x1="${x}" x2="${x}" y1="20" y2="272" class="playhead"/><circle cx="${x}" cy="${Y(M.cvl(hh))}" r="4" class="f-charge"/><circle cx="${x}" cy="${Y(M.cellV(hh))}" r="3.5" class="f-ink"/><circle cx="${x}" cy="${YS(M.soc(hh))}" r="3.5" class="f-charge"/>`;
+      const segs = daySegs(M); if (st.daySeg >= segs.length) st.daySeg = 0;
+      const [sa, sb] = segs[st.daySeg], hh = sa + (sb - sa) * (0.05 + 0.9 * ((t % 6) / 6)), x = X(hh);
+      o += `<rect x="${X(sa)}" y="20" width="${X(sb) - X(sa)}" height="150" fill="none" stroke="var(--ink)" stroke-opacity=".35" stroke-dasharray="3 3"/>`;
+      o += `<line x1="${x}" x2="${x}" y1="20" y2="170" class="playhead"/><line x1="${x}" x2="${x}" y1="235" y2="305" class="playhead"/><circle cx="${x}" cy="${Y(M.cvl(hh))}" r="4" class="f-charge"/><circle cx="${x}" cy="${Y(M.cellV(hh))}" r="3.5" class="f-ink"/><circle cx="${x}" cy="${YS(M.soc(hh))}" r="3.5" class="f-charge"/>`;
       // texts
       const [pid, pname] = M.phase(hh), d = M.diff(hh), soc = M.soc(hh);
       const order = M.cvcm ? [['bulk', 'Bulk'], ['abs', 'Absorption'], ['float', 'Float'], ['rebulk', 'Full charge again']] : [['bulk', 'Charging'], ['abs', 'Held at full'], ['dis', 'Discharging']];
-      pills.replaceChildren(...order.map(([id, l]) => h('span', { class: 'pill' + (id === pid ? ' now' : '') }, l)));
+      const pillKey = order.map(x => x[0]).join() + '|' + pid + '|' + segs.length;
+      if (pills.dataset.k !== pillKey) pills.dataset.k = pillKey, pills.replaceChildren(...order.map(([id, l]) => h('button', { type: 'button', class: 'pill' + (id === pid ? ' now' : ''), onclick: () => {
+        const M2 = dayModel(), s2 = daySegs(M2), k = s2.findIndex(([a, b]) => M2.phase((a + b) / 2)[0] === id); if (k >= 0) { st.daySeg = k; dirty = true; } } }, l)));
+      stepOf_.textContent = 'Phase ' + (st.daySeg + 1) + ' of ' + segs.length;
       let why = '';
       if (pid === 'bulk') why = `Chargers push current until the battery reaches ${fx(M.target * M.N, 2)} V (${fx(M.target, 3)} V per cell)${M.top ? ', the top balance voltage' : ''}.`;
       else if (pname.includes('balancing')) why = `Cells are ${fx(d * 1000, 0)} mV apart. Float waits until they are within ${fx(M.thr * 1000, 0)} mV.`;
@@ -1098,7 +1101,7 @@ function stepCharging(main) {
         stat('SoC', fx(soc, 0) + ' %'), stat('Cells apart', fx(d * 1000, 0) + ' mV'), stat('Chargers aim for', fx(M.cvl(hh) * M.N, 2) + ' V'),
         h('div', { class: 'why' }, why, prog !== null ? h('div', { class: 'bar' }, h('i', { style: 'width:' + (prog * 100).toFixed(1) + '%' })) : null));
       return o;
-    }, 'A simulated day: charge voltage, battery voltage and state of charge'), cap));
+    }, 'A simulated day: charge voltage, battery voltage and state of charge'), cap, stepper));
   main.append(warnBox('charging'));
   main.append(h('h2', {}, 'Float'), fields(['CVCM_ENABLE', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 'SWITCH_TO_FLOAT_WAIT_FOR_SEC', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 'AUTO_RESET_SOC']));
   main.append(h('h2', {}, 'Top balance and SoC reset'), fields(['SOC_RESET_AFTER_DAYS', 'SOC_RESET_CELL_VOLTAGE'], { tips: {
