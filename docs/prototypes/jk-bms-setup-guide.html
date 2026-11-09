@@ -867,37 +867,76 @@ function stepConnect(main) {
 function stepBattery(main) {
   main.append(h('p', { class: 'lead' }, 'Copy these from the JK BMS app.'));
   const cap = h('p', { class: 'viz-cap' });
-  const bez = (a, b, c, d, u) => { const v = 1 - u; return v * v * v * a + 3 * v * v * u * b + 3 * v * u * u * c + u * u * u * d; };
-  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 260', t => {
-    const B = st.bat, N = cells(), shown = Math.min(N, 8), gap = 6, w = Math.min(46, (300 - gap * (shown - 1)) / shown), x0 = 20, y0 = 96, ch = 120;
-    const bx = 372, by = 24, bw = 250, bh = 222;
-    let o = '';
-    for (let i = 0; i < shown; i++) {
-      const x = x0 + i * (w + gap), cx = x + w / 2, lvl = clamp(0.55 + 0.33 * Math.sin(t * 0.5) + 0.04 * Math.sin(t * 1.3 + i * 1.7), 0.05, 1);
-      const ty = by + 40 + i * (110 / Math.max(shown - 1, 1));
-      o += `<path d="M${cx},${y0 - 6} C${cx},${y0 - 50} ${bx - 70},${ty} ${bx},${ty}" class="wire"/>`;
-      const u = ((t * 0.35 + i * 0.13) % 1);
-      o += `<circle cx="${bez(cx, cx, bx - 70, bx, u)}" cy="${bez(y0 - 6, y0 - 50, ty, ty, u)}" r="2.5" class="pk-res"/>`;
-      o += `<rect x="${x}" y="${y0}" width="${w}" height="${ch}" rx="4" class="cell"/>`;
-      o += `<rect x="${x + 3}" y="${y0 + 3 + (ch - 6) * (1 - lvl)}" width="${w - 6}" height="${(ch - 6) * lvl}" rx="2" class="cell-fill"/>`;
-      o += `<rect x="${cx - 6}" y="${y0 - 6}" width="12" height="6" rx="1" class="cell"/>`;
-      o += T(cx, y0 + ch + 16, String(i + 1), 't-small', 'middle');
+  // walk along a polyline: point at distance d
+  const along = (pts, d) => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], L = Math.hypot(x1 - x0, y1 - y0);
+      if (d <= L) return [x0 + (x1 - x0) * d / L, y0 + (y1 - y0) * d / L];
+      d -= L;
     }
-    if (N > shown) o += T(x0 + shown * (w + gap), y0 + ch / 2, '+' + (N - shown), '', 'start');
-    o += T(x0, y0 + ch + 36, N + 'S · ' + fx(N * 3.2, 1) + ' V nominal', 't-small');
+    return pts[pts.length - 1];
+  };
+  const lenOf = pts => pts.slice(1).reduce((a, q, i) => a + Math.hypot(q[0] - pts[i][0], q[1] - pts[i][1]), 0);
+  const line = pts => 'M' + pts.map(q => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join('L');
+  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 320', t => {
+    const B = st.bat, N = cells(), sN = Math.min(N, 8), more = N > sN;
+    const charging = Math.floor(t / 7) % 2 === 0, amps = num(charging ? 'MAX_BATTERY_CHARGE_CURRENT' : 'MAX_BATTERY_DISCHARGE_CURRENT');
+    const rowX = 48, rowW = 300, gap = 12, w = Math.min(62, (rowW - gap * (sN - 1)) / sN), cy = 212, ch = 74, ty = cy - 6;
+    const cellX = i => rowX + i * (w + gap), minusX = i => cellX(i) + 9, plusX = i => cellX(i) + w - 9;
+    // state of charge: all cells in series carry the same current, so they move together
+    const ph = (t % 7) / 7, soc = clamp(charging ? 0.35 + 0.55 * ph : 0.9 - 0.55 * ph, 0.05, 1);
+    let o = '';
     // the BMS
-    o += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="10" class="box"/>`;
-    o += T(bx + 16, by + 24, 'JK BMS', 't-strong') + `<circle cx="${bx + bw - 20}" cy="${by + 19}" r="4.5" class="led" opacity="${0.35 + 0.65 * (Math.sin(t * 4) > 0 ? 1 : 0)}"/>`;
-    o += `<rect x="${bx + 12}" y="${by + 34}" width="${bw - 24}" height="${bh - 46}" rx="4" class="z-none"/>`;
-    const L = [['Cells', N + 'S'], ['Capacity', B.ah + ' Ah · ' + fx(N * 3.2 * B.ah / 1000, 2) + ' kWh'], ['Cell OVP', fx(B.ovp, 3) + ' V · ' + fx(B.ovp * N, 2) + ' V'],
-      ['Cell UVP', fx(B.uvp, 3) + ' V · ' + fx(B.uvp * N, 2) + ' V'], ['Rated', B.bms + ' A']];
-    L.forEach(([k, v], i) => { o += T(bx + 22, by + 56 + i * 19, k, 't-small') + T(bx + bw - 22, by + 56 + i * 19, v, 't-mono', 'end'); });
-    o += `<line x1="${bx + 22}" x2="${bx + bw - 22}" y1="${by + 150}" y2="${by + 150}" class="grid"/>` + T(bx + 22, by + 166, 'driver keeps inside these', 't-small');
-    const D = [['Charge', fx(num('MAX_BATTERY_CHARGE_CURRENT'), 0) + ' A · ' + fx(num('MAX_CELL_VOLTAGE') * N, 2) + ' V'], ['Discharge', fx(num('MAX_BATTERY_DISCHARGE_CURRENT'), 0) + ' A · ' + fx(num('MIN_CELL_VOLTAGE') * N, 2) + ' V']];
-    D.forEach(([k, v], i) => { o += T(bx + 22, by + 184 + i * 19, k, i ? 't-dis' : 't-charge') + T(bx + bw - 22, by + 184 + i * 19, v, 't-mono', 'end'); });
-    cap.replaceChildren(h('b', {}, 'Hard limits in the BMS, soft limits in the driver.'), ' The driver always acts before the BMS has to cut off.');
+    const bx = 34, by = 22, bw = 330, bhh = 118;
+    o += `<rect x="${bx}" y="${by}" width="${bw}" height="${bhh}" rx="8" class="box"/>` + T(bx + 14, by + 22, 'JK BMS', 't-strong');
+    o += `<circle cx="${bx + bw - 16}" cy="${by + 17}" r="4.5" class="led" opacity="${Math.sin(t * 4) > 0 ? 1 : 0.35}"/>`;
+    const rowsL = [['Cells', N + 'S in series'], ['Capacity', B.ah + ' Ah'], ['Rated', B.bms + ' A']];
+    const rowsR = [['OVP', fx(B.ovp, 3) + ' V'], ['UVP', fx(B.uvp, 3) + ' V'], ['Battery', fx(B.uvp * N, 1) + '–' + fx(B.ovp * N, 1) + ' V']];
+    rowsL.forEach(([k, v], i) => { o += T(bx + 34, by + 46 + i * 18, k, 't-small') + T(bx + 166, by + 46 + i * 18, v, 't-mono', 'end'); });
+    rowsR.forEach(([k, v], i) => { o += T(bx + 184, by + 46 + i * 18, k, 't-small') + T(bx + bw - 14, by + 46 + i * 18, v, 't-mono', 'end'); });
+    o += T(bx + bw - 14, by + bhh - 10, 'balance connector', 't-small', 'end');
+    // B- and P- on the left side of the BMS
+    o += `<rect x="${bx - 6}" y="${by + 92}" width="12" height="10" rx="2" class="cell"/>` + T(bx + 10, by + 101, 'B−', 't-strong');
+    o += `<rect x="${bx - 6}" y="${by + 34}" width="12" height="10" rx="2" class="cell"/>` + T(bx + 10, by + 43, 'P−', 't-strong');
+    // cells in series
+    for (let i = 0; i < sN; i++) {
+      const x = cellX(i), lvl = clamp(soc + 0.015 * Math.sin(i * 2.1), 0.03, 1);
+      o += `<rect x="${x}" y="${cy}" width="${w}" height="${ch}" rx="4" class="cell"/>`;
+      o += `<rect x="${x + 3}" y="${cy + 3 + (ch - 6) * (1 - lvl)}" width="${w - 6}" height="${(ch - 6) * lvl}" rx="2" class="cell-fill"/>`;
+      o += `<rect x="${minusX(i) - 5}" y="${cy - 7}" width="10" height="7" rx="1" class="cell"/><rect x="${plusX(i) - 5}" y="${cy - 7}" width="10" height="7" rx="1" class="cell"/>`;
+      o += T(minusX(i), cy + 16, '−', 't-small', 'middle') + T(plusX(i), cy + 16, '+', 't-small', 'middle');
+      o += T(x + w / 2, cy + ch + 14, more && i === sN - 1 ? String(N) : String(i + 1), 't-small', 'middle');
+      if (i < sN - 1) o += `<line x1="${plusX(i)}" y1="${ty}" x2="${minusX(i + 1)}" y2="${ty}" class="l-ink" stroke-width="4"${more && i === sN - 2 ? ' stroke-dasharray="3 4"' : ''}/>`;
+    }
+    // balance leads: one from every junction to the BMS, sense wires only
+    const junctions = [minusX(0)].concat(Array.from({ length: sN - 1 }, (_, i) => (plusX(i) + minusX(i + 1)) / 2), [plusX(sN - 1)]);
+    junctions.forEach((x, i) => { o += `<line x1="${x}" y1="${ty - 2}" x2="${x}" y2="${by + bhh}" class="wire"/><circle cx="${x}" cy="${by + bhh}" r="2.2" class="f-ink"/>`; });
+    // chargers and loads
+    const lx = 474, ly = 60, lw = 146, lh = 196;
+    o += `<rect x="${lx}" y="${ly}" width="${lw}" height="${lh}" rx="8" class="box"/>`;
+    o += T(lx + lw / 2, ly + 90, 'Chargers', charging ? 't-charge' : 't-small', 'middle') + T(lx + lw / 2, ly + 110, '&', 't-small', 'middle') + T(lx + lw / 2, ly + 130, 'loads', charging ? 't-small' : 't-dis', 'middle');
+    o += T(lx + lw / 2, ly + 22, '−', 't-strong', 'middle') + T(lx + 14, ty + 4, '+', 't-strong');
+    // main current loop, drawn in the charging direction: charger + → pack + → cells → pack − → B− → BMS → P− → charger −
+    const loadPlus = [lx, ty], loadMinus = [lx + lw / 2, ly];
+    const A = [loadPlus, [plusX(sN - 1), ty]], inCells = [[plusX(sN - 1), ty], [minusX(0), ty]];
+    const C = [[minusX(0), ty], [20, ty], [20, by + 97], [bx - 6, by + 97]];
+    const D = [[bx - 6, by + 39], [10, by + 39], [10, 8], [loadMinus[0], 8], loadMinus];
+    [A, C, D].forEach(seg => { o += `<path d="${line(seg)}" class="l-ink" stroke-width="3" fill="none"/>`; });
+    const loop = A.concat(inCells.slice(1), C.slice(1), [[bx + 40, by + 97], [bx + 40, by + 39]], D);
+    const total = lenOf(loop), step = 34, speed = 30 + amps / 4, off = (t * speed) % step;
+    const cls = charging ? 'f-charge' : 'f-dis';
+    for (let d = 0; d < total; d += step) {
+      const dd = charging ? (d + off) % total : (total - ((d + off) % total));
+      const [x, y] = along(loop, dd);
+      const insideBms = x > bx && x < bx + bw && y > by && y < by + bhh;
+      if (!insideBms) o += `<circle cx="${x}" cy="${y}" r="3.2" class="${cls}"/>`;
+    }
+    o += T(lx + lw / 2, ly + lh - 18, (charging ? 'Charging ' : 'Discharging ') + fx(amps, 0) + ' A', charging ? 't-charge' : 't-dis', 'middle');
+    cap.replaceChildren(h('b', {}, charging ? 'Charging' : 'Discharging'), charging
+      ? ': current goes into the battery +, through every cell in series, out at −, through the BMS (B− to P−) back to the charger.'
+      : ': current leaves the battery + to the loads and comes back through the BMS (P− to B−). The BMS switches the negative side.');
     return o;
-  }, 'Your JK BMS with its limits and the driver limits'), cap));
+  }, 'Cells in series with the JK BMS on the negative side, balance leads and the main current loop'), cap));
   main.append(h('div', { class: 'card' },
     batField('cells', 'Cells in series', 'cells', 1, 24, 1),
     batField('ah', 'Capacity', 'Ah', 20, 1000, 5),
