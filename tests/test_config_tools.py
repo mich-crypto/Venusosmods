@@ -245,6 +245,14 @@ class BatterySafetyTests(unittest.TestCase):
         user = '[DEFAULT]\nTEMPERATURES_WHILE_CHARGING = 0, 10, 40, 60\nMAX_CHARGE_CURRENT_T_FRACTION = 0, 1, 1, 0.5\n'
         self.assertEqual(self.found(user)['charge_hot'], 'block')
 
+    def test_curves_fit_the_voltages(self):
+        user = '[DEFAULT]\nCELL_VOLTAGES_WHILE_CHARGING = 3.40, 3.35, 3.30\nMAX_CHARGE_CURRENT_CV_FRACTION = 0, 0.5, 1\n'
+        self.assertEqual(self.found(user)['cv_curve_full'], 'warn')            # stops at 3.40 V, full is 3.45 V
+        user = '[DEFAULT]\nCELL_VOLTAGES_WHILE_DISCHARGING = 2.60, 2.70, 3.10\nMAX_DISCHARGE_CURRENT_CV_FRACTION = 0, 0.5, 1\n'
+        self.assertEqual(self.found(user)['dv_curve_uvp'], 'warn')             # still 50 % at UVP 2.80 V
+        self.assertNotIn('dv_curve_uvp', self.found(''))
+        self.assertNotIn('cv_curve_full', self.found(''))
+
     def test_step_mode_follows_the_driver(self):
         xs, ys = [0, 5, 10], [0.0, 0.5, 1.0]
         self.assertEqual(ct.curve_value(xs, ys, 7), 0.7)

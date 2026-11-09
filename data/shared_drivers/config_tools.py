@@ -892,6 +892,19 @@ def battery_safety(eff, facts=None):
                 add('cv_curve_reset', 'warn', ['CELL_VOLTAGES_WHILE_CHARGING'],
                     'The charge curve stops charging below the top balance voltage %.3f V, so it is never '
                     'reached. Move the last point of the curve above it.' % rs)
+        # the curve has to fit the voltages: still some current at full charge, or the battery never gets full
+        xs, ys = _nums(eff, 'CELL_VOLTAGES_WHILE_CHARGING'), _nums(eff, 'MAX_CHARGE_CURRENT_CV_FRACTION')
+        if mx is not None and xs and len(xs) == len(ys) and curve_value(xs, ys, mx - 0.001, step) <= 0:
+            stop = min(x for x, y in zip(xs, ys) if y <= 0)
+            add('cv_curve_full', 'warn', ['CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CELL_VOLTAGE'],
+                'The charge curve stops charging at %.3f V, below the full charge voltage %.3f V. The battery never '
+                'gets full and never switches to float. Move the 0 %% point of the curve above %.3f V.' % (stop, mx, mx))
+    if _on(eff, 'DCCM_CV_ENABLE'):
+        low = _curve_max(eff, 'CELL_VOLTAGES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_CV_FRACTION', 2.0, uvp, step, True)
+        if low is not None and low > 0.01:
+            add('dv_curve_uvp', 'warn', ['CELL_VOLTAGES_WHILE_DISCHARGING'],
+                'The discharge curve still allows %d %% of the current at the BMS UVP (%.3f V), so the BMS cuts off '
+                'before the driver stops. Let the curve reach 0 at or above the UVP.' % (round(low * 100), uvp))
     if _on(eff, 'CCCM_T_ENABLE'):
         cold = _curve_max(eff, 'TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', -40, LFP['charge_t_min'], step)
         if cold:

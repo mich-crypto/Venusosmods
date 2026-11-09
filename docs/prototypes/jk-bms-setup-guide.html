@@ -421,7 +421,7 @@ const DRIVER_SOURCE = 'v2.0.20250729', DRIVER_STABLE = 'v2.0.20250729';
 // ------------------------------------------------------------------ state
 const STORE = 'jkbms-setup-guide-v1';
 const BAT_DEFAULT = { cells: 4, ah: 280, ovp: 3.65, uvp: 2.8, bms: 200 };
-const st = { daySeg: 0, vals: {}, extra: {}, bat: Object.assign({}, BAT_DEFAULT), view: 'connect', motion: true, dayTop: false, recDir: 'c', lastV: 3.30, allJk: true, allChanged: false, allQ: '' };
+const st = { daySeg: 0, vSeg: 0, vals: {}, extra: {}, bat: Object.assign({}, BAT_DEFAULT), view: 'connect', motion: true, dayTop: false, recDir: 'c', lastV: 3.30, allJk: true, allChanged: false, allQ: '' };
 function load() {
   try {
     const raw = localStorage.getItem(STORE);
@@ -555,6 +555,18 @@ function checks() {
   if (bool('CCCM_CV_ENABLE')) {
     const top = curveMax('CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION', ovp, ovp + 0.3);
     if (top) add('warn', 'cells', 'CELL_VOLTAGES_WHILE_CHARGING', `The charge curve still allows ${Math.round(top * 100)} % of the current at the BMS OVP (${fx(ovp, 3)} V). It should reach 0 below the OVP.`);
+    const xs = nums(get('CELL_VOLTAGES_WHILE_CHARGING')), ys = nums(get('MAX_CHARGE_CURRENT_CV_FRACTION'));
+    if (xs.length && xs.length === ys.length && curveVal(xs, ys, mx - 0.001, get('CHARGE_MODE') === '2', false) <= 0) {
+      const stop = Math.min(...xs.filter((x, i) => ys[i] <= 0));
+      add('info', 'cells', 'CELL_VOLTAGES_WHILE_CHARGING', `The charge curve stops charging at ${fx(stop, 3)} V, below the full charge voltage ${fx(mx, 3)} V (step 4). The battery never gets full and never switches to float. Move the 0 % point of the curve above ${fx(mx, 3)} V.`);
+    }
+  }
+  if (bool('DCCM_CV_ENABLE')) {
+    const xs = nums(get('CELL_VOLTAGES_WHILE_DISCHARGING')), ys = nums(get('MAX_DISCHARGE_CURRENT_CV_FRACTION'));
+    if (xs.length && xs.length === ys.length) {
+      let low = 0; for (let i = 0; i <= 100; i++) low = Math.max(low, curveVal(xs, ys, 2.0 + (uvp - 2.0) * i / 100, get('CHARGE_MODE') === '2', true));
+      if (low > 0.01) add('info', 'cells', 'CELL_VOLTAGES_WHILE_DISCHARGING', `The discharge curve still allows ${Math.round(low * 100)} % of the current at the BMS UVP (${fx(uvp, 3)} V), so the BMS cuts off before the driver stops. Let the curve reach 0 at or above the UVP.`);
+    }
   }
   if (bool('CCCM_T_ENABLE')) {
     const cold = curveMax('TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', -40, LFP.chargeTMin);
@@ -958,22 +970,35 @@ function stepCurrents(main) {
 function lfp(p) { // a LiFePO4 voltage curve shape 0..1 → 0..1: steep ends, flat middle
   return p < 0.1 ? 0.35 * p / 0.1 : p > 0.9 ? 0.55 + 0.45 * (p - 0.9) / 0.1 : 0.35 + 0.2 * (p - 0.1) / 0.8;
 }
+// What a cell goes through, in steps the user clicks through.
+function voltPhases() {
+  const mn = num('MIN_CELL_VOLTAGE'), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
+  const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '', mid = 3.28;
+  const P = [
+    { dir: 'c', name: 'Charging', from: mid, to: Math.min(mx, 3.38), why: 'The chargers fill the battery; the voltage hardly moves in the middle.' },
+    { dir: 'c', name: 'Nearly full', from: Math.min(mx, 3.38), to: mx, why: 'The voltage rises fast near the top until it reaches 100 % SoC.' },
+    { dir: 'r', name: 'Float', from: mx, to: fl, why: 'Full: the chargers drop to the float voltage so the cells can rest.' },
+    { dir: 'd', name: 'Discharging', from: fl, to: mid - 0.04, why: 'The loads use the battery; the voltage settles in the flat middle.' },
+    { dir: 'd', name: 'Nearly empty', from: mid - 0.04, to: mn, why: 'The voltage falls fast near the bottom until it reaches 0 % SoC.' }];
+  if (resetOn && rs > mx) P.splice(2, 0, { dir: 'c', name: 'Top balance', from: mx, to: rs, why: 'Every few days the chargers go up to the top balance voltage so the BMS can balance and reset its SoC.' });
+  return P;
+}
 function stepVoltages(main) {
-  const cap = h('p', { class: 'viz-cap' });
+  const cap = h('p', { class: 'viz-cap' }), vStep = h('span', { class: 'muted' });
   main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 245', t => {
     const B = st.bat, N = cells(), mn = num('MIN_CELL_VOLTAGE'), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
     const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '', dy = 52;
     const lo = Math.min(B.uvp, mn) - 0.12, hi = Math.max(B.ovp, resetOn ? rs : mx) + 0.08, X = v => 20 + (v - lo) / (hi - lo) * 600;
-    const p = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI / 24), rising = Math.sin(t * 2 * Math.PI / 24) > 0;
-    const topV = resetOn ? Math.max(rs, mx) : mx, cv = mn + (topV - mn) * lfp(p);
+    const P = voltPhases(), ph = P[st.vSeg % P.length], u = 0.05 + 0.9 * ((t % 6) / 6);
+    const cv = ph.from + (ph.to - ph.from) * u, rising = ph.dir === 'c', resting = ph.dir === 'r', p = clamp((cv - mn) / Math.max(0.01, mx - mn), 0, 1);
     let o = '';
     // load ← battery ← charger
-    const ld = rising ? 'ico' : 'ico on-d', cg = rising ? 'ico on-c' : 'ico';
-    o += `<circle cx="60" cy="22" r="9" class="${ld}"/><path d="M55,31 L55,37 L65,37 L65,31" class="${ld}"/>` + T(60, 50, 'Load', rising ? 't-small' : 't-dis', 'middle');
+    const ld = rising || resting ? 'ico' : 'ico on-d', cg = rising ? 'ico on-c' : 'ico';
+    o += `<circle cx="60" cy="22" r="9" class="${ld}"/><path d="M55,31 L55,37 L65,37 L65,31" class="${ld}"/>` + T(60, 50, 'Load', rising || resting ? 't-small' : 't-dis', 'middle');
     o += `<circle cx="580" cy="22" r="7" class="${cg}"/>` + [0, 45, 90, 135, 180, 225, 270, 315].map(a => { const r = a * Math.PI / 180; return `<line x1="${580 + Math.cos(r) * 10}" y1="${22 + Math.sin(r) * 10}" x2="${580 + Math.cos(r) * 14}" y2="${22 + Math.sin(r) * 14}" class="${cg}"/>`; }).join('') + T(580, 50, 'Charging', rising ? 't-charge' : 't-small', 'middle');
     o += `<rect x="285" y="8" width="70" height="28" rx="4" class="cell"/><rect x="355" y="16" width="5" height="12" rx="1" class="cell"/><rect x="288" y="11" width="${64 * p}" height="22" rx="2" class="cell-fill"/>` + T(320, 50, fx(cv * N, 2) + ' V', 't-strong', 'middle');
     const off = -(t * 16) % 20;
-    o += `<line x1="${rising ? 555 : 280}" y1="22" x2="${rising ? 365 : 85}" y2="22" class="${rising ? 'flow-c' : 'flow-d'}" stroke-width="3" stroke-dasharray="8 12" stroke-dashoffset="${off}"/>`;
+    if (!resting) o += `<line x1="${rising ? 555 : 280}" y1="22" x2="${rising ? 365 : 85}" y2="22" class="${rising ? 'flow-c' : 'flow-d'}" stroke-width="3" stroke-dasharray="8 12" stroke-dashoffset="${off}"/>`;
     // the scale
     const zones = [[lo, B.uvp, 'z-bad'], [B.uvp, mn, 'z-warn'], [mn, fl, 'z-ok'], [fl, mx, 'z-charge']];
     if (resetOn && rs > mx) zones.push([mx, rs, 'z-top']);
@@ -989,10 +1014,12 @@ function stepVoltages(main) {
       o += T(x, y - (up ? 12 : 0), l, c, 'middle') + T(x, y + (up ? 2 : 13), fx(v, 3) + ' V', 't-small', 'middle');
     });
     o += `<line x1="${X(cv)}" y1="${72 + dy}" x2="${X(cv)}" y2="${112 + dy}" stroke-width="3" class="l-ink"/><circle cx="${X(cv)}" cy="${72 + dy}" r="4" class="f-ink"/>`;
-    const zone = cv < mn ? 'below empty' : cv < fl ? 'normal use' : cv <= mx ? 'charging up to full' : 'top balancing';
-    cap.replaceChildren(h('b', {}, rising ? 'Charging' : 'Discharging'), ': ', h('b', {}, fx(cv, 3) + ' V'), ' per cell = ', h('b', {}, fx(cv * N, 2) + ' V'), ' battery, ' + zone + '.');
+    cap.replaceChildren(h('b', {}, ph.name), ' · ', h('b', {}, fx(cv, 3) + ' V'), ' per cell = ', h('b', {}, fx(cv * N, 2) + ' V'), ' battery. ' + ph.why);
+    vStep.textContent = 'Phase ' + (st.vSeg % P.length + 1) + ' of ' + P.length;
     return o;
-  }, 'Charger, battery and load above the cell voltage scale with the BMS limits and your settings'), cap));
+  }, 'Charger, battery and load above the cell voltage scale with the BMS limits and your settings'), cap,
+    h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { type: 'button', class: 'btn', onclick: () => { const n = voltPhases().length; st.vSeg = (st.vSeg % n + n - 1) % n; dirty = true; } }, '◀ Previous'), vStep,
+      h('span', { style: 'flex:1' }), h('button', { type: 'button', class: 'btn primary', onclick: () => { st.vSeg = (st.vSeg + 1) % voltPhases().length; dirty = true; } }, 'Next ▶'))));
   main.append(warnBox('voltages'));
   main.append(h('h2', {}, 'Your voltages'), fields(['MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'MIN_CELL_VOLTAGE']));
   main.append(h('h2', {}, 'Long or thin cables'), fields(['VOLTAGE_DROP']));
