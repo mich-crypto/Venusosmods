@@ -945,7 +945,7 @@ function stepCurrents(main) {
       h('p', { class: 'muted', style: 'margin:8px 0 0' }, `Charge 0.5 C of ${B.ah} Ah, discharge 1 C, both at most 90 % of the ${B.bms} A BMS.`));
   };
   hooks.push(paintRec); paintRec();
-  main.append(rec, h('div', { style: 'height:12px' }), fields(['MAX_BATTERY_CHARGE_CURRENT', 'MAX_BATTERY_DISCHARGE_CURRENT']));
+  main.append(fields(['MAX_BATTERY_CHARGE_CURRENT', 'MAX_BATTERY_DISCHARGE_CURRENT']), h('div', { style: 'height:12px' }), rec);
 }
 
 // ----------------------------------------------------------- step 4 voltages
