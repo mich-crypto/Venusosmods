@@ -924,7 +924,7 @@ def battery_safety(eff, facts=None):
         if lo is not None and hi is not None and (lo < 3.10 or hi > 3.40):
             add('disconnect_range', 'warn', ['BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX'],
                 'The safe range %.3f to %.3f V reaches into the steep ends of the LiFePO4 curve, where cells '
-                'change fast. 3.225 to 3.375 V is the default.' % (lo, hi))
+                'change fast. 3.25 to 3.35 V is the default.' % (lo, hi))
     if has('BMS_CABLE_ALARM') and not _on(eff, 'BMS_CABLE_ALARM'):
         add('cable_alarm_off', 'warn', ['BMS_CABLE_ALARM'], 'Venus OS will not raise an alarm when the BMS stops answering.')
 

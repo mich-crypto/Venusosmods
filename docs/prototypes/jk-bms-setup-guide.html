@@ -218,7 +218,7 @@ details.grp .body { padding:0 16px 8px; }
 </style>
 
 <header class="top">
-  <div class="brand"><b>JK BMS Setup</b><span>dbus-serialbattery v2.1 · config.ini</span></div>
+  <div class="brand"><b>JK BMS Setup</b><span>dbus-serialbattery v2.0 · config.ini</span></div>
   <span class="spacer"></span>
   <button type="button" class="chip" id="chip-changes" title="Open Review and back up">0 changed</button>
   <button type="button" class="chip" id="chip-warn" hidden></button>
@@ -293,20 +293,14 @@ s('BLUETOOTH_USE_USB', 'False', 'bool', 'Use a USB Bluetooth stick', 'Turns off 
 grp('can', 'CAN BMS', false);
 s('CAN_PORT', '', 'text', 'CAN ports', 'Only for a BMS on a CAN cable, for example can0. Leave empty for Bluetooth.');
 
-grp('serial', 'Serial starter', true);
-s('SERIAL_STARTER_ENABLED', 'True', 'bool', 'Look for a BMS on serial and USB cables', 'If your only BMS is on Bluetooth you can turn this off. It saves a little CPU on the Pi.');
-
 grp('daisy', 'Several BMS on one cable', false);
 s('BATTERY_ADDRESSES', '', 'text', 'BMS addresses', 'Only for several BMS daisy-chained on one RS485 cable, for example 0x01, 0x02.');
 
 grp('disconnect', 'When the BMS goes silent', true);
 s('BLOCK_ON_DISCONNECT', 'False', 'bool', 'Stop at once when the BMS is lost', 'On: charging and discharging stop the moment the driver loses the BMS (Victron default). Off: they continue for a while if the cells were in a safe range.');
-s('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', '30', 'int', 'Keep going for', 'Minutes the system keeps charging and discharging without BMS data, if the last cell voltages were inside the safe range below.', { unit: 'min', min: 1, max: 240, step: 1 });
-s('BLOCK_ON_DISCONNECT_VOLTAGE_MIN', '3.225', 'float', 'Safe range: lowest cell', 'If the last known cells were below this, everything stops after 60 s.', { unit: 'V', min: 3.0, max: 3.35, step: 0.005 });
-s('BLOCK_ON_DISCONNECT_VOLTAGE_MAX', '3.375', 'float', 'Safe range: highest cell', 'If the last known cells were above this, everything stops after 60 s.', { unit: 'V', min: 3.25, max: 3.5, step: 0.005 });
-
-grp('cable', 'BMS cable alarm', true);
-s('BMS_CABLE_ALARM', 'True', 'bool', 'Alarm when the BMS is unreachable', 'Raises the "BMS cable" alarm in Venus OS after 60 s without data. For Bluetooth that means the radio link, not a cable.');
+s('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', '20', 'int', 'Keep going for', 'Minutes the system keeps charging and discharging without BMS data, if the last cell voltages were inside the safe range below.', { unit: 'min', min: 1, max: 240, step: 1 });
+s('BLOCK_ON_DISCONNECT_VOLTAGE_MIN', '3.25', 'float', 'Safe range: lowest cell', 'If the last known cells were below this, everything stops after 60 s.', { unit: 'V', min: 3.0, max: 3.35, step: 0.005 });
+s('BLOCK_ON_DISCONNECT_VOLTAGE_MAX', '3.35', 'float', 'Safe range: highest cell', 'If the last known cells were above this, everything stops after 60 s.', { unit: 'V', min: 3.25, max: 3.5, step: 0.005 });
 
 grp('ext', 'External current / SoC sensor', true);
 s('EXTERNAL_SENSOR_DBUS_DEVICE', '', 'text', 'External sensor device', 'Use another device for current or SoC, for example a SmartShunt: com.victronenergy.battery.ttyS2. Empty = use the BMS.');
@@ -317,10 +311,6 @@ grp('mode', 'Charge mode', true);
 s('CHARGE_MODE', '1', 'select', 'How limits change between points', 'Linear: the current slides smoothly between the points of each curve. Step: it jumps from point to point.', { opts: [['1', 'Linear (smooth)'], ['2', 'Step']], seg: true });
 s('CVL_RECALCULATION_EVERY', '60', 'int', 'Recalculate every', 'How often the smooth values are worked out again.', { unit: 's', min: 5, max: 600, step: 5 });
 s('CVL_RECALCULATION_ON_MAX_PERCENTAGE_CHANGE', '33', 'int', 'Recalculate at once after a change of', 'A bigger jump than this is passed on immediately.', { unit: '%', min: 1, max: 100, step: 1 });
-
-grp('ovprec', 'Recovery after a cell over-voltage', true);
-s('CVL_RECOVERY_HOLD_SEC', '60', 'int', 'Hold the lowered voltage for', 'After a cell went too high and the charge voltage was lowered, keep it there this long before raising it again.', { unit: 's', min: 0, max: 600, step: 5 });
-s('CVL_RECOVERY_RATE_V_PER_SEC', '0.001', 'float', 'Then raise it by', 'How fast the charge voltage climbs back. 0 = jump back at once.', { unit: 'V/s', min: 0, max: 0.05, step: 0.001 });
 
 grp('cvcm', 'Full and float', true);
 s('CVCM_ENABLE', 'True', 'bool', 'Switch to float when full', 'On: after the battery is full and balanced, chargers drop to the float voltage, and go back to full charge when needed. Off: chargers always aim for the full charge voltage.');
@@ -369,10 +359,6 @@ s('MAX_DISCHARGE_CURRENT_SOC_FRACTION', '0.10, 0.20, 0.50, 1.00', 'list', 'Disch
 grp('recov', 'Recovery after a current limit', true);
 s('CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', '0.015', 'float', 'Charging restarts above', 'Once the charge limit was 0, it must rise above this share of the highest charge current before charging starts again. Stops on/off flapping.', { unit: '× max', min: 0, max: 0.2, step: 0.005 });
 s('DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', '0.015', 'float', 'Discharging restarts above', 'Same for discharging.', { unit: '× max', min: 0, max: 0.2, step: 0.005 });
-s('CCL_RECOVERY_HOLD_SEC', '30', 'int', 'Charge: wait before rising', 'After the reason for a lower charge limit is gone, wait this long before raising it.', { unit: 's', min: 0, max: 300, step: 5 });
-s('CCL_RECOVERY_RATE_A_PER_SEC', '5', 'float', 'Charge: then rise by', 'How fast the charge limit climbs back. 0 = jump back at once.', { unit: 'A/s', min: 0, max: 50, step: 0.5 });
-s('DCL_RECOVERY_HOLD_SEC', '30', 'int', 'Discharge: wait before rising', 'Same for the discharge limit.', { unit: 's', min: 0, max: 300, step: 5 });
-s('DCL_RECOVERY_RATE_A_PER_SEC', '5', 'float', 'Discharge: then rise by', 'How fast the discharge limit climbs back. 0 = at once.', { unit: 'A/s', min: 0, max: 50, step: 0.5 });
 
 grp('ttg', 'Time to go', true);
 s('TIME_TO_GO_ENABLE', 'True', 'bool', 'Show time to go', 'Venus OS shows how long the battery lasts until the low SoC warning level (or the ESS limit).');
@@ -397,13 +383,7 @@ s('TEMPERATURE_1_NAME', 'Temp 1', 'text', 'Name of sensor 1', '');
 s('TEMPERATURE_2_NAME', 'Temp 2', 'text', 'Name of sensor 2', '');
 s('TEMPERATURE_3_NAME', 'Temp 3', 'text', 'Name of sensor 3', '');
 s('TEMPERATURE_4_NAME', 'Temp 4', 'text', 'Name of sensor 4', '');
-s('TEMPERATURE_1_ADJUST', '0, 1', 'list', 'Sensor 1 correction', 'Offset in °C, then slope. 0, 1 = no correction.');
-s('TEMPERATURE_2_ADJUST', '0, 1', 'list', 'Sensor 2 correction', '');
-s('TEMPERATURE_3_ADJUST', '0, 1', 'list', 'Sensor 3 correction', '');
-s('TEMPERATURE_4_ADJUST', '0, 1', 'list', 'Sensor 4 correction', '');
-s('TEMPERATURE_MOS_ADJUST', '0, 1', 'list', 'MOSFET sensor correction', '');
 s('GUI_PARAMETERS_SHOW_ADDITIONAL_INFO', 'False', 'bool', 'Show extra driver info in the Venus GUI', 'Adds what the driver is doing at the bottom of its device page.');
-s('GUI_INSTALL_CUSTOMIZATIONS', 'True', 'bool', 'Install the driver’s GUI additions', 'Extra battery pages and controls in the Venus OS GUI.');
 s('TELEMETRY', 'True', 'bool', 'Send anonymous usage data', 'Once a week: Venus OS and driver version, BMS type, battery count.');
 
 grp('drop', 'Voltage drop', true);
@@ -411,12 +391,11 @@ s('VOLTAGE_DROP', '0.00', 'float', 'Voltage lost in the cables', 'If the BMS see
 
 grp('bms', 'BMS specific', true);
 s('USE_PORT_AS_UNIQUE_ID', 'False', 'bool', 'Use the port as ID', 'Only if the log says another battery has the same serial number.');
-s('BATTERY_CAPACITY', '99', 'float', 'Battery capacity', 'Not needed for a JK BMS: it reports its capacity. Used for Daly, Felicity and some others.', { unit: 'Ah', jk: false, min: 10, max: 1000, step: 1 });
+s('BATTERY_CAPACITY', '50', 'float', 'Battery capacity', 'Not needed for a JK BMS: it reports its capacity. Used for Daly, Felicity and some others.', { unit: 'Ah', jk: false, min: 10, max: 1000, step: 1 });
 s('AUTO_RESET_SOC', 'True', 'bool', 'Set the BMS SoC to 100 % at float', 'Works with the JK BMS on Bluetooth: when the driver switches to float, it tells the BMS the battery is full. Needs "Switch to float when full".');
 s('USE_BMS_DVCC_VALUES', 'False', 'bool', 'Use the BMS’s own charge limits', 'Only for Felicity and Seplos V3. Leave off for a JK BMS.', { jk: false });
 s('SOC_LOW_WARNING', '20', 'int', 'Low SoC level for time to go', '"Time to go" counts down to this level. Also the low SoC warning of JBD BMS.', { unit: '%', min: 0, max: 60, step: 1 });
 s('SOC_LOW_ALARM', '10', 'int', 'Low SoC alarm level', 'Used by JBD BMS for the low SoC alarm.', { unit: '%', min: 0, max: 50, step: 1, jk: false });
-s('UP16S_REQUIRE_DIRECT_CONNECTION', 'False', 'bool', 'JBD UP16S: direct connections', 'Only for JBD UP16S batteries.', { jk: false });
 s('INVERT_CURRENT_MEASUREMENT', '1', 'int', 'Daly: invert current', '-1 inverts. Only for Daly.', { jk: false });
 s('GREENMETER_ADDRESS', '1', 'int', 'ECS GreenMeter address', '', { jk: false });
 s('LIPRO_START_ADDRESS', '2', 'int', 'Lipro first address', '', { jk: false });
@@ -425,32 +404,11 @@ s('LIPRO_CELL_COUNT', '15', 'int', 'Lipro cell count', '', { jk: false });
 s('UBMS_CAN_MODULE_SERIES', '4', 'int', 'U-BMS modules in series', '', { jk: false });
 s('UBMS_CAN_MODULE_PARALLEL', '2', 'int', 'U-BMS modules in parallel', '', { jk: false });
 
-grp('mqtt', 'MQTT battery', false);
-s('MQTT_TOPIC', '', 'text', 'MQTT topic', 'Creates an extra battery from JSON data on this topic. Empty = off.');
-s('MQTT_BROKER_ADDRESS', '127.0.0.1', 'text', 'MQTT broker', '');
-s('MQTT_BROKER_PORT', '1883', 'int', 'MQTT port', '');
-s('MQTT_TLS_ENABLED', 'False', 'bool', 'MQTT with TLS', '');
-s('MQTT_TLS_PATH_TO_CA', '', 'text', 'CA certificate file', '');
-s('MQTT_TLS_INSECURE', 'True', 'bool', 'Skip host name check', '');
-s('MQTT_USERNAME', '', 'text', 'MQTT user', '');
-s('MQTT_PASSWORD', '', 'secret', 'MQTT password', 'Not saved in this page and not put into the backup.');
-
-grp('capture', 'Raw BMS data capture', true);
-s('BMS_CAPTURE_RAW_DATA', 'False', 'bool', 'Record raw BMS data', 'For a bug report only. Wears the SD card: switch it off again afterwards.');
-s('BMS_CAPTURE_RAW_DATA_MAX_SIZE_MB', '5', 'int', 'Largest capture file', '', { unit: 'MB', min: 1, max: 50, step: 1 });
-s('BMS_CAPTURE_RAW_DATA_BACKUP_COUNT', '3', 'int', 'Old capture files to keep', '', { min: 0, max: 20, step: 1 });
-
 const BMS_TYPES = ['Jkbms_Ble', 'Kilovault_Ble', 'LiTime_Ble', 'LltJbd_Ble', 'Xdzn_Ble'];
 const REBOOT_KEYS = ['BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'CAN_PORT'];
 const BMS_NAMES = { Jkbms_Ble: 'JK BMS', Kilovault_Ble: 'Kilovault', LiTime_Ble: 'LiTime', LltJbd_Ble: 'JBD', Xdzn_Ble: 'XDZN' };
-// Written from config.default.ini of dbus-serialbattery 2.1.20260729dev (master). These keys are not in the
-// stable release v2.0.20250729; the Venus page only shows the settings the installed driver knows.
-const DRIVER_SOURCE = '2.1.20260729dev', DRIVER_STABLE = 'v2.0.20250729';
-['SERIAL_STARTER_ENABLED', 'BMS_CABLE_ALARM', 'CVL_RECOVERY_HOLD_SEC', 'CVL_RECOVERY_RATE_V_PER_SEC', 'CCL_RECOVERY_HOLD_SEC', 'CCL_RECOVERY_RATE_A_PER_SEC',
-  'DCL_RECOVERY_HOLD_SEC', 'DCL_RECOVERY_RATE_A_PER_SEC', 'TEMPERATURE_1_ADJUST', 'TEMPERATURE_2_ADJUST', 'TEMPERATURE_3_ADJUST', 'TEMPERATURE_4_ADJUST',
-  'TEMPERATURE_MOS_ADJUST', 'GUI_INSTALL_CUSTOMIZATIONS', 'UP16S_REQUIRE_DIRECT_CONNECTION', 'MQTT_TOPIC', 'MQTT_BROKER_ADDRESS', 'MQTT_BROKER_PORT',
-  'MQTT_TLS_ENABLED', 'MQTT_TLS_PATH_TO_CA', 'MQTT_TLS_INSECURE', 'MQTT_USERNAME', 'MQTT_PASSWORD', 'BMS_CAPTURE_RAW_DATA', 'BMS_CAPTURE_RAW_DATA_MAX_SIZE_MB',
-  'BMS_CAPTURE_RAW_DATA_BACKUP_COUNT'].forEach(k => { DEF[k].since = '2.1'; });
+// Written from config.default.ini of the stable release of dbus-serialbattery.
+const DRIVER_SOURCE = 'v2.0.20250729', DRIVER_STABLE = 'v2.0.20250729';
 
 // ------------------------------------------------------------------ state
 const STORE = 'jkbms-setup-guide-v1';
@@ -605,9 +563,8 @@ function checks() {
     const to = numOr('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 30), lo = num('BLOCK_ON_DISCONNECT_VOLTAGE_MIN'), hi = num('BLOCK_ON_DISCONNECT_VOLTAGE_MAX');
     if (to > 120) add('warn', 'disconnect', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', `Without BMS data the system keeps charging and discharging for ${to} min. Nobody watches the cells during that time; keep it at 60 min or less.`);
     if (lo >= hi) add('bad', 'disconnect', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'The lowest cell of the safe range must be below the highest.');
-    else if (lo < 3.10 || hi > 3.40) add('info', 'disconnect', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', `The safe range ${fx(lo, 3)} to ${fx(hi, 3)} V reaches into the steep ends of the LiFePO4 curve, where cells change fast. 3.225 to 3.375 V is the default.`);
+    else if (lo < 3.10 || hi > 3.40) add('info', 'disconnect', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', `The safe range ${fx(lo, 3)} to ${fx(hi, 3)} V reaches into the steep ends of the LiFePO4 curve, where cells change fast. 3.25 to 3.35 V is the default.`);
   }
-  if (!bool('BMS_CABLE_ALARM')) add('info', 'connect', 'BMS_CABLE_ALARM', 'Venus OS will not raise an alarm when the BMS stops answering.');
   // settings that do not fit together
   for (const [a, b] of PAIRS) {
     const na = nums(get(a)).length, nb = nums(get(b)).length;
@@ -617,14 +574,13 @@ function checks() {
   if (bool('SOC_CALCULATION') && !bool('CVCM_ENABLE')) add('info', 'soc', 'SOC_CALCULATION', 'The driver sets 100 % when it switches to float, which needs "Switch to float when full" (step 5).');
   if (bool('USE_BMS_DVCC_VALUES')) add('info', 'all', 'USE_BMS_DVCC_VALUES', 'Only Felicity and Seplos V3 BMS send their own limits; for a JK BMS leave it off.');
   if (!bool('AUTO_RESET_SOC') && bool('CVCM_ENABLE')) add('info', 'charging', 'AUTO_RESET_SOC', 'The JK BMS SoC is not set to 100 % at float. Its SoC can drift over weeks unless you top balance.');
-  if (bool('BMS_CAPTURE_RAW_DATA')) add('info', 'all', 'BMS_CAPTURE_RAW_DATA', 'Raw data capture is on. It wears the SD card: switch it off once you have the recording.');
   return out;
 }
 
 // ------------------------------------------------------------------ steps
 const STEPS = [
   { id: 'connect', title: 'Connect the BMS', short: 'Connect', render: stepConnect,
-    keys: ['BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'BLUETOOTH_USE_POLLING', 'POLL_INTERVAL', 'BLUETOOTH_FORCE_RESET_BLE_STACK', 'BMS_CABLE_ALARM', 'SERIAL_STARTER_ENABLED'] },
+    keys: ['BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'BLUETOOTH_USE_POLLING', 'POLL_INTERVAL', 'BLUETOOTH_FORCE_RESET_BLE_STACK'] },
   { id: 'battery', title: 'Your battery', short: 'Battery', render: stepBattery, keys: [] },
   { id: 'currents', title: 'How much current', short: 'Currents', render: stepCurrents, keys: ['MAX_BATTERY_CHARGE_CURRENT', 'MAX_BATTERY_DISCHARGE_CURRENT'] },
   { id: 'voltages', title: 'Voltage window', short: 'Voltages', render: stepVoltages, keys: ['MIN_CELL_VOLTAGE', 'MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'VOLTAGE_DROP'] },
@@ -640,7 +596,7 @@ const STEPS = [
   { id: 'disconnect', title: 'If the BMS goes silent', short: 'Lost BMS', render: stepDisconnect,
     keys: ['BLOCK_ON_DISCONNECT', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX'] },
   { id: 'recovery', title: 'Smooth recovery', short: 'Recovery', render: stepRecovery,
-    keys: ['CCL_RECOVERY_HOLD_SEC', 'CCL_RECOVERY_RATE_A_PER_SEC', 'DCL_RECOVERY_HOLD_SEC', 'DCL_RECOVERY_RATE_A_PER_SEC', 'CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT'] },
+    keys: ['CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT'] },
   { id: 'backup', title: 'Review and back up', short: 'Review & backup', render: stepBackup, keys: [] },
 ];
 const EXTRA_VIEWS = [{ id: 'all', title: 'All settings', short: 'All settings', render: viewAll, keys: [] }];
@@ -806,7 +762,6 @@ function field(key, o) {
   const row = h('div', { class: 'field' + (isChanged(key) ? ' changed' : ''), 'data-key': key });
   const info = (plain || tip) ? h('button', { type: 'button', class: 'info', title: 'About this setting', 'aria-label': 'About ' + (o.label || d.label), onclick: () => row.classList.toggle('open') }, 'i') : null;
   row.append(...[h('div', { class: 'f-head' }, h('label', { class: 'f-label', for: 'in-' + key }, o.label || d.label), info, h('code', {}, key),
-      d.since ? h('span', { class: 'chip', title: 'Not in the stable release ' + DRIVER_STABLE }, 'v2.1+') : null,
       REBOOT_KEYS.includes(key) ? h('span', { class: 'chip warn' }, 'reboot') : null),
     h('div', { class: 'f-ctl' }, c.node),
     plain ? h('p', { class: 'f-plain' }, plain) : null,
@@ -859,8 +814,7 @@ function stepConnect(main) {
   }, 'The Pi and the BMS with data going back and forth'), cap));
   main.append(warnBox('connect'));
   main.append(h('h2', {}, 'Which BMS'), fields(['BLUETOOTH_BMS'], { tips: { BLUETOOTH_BMS: [h('b', {}, 'Where is the MAC address? '), 'JK BMS app → device info, or run ', h('code', {}, 'bluetoothctl scan on'), ' on the Pi and look for a name starting with JK-.'] } }));
-  main.append(h('h2', {}, 'If the connection is unstable'), fields(['POLL_INTERVAL', 'BLUETOOTH_USE_POLLING', 'BLUETOOTH_USE_USB', 'BLUETOOTH_FORCE_RESET_BLE_STACK', 'BMS_CABLE_ALARM']));
-  main.append(h('h2', {}, 'Save a little CPU'), fields(['SERIAL_STARTER_ENABLED']));
+  main.append(h('h2', {}, 'If the connection is unstable'), fields(['POLL_INTERVAL', 'BLUETOOTH_USE_POLLING', 'BLUETOOTH_USE_USB', 'BLUETOOTH_FORCE_RESET_BLE_STACK']));
 }
 
 // ------------------------------------------------------------ step 2 battery
@@ -1337,8 +1291,8 @@ function stepDisconnect(main) {
     let o = T(130, 14, block ? 'Stop at once' : 'Case ' + (caseIn ? 1 : 2) + ' of 2: last cells at ' + fx(lastV, 3) + ' V (' + (inRange ? 'inside' : 'outside') + ' ' + fx(vmin, 3) + '–' + fx(vmax, 3) + ' V)', 't-small');
     o += T(120, 52, 'BMS data', 't-strong', 'end') + `<rect x="${X(0)}" y="38" width="${X(lost) - X(0)}" height="20" class="s-ok" opacity=".75"/><rect x="${X(lost)}" y="38" width="${X(span) - X(lost)}" height="20" class="s-muted"/>`;
     o += T(120, 92, 'Charge & discharge', 't-strong', 'end') + `<rect x="${X(0)}" y="78" width="${X(stopAt) - X(0)}" height="20" class="s-ok" opacity=".75"/><rect x="${X(stopAt)}" y="78" width="${X(span) - X(stopAt)}" height="20" class="s-bad" opacity=".75"/>`;
-    o += T(120, 132, 'Alarm in Venus OS', 't-strong', 'end');
-    if (bool('BMS_CABLE_ALARM')) o += `<rect x="${X(lost + 1)}" y="118" width="${X(span) - X(lost + 1)}" height="20" class="s-warn" opacity=".75"/>`; else o += T(X(lost + 1), 132, 'off', 't-small');
+    o += T(120, 132, 'BMS cable alarm', 't-strong', 'end');
+    o += `<rect x="${X(lost + 1)}" y="118" width="${X(span) - X(lost + 1)}" height="20" class="s-warn" opacity=".75"/>`;
     o += `<line x1="${X(lost)}" x2="${X(lost)}" y1="28" y2="150" class="l-bad"/>` + T(X(lost), 172, 'link lost', 't-bad', 'middle');
     if (stopAt > lost) o += `<line x1="${X(stopAt)}" x2="${X(stopAt)}" y1="70" y2="150" class="axis"/>` + T(X(stopAt), 164, (stopAt - lost) + ' min later: stop', '', 'middle');
     [0, Math.round(span / 2), Math.round(span)].forEach(m => { o += T(X(m), 192, m + ' min', 't-small', 'middle'); });
@@ -1355,40 +1309,42 @@ function stepDisconnect(main) {
 
 // ---------------------------------------------------------- step 10 recovery
 function stepRecovery(main) {
-  main.append(h('p', { class: 'lead' }, 'After a limit is gone the current waits, then ramps back up.'));
+  main.append(h('p', { class: 'lead' }, 'Once a limit has stopped charging or discharging, it only starts again above a small threshold.'));
   const cap = h('p', { class: 'viz-cap' }), seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Charge or discharge' });
   const paint = () => seg.replaceChildren(...[['c', 'Charge'], ['d', 'Discharge']].map(([v, l]) => h('button', { type: 'button', 'aria-pressed': String(st.recDir === v), onclick: () => { st.recDir = v; paint(); dirty = true; } }, l)));
   paint();
   main.append(h('div', { class: 'card viz-card' }, h('div', { class: 'row', style: 'justify-content:flex-end' }, seg), viz('0 0 640 220', t => {
     const c = st.recDir === 'c', max = numOr(c ? 'MAX_BATTERY_CHARGE_CURRENT' : 'MAX_BATTERY_DISCHARGE_CURRENT', 0);
-    const hold = Math.max(0, numOr(c ? 'CCL_RECOVERY_HOLD_SEC' : 'DCL_RECOVERY_HOLD_SEC', 0)), rate = Math.max(0, numOr(c ? 'CCL_RECOVERY_RATE_A_PER_SEC' : 'DCL_RECOVERY_RATE_A_PER_SEC', 0));
     const thr = numOr(c ? 'CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT' : 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', 0) * max;
-    const tDown = 10, tClear = 40, ramp = rate > 0 ? max / rate : 0, span = tClear + hold + ramp + 20;
-    const lim = s => s < tDown ? max : s < tClear ? 0 : s < tClear + hold ? 0 : rate > 0 ? Math.min(max, (s - tClear - hold) * rate) : max;
-    const X = s => 50 + s / span * 560, Y = a => 180 - (max ? a / max : 0) * 150;
-    let o = `<rect x="${X(tDown)}" y="30" width="${X(tClear) - X(tDown)}" height="150" class="z-bad"/>` + T((X(tDown) + X(tClear)) / 2, 24, 'limit active', 't-bad', 'middle');
-    if (hold) o += `<rect x="${X(tClear)}" y="30" width="${X(tClear + hold) - X(tClear)}" height="150" class="z-warn"/>` + T((X(tClear) + X(tClear + hold)) / 2, 44, 'wait ' + hold + ' s', 't-warn', 'middle');
-    if (ramp) o += T((X(tClear + hold) + X(tClear + hold + ramp)) / 2, 44, 'ramp ' + rate + ' A/s', c ? 't-charge' : 't-dis', 'middle');
+    // what the curves would allow: falls to 0, then creeps back up as the cell recovers
+    const span = 120, calc = s => s < 20 ? max * (1 - s / 20) : s < 50 ? 0 : max * Math.min(1, ((s - 50) / 60) ** 2);
+    let blocked = false; const allowed = []; for (let i = 0; i <= 600; i++) { const s_ = span * i / 600, v = calc(s_); if (v <= 0) blocked = true; if (blocked && v > thr) blocked = false; allowed.push(blocked ? 0 : v); }
+    const at = s_ => allowed[Math.round(s_ / span * 600)];
+    const X = s_ => 50 + s_ / span * 560, Y = a => 180 - (max ? a / max : 0) * 150;
+    let o = '';
     [0, 0.5, 1].forEach(f => { o += `<line x1="50" x2="610" y1="${Y(f * max)}" y2="${Y(f * max)}" class="grid"/>` + T(44, Y(f * max) + 4, fx(f * max, 0) + ' A', 't-small', 'end'); });
-    if (thr > 0) o += `<line x1="50" x2="610" y1="${Y(thr)}" y2="${Y(thr)}" class="l-warn"/>` + T(606, Y(thr) - 4, 'restart above ' + fx(thr, 2) + ' A', 't-warn', 'end');
-    let d = ''; for (let i = 0; i <= 300; i++) { const s_ = span * i / 300; d += (i ? 'L' : 'M') + X(s_).toFixed(1) + ',' + Y(lim(s_)).toFixed(1); }
-    o += `<path d="${d}" class="${c ? 'l-charge' : 'l-dis'}"/>`;
-    [0, Math.round(span / 2), Math.round(span)].forEach(s_ => { o += T(X(s_), 204, s_ + ' s', 't-small', 'middle'); });
-    const s0 = (t % 12) / 12 * span;
-    o += `<line x1="${X(s0)}" x2="${X(s0)}" y1="30" y2="180" class="playhead"/><circle cx="${X(s0)}" cy="${Y(lim(s0))}" r="5" class="${c ? 'f-charge' : 'f-dis'}"/>`;
-    cap.replaceChildren(h('b', {}, (c ? 'Charge' : 'Discharge') + ' limit ' + fx(lim(s0), 1) + ' A'), ` · back to the full ${fx(max, 0)} A ${fx(hold + ramp, 0)} s after the reason is gone.`);
+    // the threshold is small: draw it a little above 0 so it can be seen, with its real value in the label
+    const yThr = Math.min(Y(thr), Y(0) - 8);
+    o += `<line x1="50" x2="610" y1="${yThr}" y2="${yThr}" class="l-warn"/>` + T(606, yThr - 5, 'starts again above ' + fx(thr, 2) + ' A', 't-warn', 'end');
+    let dc = '', da = '';
+    for (let i = 0; i <= 600; i++) { const s_ = span * i / 600; dc += (i ? 'L' : 'M') + X(s_).toFixed(1) + ',' + Y(calc(s_)).toFixed(1); da += (i ? 'L' : 'M') + X(s_).toFixed(1) + ',' + Y(allowed[i]).toFixed(1); }
+    o += `<path d="${dc}" class="l-muted"/><path d="${da}" class="${c ? 'l-charge' : 'l-dis'}"/>`;
+    o += `<line x1="400" x2="422" y1="12" y2="12" class="${c ? 'l-charge' : 'l-dis'}"/>` + T(426, 16, 'allowed', 't-small') + `<line x1="490" x2="512" y1="12" y2="12" class="l-muted"/>` + T(516, 16, 'what the curve says', 't-small');
+    [0, 60, 120].forEach(s_ => { o += T(X(s_), 204, s_ + ' s', 't-small', 'middle'); });
+    const s0 = (t % 14) / 14 * span;
+    o += `<line x1="${X(s0)}" x2="${X(s0)}" y1="30" y2="180" class="playhead"/><circle cx="${X(s0)}" cy="${Y(at(s0))}" r="5" class="${c ? 'f-charge' : 'f-dis'}"/>`;
+    cap.replaceChildren(h('b', {}, (c ? 'Charge' : 'Discharge') + ' limit ' + fx(at(s0), 1) + ' A'), at(s0) === 0 && calc(s0) > 0 ? ' · held at 0 until the curve allows more than ' + fx(thr, 2) + ' A' : '');
     return o;
-  }, 'Current limit dropping and recovering'), cap));
+  }, 'Current limit stopping and starting again above the threshold'), cap));
   main.append(warnBox('recovery'));
-  main.append(h('h2', {}, 'Charging'), fields(['CCL_RECOVERY_HOLD_SEC', 'CCL_RECOVERY_RATE_A_PER_SEC', 'CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT']));
-  main.append(h('h2', {}, 'Discharging'), fields(['DCL_RECOVERY_HOLD_SEC', 'DCL_RECOVERY_RATE_A_PER_SEC', 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT']));
+  main.append(fields(['CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT']));
 }
 
 // ------------------------------------------------------------ export / import
 function iniText() {
   const ch = changedKeys().filter(k => DEF[k].t !== 'secret'), B = st.bat, now = new Date();
   const lines = ['; dbus-serialbattery config.ini', '; Made with the JK BMS Setup guide on ' + now.toISOString().slice(0, 10) + '.',
-    '; Only settings that differ from config.default.ini are listed; the driver uses the defaults for the rest.',
+    '; For dbus-serialbattery ' + DRIVER_SOURCE + '. Only settings that differ from config.default.ini are listed.',
     '; Goes to /data/apps/dbus-serialbattery/config.ini on the Pi.',
     `; guide-battery: cells=${B.cells} ah=${B.ah} ovp=${B.ovp} uvp=${B.uvp} bms=${B.bms}`, '', '[DEFAULT]'];
   let lastG = null;
@@ -1531,7 +1487,7 @@ function stepBackup(main) {
 
 // ------------------------------------------------------------- all settings
 function viewAll(main) {
-  main.append(h('p', { class: 'lead' }, 'Every setting, from config.default.ini of dbus-serialbattery ' + DRIVER_SOURCE + '. Settings marked v2.1+ are not in the stable release ' + DRIVER_STABLE + '; the Venus page only shows the ones your driver has.'));
+  main.append(h('p', { class: 'lead' }, 'Every setting of dbus-serialbattery ' + DRIVER_SOURCE + ' (stable), in the order of its config.default.ini. The Venus page always shows the settings of the version on your Pi.'));
   const q = h('input', { type: 'search', id: 'all-q', placeholder: 'Search: name, key or words…', 'aria-label': 'Search settings' }); q.value = st.allQ;
   const jk = h('input', { type: 'checkbox', id: 'all-jk' }); jk.checked = st.allJk;
   const onlyCh = h('input', { type: 'checkbox', id: 'all-ch' }); onlyCh.checked = st.allChanged;
