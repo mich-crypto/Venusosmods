@@ -953,7 +953,6 @@ function lfp(p) { // a LiFePO4 voltage curve shape 0..1 → 0..1: steep ends, fl
   return p < 0.1 ? 0.35 * p / 0.1 : p > 0.9 ? 0.55 + 0.45 * (p - 0.9) / 0.1 : 0.35 + 0.2 * (p - 0.1) / 0.8;
 }
 function stepVoltages(main) {
-  main.append(h('p', { class: 'lead' }, 'Per cell. The driver multiplies by ' + cells() + ' cells for your chargers.'));
   const cap = h('p', { class: 'viz-cap' }), tbl = h('div', { class: 'tbl' });
   main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 245', t => {
     const B = st.bat, N = cells(), mn = num('MIN_CELL_VOLTAGE'), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
@@ -975,7 +974,7 @@ function stepVoltages(main) {
     zones.push([resetOn ? Math.max(mx, rs) : mx, B.ovp, 'z-none'], [B.ovp, hi, 'z-bad']);
     zones.forEach(([a, b, c]) => { if (b > a) o += `<rect x="${X(a)}" y="${78 + dy}" width="${X(b) - X(a)}" height="28" class="${c}"/>`; });
     o += `<rect x="20" y="${78 + dy}" width="600" height="28" class="grid"/>`;
-    const marks = [[B.uvp, 'BMS UVP', 't-bad'], [mn, 'Empty', 't-warn'], [fl, 'Float', 't-ok'], [mx, 'Full', 't-charge']];
+    const marks = [[B.uvp, 'BMS UVP', 't-bad'], [mn, '0 % SoC', 't-warn'], [fl, 'Float', 't-ok'], [mx, '100 % SoC', 't-charge']];
     if (resetOn) marks.push([rs, 'Top balance', 't-top']);
     marks.push([B.ovp, 'BMS OVP', 't-bad']);
     marks.sort((a, b) => a[0] - b[0]).forEach(([v, l, c], i) => {
@@ -992,12 +991,12 @@ function stepVoltages(main) {
     const B = st.bat, N = cells(), drop = numOr('VOLTAGE_DROP', 0), resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
     const rows = [['BMS OVP', B.ovp, 'BMS stops charging'],
       resetOn ? ['Top balance', num('SOC_RESET_CELL_VOLTAGE'), 'every ' + get('SOC_RESET_AFTER_DAYS') + ' days'] : null,
-      ['Full', num('MAX_CELL_VOLTAGE'), 'chargers aim for this'],
+      ['100 % SoC', num('MAX_CELL_VOLTAGE'), 'full: chargers aim for this'],
       ['Float', num('FLOAT_CELL_VOLTAGE'), 'held when full'],
-      ['Empty', num('MIN_CELL_VOLTAGE'), '0 % if the driver counts SoC'],
+      ['0 % SoC', num('MIN_CELL_VOLTAGE'), 'empty'],
       ['BMS UVP', B.uvp, 'BMS stops discharging']].filter(Boolean);
     tbl.replaceChildren(h('table', {}, h('thead', {}, h('tr', {}, ['', 'Per cell', 'Battery (×' + N + ')', ''].map(x => h('th', {}, x)))),
-      h('tbody', {}, rows.map(([l, v, w]) => h('tr', {}, h('td', {}, h('b', {}, l)), h('td', {}, fx(v, 3) + ' V'), h('td', {}, fx(v * N + (l === 'Full' || l === 'Top balance' ? drop : 0), 2) + ' V'), h('td', { class: 'muted' }, w))))));
+      h('tbody', {}, rows.map(([l, v, w]) => h('tr', {}, h('td', {}, h('b', {}, l)), h('td', {}, fx(v, 3) + ' V'), h('td', {}, fx(v * N + (l === '100 % SoC' || l === 'Top balance' ? drop : 0), 2) + ' V'), h('td', { class: 'muted' }, w))))));
   };
   hooks.push(table); table();
   main.append(h('div', { class: 'card', style: 'margin-top:12px' }, tbl));
