@@ -165,10 +165,6 @@ input[type=range] { flex:1 1 180px; min-width:120px; max-width:360px; accent-col
 .pills { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 2px; }
 .pill { font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; padding:3px 9px; border-radius:99px; border:1px solid var(--line); color:var(--faint); }
 .pill.now { color:var(--bg); background:var(--ink); border-color:var(--ink); font-weight:600; }
-.cal { display:grid; grid-template-columns:repeat(14,minmax(0,1fr)); gap:4px; margin-top:8px; }
-.cal div { aspect-ratio:1; max-width:100%; border-radius:3px; background:var(--surface-2); font-size:.62rem; color:var(--faint); display:grid; place-items:center; font-variant-numeric:tabular-nums; }
-.cal div.reset { background:var(--top-soft); color:var(--top); font-weight:600; outline:1px solid var(--top); }
-.cal div.today { outline:2px solid var(--ink); color:var(--ink); }
 
 table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
 th, td { text-align:left; padding:8px 8px; border-bottom:1px solid var(--line); font-size:.9rem; vertical-align:top; }
@@ -1017,15 +1013,6 @@ function stepCharging(main) {
       cap.replaceChildren(h('b', {}, clockOf(hh) + ' · ' + pname), ' — ' + why, h('br'), `SoC ${fx(soc, 0)} % · cells ${fx(d * 1000, 0)} mV apart · charge voltage ${fx(M.cvl(hh) * M.N, 2)} V`);
       return o;
     }, 'A simulated day: charge voltage, battery voltage and state of charge'), cap));
-  // calendar of top balance days
-  const cal = h('div', { class: 'cal' }), calCap = h('p', { class: 'viz-cap' });
-  anims.push(t => {
-    const n = parseInt(get('SOC_RESET_AFTER_DAYS'), 10), today = Math.floor(t / 2) % 28;
-    cal.replaceChildren(...Array.from({ length: 28 }, (_, i) => h('div', { class: (n > 0 && i % n === 0 ? 'reset' : '') + (i === today ? ' today' : '') }, String(i + 1))));
-    calCap.replaceChildren(...(n > 0 ? ['Top balance to ', h('b', {}, fx(num('SOC_RESET_CELL_VOLTAGE'), 3) + ' V'), ` on day 1, ${1 + n}${1 + 2 * n <= 28 ? ', ' + (1 + 2 * n) : ''}… (needs a sunny enough day: if the voltage is not reached, it tries again the next day).`]
-      : ['Top balancing is off. Set "Top balance every" below to plan it.']));
-  });
-  main.append(h('div', { class: 'card viz-card', style: 'margin-top:12px' }, h('h3', {}, 'Four weeks of top balancing'), cal, calCap));
   main.append(warnBox('charging'));
   main.append(h('h2', {}, 'Float'), fields(['CVCM_ENABLE', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 'SWITCH_TO_FLOAT_WAIT_FOR_SEC', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 'AUTO_RESET_SOC']));
   main.append(h('h2', {}, 'Top balance and SoC reset'), callout('The JK BMS only resets its SoC to 100 % when a cell reaches its OVP. Charging a little higher every few days does that and also gives the balancer a chance at the top. Start at ', h('b', {}, fx(st.bat.ovp - 0.03, 3) + ' V'), ' (your OVP − 0.030). Raise it by 0.005 V if the battery never switches to float; lower it if the BMS trips on OVP.'),
