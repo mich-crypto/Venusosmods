@@ -908,8 +908,8 @@ function stepBattery(main) {
     for (let d = 0; d < total; d += step) {
       const dd = charging ? (d + off) % total : (total - ((d + off) % total));
       const [x, y] = along(loop, dd);
-      const insideBms = x > bx && x < bx + bw && y > by && y < by + bhh;
-      if (!insideBms) o += `<circle cx="${x}" cy="${y}" r="3.4" class="${cls}" stroke="var(--surface)" stroke-width="1"/>`;
+      const insideBms = x > bx && x < bx + bw && y > by && y < by + bhh, insideCell = y > ty + 1 && x > rowX - 2 && x < cellX(sN - 1) + w + 2;
+      if (!insideBms && !insideCell) o += `<circle cx="${x}" cy="${y}" r="3.4" class="${cls}" stroke="var(--surface)" stroke-width="1"/>`;
     }
     o += T(lx + lw / 2, ly + lh - 18, (charging ? 'Charging ' : 'Discharging ') + fx(amps, 0) + ' A', charging ? 't-charge' : 't-dis', 'middle');
     cap.replaceChildren(h('b', {}, charging ? 'Charging' : 'Discharging'), charging
