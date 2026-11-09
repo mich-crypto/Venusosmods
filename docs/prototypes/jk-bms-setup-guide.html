@@ -1001,8 +1001,7 @@ function stepVoltages(main) {
   hooks.push(table); table();
   main.append(h('div', { class: 'card', style: 'margin-top:12px' }, tbl));
   main.append(warnBox('voltages'));
-  main.append(h('h2', {}, 'Your voltages'), fields(['MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'MIN_CELL_VOLTAGE'], { tips: {
-    MAX_CELL_VOLTAGE: [h('b', {}, 'Good start: '), 'full 3.45 V, float 3.375 V, empty 2.90 V. That leaves about 0.2 V below a 3.65 V OVP.'] } }));
+  main.append(h('h2', {}, 'Your voltages'), fields(['MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'MIN_CELL_VOLTAGE']));
   main.append(h('h2', {}, 'Long or thin cables'), fields(['VOLTAGE_DROP']));
 }
 
