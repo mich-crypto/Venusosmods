@@ -994,7 +994,7 @@ function stepVoltages(main) {
     const B = st.bat, N = cells(), mn = num('MIN_CELL_VOLTAGE'), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
     const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '', dy = 52;
     const lo = Math.min(B.uvp, mn) - 0.12, hi = Math.max(B.ovp, resetOn ? rs : mx) + 0.08, X = v => 20 + (v - lo) / (hi - lo) * 600;
-    const p = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI / 14), rising = Math.sin(t * 2 * Math.PI / 14) > 0;
+    const p = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI / 24), rising = Math.sin(t * 2 * Math.PI / 24) > 0;
     const topV = resetOn ? Math.max(rs, mx) : mx, cv = mn + (topV - mn) * lfp(p);
     let o = '';
     // load ← battery ← charger
@@ -1002,7 +1002,7 @@ function stepVoltages(main) {
     o += `<circle cx="60" cy="22" r="9" class="${ld}"/><path d="M55,31 L55,37 L65,37 L65,31" class="${ld}"/>` + T(60, 50, 'Load', rising ? 't-small' : 't-dis', 'middle');
     o += `<circle cx="580" cy="22" r="7" class="${cg}"/>` + [0, 45, 90, 135, 180, 225, 270, 315].map(a => { const r = a * Math.PI / 180; return `<line x1="${580 + Math.cos(r) * 10}" y1="${22 + Math.sin(r) * 10}" x2="${580 + Math.cos(r) * 14}" y2="${22 + Math.sin(r) * 14}" class="${cg}"/>`; }).join('') + T(580, 50, 'Charging', rising ? 't-charge' : 't-small', 'middle');
     o += `<rect x="285" y="8" width="70" height="28" rx="4" class="cell"/><rect x="355" y="16" width="5" height="12" rx="1" class="cell"/><rect x="288" y="11" width="${64 * p}" height="22" rx="2" class="cell-fill"/>` + T(320, 50, fx(cv * N, 2) + ' V', 't-strong', 'middle');
-    const off = -(t * 30) % 20;
+    const off = -(t * 16) % 20;
     o += `<line x1="${rising ? 555 : 280}" y1="22" x2="${rising ? 365 : 85}" y2="22" class="${rising ? 'flow-c' : 'flow-d'}" stroke-width="3" stroke-dasharray="8 12" stroke-dashoffset="${off}"/>`;
     // the scale
     const zones = [[lo, B.uvp, 'z-bad'], [B.uvp, mn, 'z-warn'], [mn, fl, 'z-ok'], [fl, mx, 'z-charge']];
@@ -1070,6 +1070,21 @@ function dayModel() {
   };
   return { N, mx, fl, target, top, cvcm, thr, diffOn, waitH, balH, tFull, tBal, tFloat, tDis, tBulk, bulkSoc, soc, cvl, cellV, diff, phase };
 }
+// The playhead does not move at one speed: every phase stays on screen for at least ~3 s,
+// so a 20 min absorption is as readable as a 10 h night.
+function dayHour(M, t) {
+  const cuts = [0, M.tFull, M.tBal, M.tFloat, M.tDis, M.tBulk, 24].filter(v => v !== null && v !== undefined).sort((a, b) => a - b);
+  const segs = [];
+  for (let i = 0; i < cuts.length - 1; i++) if (cuts[i + 1] - cuts[i] > 0.01) segs.push([cuts[i], cuts[i + 1]]);
+  const dur = segs.map(([a, b]) => Math.max(3, (b - a) * 0.7));
+  const total = dur.reduce((x, y) => x + y, 0);
+  let r = t % total;
+  for (let i = 0; i < segs.length; i++) {
+    if (r < dur[i]) return segs[i][0] + (segs[i][1] - segs[i][0]) * r / dur[i];
+    r -= dur[i];
+  }
+  return 24;
+}
 const clockOf = h_ => { const m = Math.round((7 + h_) * 60) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
 function stepCharging(main) {
   main.append(h('p', { class: 'lead' }, 'Fill, balance, then rest at float. Every few days a little higher to top balance.'));
@@ -1105,7 +1120,7 @@ function stepCharging(main) {
       o += T(58, 196, 'State of charge', 't-small');
       o += `<line x1="430" x2="450" y1="12" y2="12" class="l-charge"/>` + T(454, 16, 'charge voltage (CVL)', 't-small') + `<line x1="560" x2="580" y1="12" y2="12" class="l-ink"/>` + T(584, 16, 'battery', 't-small');
       // playhead
-      const hh = (t % 20) / 20 * 24, x = X(hh);
+      const hh = dayHour(M, t), x = X(hh);
       o += `<line x1="${x}" x2="${x}" y1="20" y2="272" class="playhead"/><circle cx="${x}" cy="${Y(M.cvl(hh))}" r="4" class="f-charge"/><circle cx="${x}" cy="${Y(M.cellV(hh))}" r="3.5" class="f-ink"/><circle cx="${x}" cy="${YS(M.soc(hh))}" r="3.5" class="f-charge"/>`;
       // texts
       const [pid, pname] = M.phase(hh), d = M.diff(hh), soc = M.soc(hh);
