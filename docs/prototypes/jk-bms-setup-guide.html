@@ -125,6 +125,9 @@ p { max-width:68ch; }
 .field:focus-within .f-plain, .field.open .f-plain, .field.changed .f-plain, .field:focus-within .f-tip, .field.open .f-tip { display:block; }
 .f-tip { font-size:.88rem; color:var(--muted); border-left:2px solid var(--charge); padding:4px 10px; margin:0; }
 .f-tip b { color:var(--ink); }
+.f-reboot { display:none; font-size:.88rem; padding:8px 12px; border-radius:4px; background:var(--warn-soft); border-left:3px solid var(--warn); }
+.f-reboot b { color:var(--ink); }
+.field.changed .f-reboot { display:block; }
 .info-btn { width:20px; height:20px; border-radius:50%; border:1px solid var(--faint); background:none; color:var(--muted); font:600 .72rem var(--display); cursor:pointer; padding:0; display:inline-grid; place-items:center; align-self:center; }
 .info-btn:hover, .field.open .info-btn { color:var(--ink); border-color:var(--ink); }
 .status { display:grid; grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(0,1fr)); gap:10px 16px; align-items:end; margin-top:10px; padding-top:12px; border-top:1px solid var(--line); }
@@ -768,6 +771,7 @@ function field(key, o) {
     h('div', { class: 'f-ctl' }, c.node),
     plain ? h('p', { class: 'f-plain' }, plain) : null,
     tip ? h('div', { class: 'f-tip' }, tip) : null,
+    REBOOT_KEYS.includes(key) ? h('div', { class: 'f-reboot' }, h('b', {}, 'Needs a reboot of the Pi. '), 'On the Venus page this change shows ', h('b', {}, 'Save & reboot Pi'), ' in the save bar.') : null,
     h('div', { class: 'f-meta' }, h('span', {}, 'Default: ' + dShown), reset)].filter(Boolean));
   return row;
 }
@@ -874,7 +878,9 @@ function stepBattery(main) {
     o += T(lx + lw / 2, ly + 22, '−', 't-strong', 'middle') + T(lx + 14, ty + 4, '+', 't-strong');
     // main current loop, drawn in the charging direction: charger + → pack + → cells → pack − → B− → BMS → P− → charger −
     const loadPlus = [lx, ty], loadMinus = [lx + lw / 2, ly];
-    const A = [loadPlus, [plusX(sN - 1), ty]], inCells = [[plusX(sN - 1), ty], [minusX(0), ty]];
+    const A = [loadPlus, [plusX(sN - 1), ty]], inCells = [], mid = cy + ch * 0.5;
+    // charging: in at + of the last cell, down through the cell to its −, over the busbar to + of the next one
+    for (let i = sN - 1; i >= 0; i--) inCells.push([plusX(i), ty], [plusX(i), mid], [minusX(i), mid], [minusX(i), ty]);
     const C = [[minusX(0), ty], [20, ty], [20, by + 97], [bx - 6, by + 97]];
     const D = [[bx - 6, by + 39], [10, by + 39], [10, 8], [loadMinus[0], 8], loadMinus];
     [A, C, D].forEach(seg => { o += `<path d="${line(seg)}" class="l-ink" stroke-width="3" fill="none"/>`; });
@@ -885,7 +891,7 @@ function stepBattery(main) {
       const dd = charging ? (d + off) % total : (total - ((d + off) % total));
       const [x, y] = along(loop, dd);
       const insideBms = x > bx && x < bx + bw && y > by && y < by + bhh;
-      if (!insideBms) o += `<circle cx="${x}" cy="${y}" r="3.2" class="${cls}"/>`;
+      if (!insideBms) o += `<circle cx="${x}" cy="${y}" r="3.4" class="${cls}" stroke="var(--surface)" stroke-width="1"/>`;
     }
     o += T(lx + lw / 2, ly + lh - 18, (charging ? 'Charging ' : 'Discharging ') + fx(amps, 0) + ' A', charging ? 't-charge' : 't-dis', 'middle');
     cap.replaceChildren(h('b', {}, charging ? 'Charging' : 'Discharging'), charging

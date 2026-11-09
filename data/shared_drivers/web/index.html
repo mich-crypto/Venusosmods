@@ -544,14 +544,14 @@ function updateFormBar() {
 // input would swap the button between mouse-down and mouse-up (a blur fires "change" first), and
 // the tap on Save would be lost.
 let barKind = null;
-function showSaveBar(kind, count, onSave) {
+function showSaveBar(kind, count, onSave, lastLabel) {
   $('#savebar').hidden = false;
   if (barKind !== kind) {
     barKind = kind;
     clear($('#saveinner')).append(h('span', { id: 'savecount' }), h('span', { class: 'spacer' }),
       h('button', { class: 'btn', onclick: () => renderTab() }, 'Discard'),
       h('button', { class: 'btn', onclick: () => onSave(false) }, 'Save'),
-      h('button', { class: 'btn primary', onclick: () => onSave(true) }, 'Save & restart driver'));
+      h('button', { class: 'btn primary', onclick: () => onSave(true) }, lastLabel || 'Save & restart driver'));
   }
   $('#savecount').textContent = count + ' unsaved change' + (count > 1 ? 's' : '');
 }
@@ -1229,7 +1229,16 @@ function updateSbBar() {
   }
   scheduleSafety();
   if (!canEdit() || !n) { hideSaveBar(); return; }
-  showSaveBar('sb', n, saveSb);
+  const reboot = Object.keys(sbChanges()).some(k => ((S.sb && S.sb.view.reboot_keys) || []).includes(k));
+  if (reboot) showSaveBar('sb-reboot', n, saveSbReboot, 'Save & reboot Pi');
+  else showSaveBar('sb', n, saveSb);
+}
+
+// Bluetooth/CAN settings only apply after a reboot: save, then reboot when the save went through.
+async function saveSbReboot(go) {
+  if (!go) return saveSb(false);
+  if (!window.confirm('Save and reboot the Pi now? The battery driver and Venus OS are back in about two minutes.')) return;
+  if (await saveSb(false)) { await post('/api/reboot', {}); }
 }
 
 async function saveSb(restart) {
@@ -1237,7 +1246,7 @@ async function saveSb(restart) {
   for (const [k, v] of Object.entries(sbChanges())) body['s.' + k] = v;
   let r = await api('/api/serialbattery', body);
   if (r.status === 409 && r.data.needs_confirm) {
-    if (!await confirmRisk(r.data.safety)) { toast('Not saved'); return; }
+    if (!await confirmRisk(r.data.safety)) { toast('Not saved'); return false; }
     r = await api('/api/serialbattery', Object.assign({ confirm: r.data.confirm }, body));
   }
   if (!r.ok && r.data.safety) showSafety(r.data.safety, true);
@@ -1245,7 +1254,7 @@ async function saveSb(restart) {
     for (const [k, msg] of Object.entries(r.data.errors || {})) {
       const c = S.sbCtl[k]; if (c) { c.err.textContent = msg; c.row.scrollIntoView({ block: 'center' }); }
     }
-    toast(r.data.error || 'Not saved', true); return;
+    toast(r.data.error || 'Not saved', true); return false;
   }
   toast(r.data.message || 'Saved');
   await renderTab();
@@ -1253,6 +1262,7 @@ async function saveSb(restart) {
     $('#main').prepend(h('div', { class: 'banner warn row' }, 'Saved. Bluetooth/CAN settings only apply after a reboot of the Pi.',
       h('span', { class: 'spacer' }), h('button', { class: 'btn danger small', onclick: () => confirmThen('Reboot the Pi now?', () => post('/api/reboot', {})) }, 'Reboot now')));
   }
+  return true;
 }
 
 function sbEntry(e, ro) {
