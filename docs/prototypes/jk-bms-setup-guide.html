@@ -493,47 +493,107 @@ function zeroPointCharge() { // lowest cell voltage at which the charge curve re
 }
 
 // ---------------------------------------------------------------- checks
+// The same rules the Pi applies when it saves (config_tools.battery_safety), plus checks for the form.
+// LiFePO4 limits from common cell datasheets (EVE LF280K and alike) and the dbus-serialbattery docs.
+// bad = refused on the Pi (can damage the cells), warn = risky (the Pi asks you to confirm), info = note.
+const LFP = { cellMax: 3.65, cellMin: 2.50, ovpMargin: 0.05, chargeTMin: 0, chargeTMax: 55, disTMin: -20, disTMax: 60, cGood: 0.5, cMax: 1.0 };
 const PAIRS = Object.values(DEF).filter(d => d.pair).map(d => [d.key, d.pair]);
+function curveVal(xs, ys, x, step, lower) { // utils.calc_linear_relationship / calc_step_relationship
+  const p = xs.map((v, i) => [v, ys[i]]).sort((a, b) => a[0] - b[0]);
+  if (!p.length) return 1;
+  if (x <= p[0][0]) return p[0][1];
+  if (x >= p[p.length - 1][0]) return p[p.length - 1][1];
+  for (let i = 0; i < p.length - 1; i++) if (x >= p[i][0] && x < p[i + 1][0]) {
+    if (step) return lower ? p[i + 1][1] : p[i][1];
+    const [x0, y0] = p[i], [x1, y1] = p[i + 1];
+    return x1 === x0 ? y0 : y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+  }
+  return p[p.length - 1][1];
+}
+function curveMax(xk, yk, lo, hi) {
+  const xs = nums(get(xk)), ys = nums(get(yk));
+  if (!xs.length || xs.length !== ys.length) return null;
+  let m = 0; for (let i = 0; i <= 200; i++) m = Math.max(m, curveVal(xs, ys, lo + (hi - lo) * i / 200, get('CHARGE_MODE') === '2', false));
+  return m;
+}
 function checks() {
   const out = [], add = (lvl, step, key, msg) => out.push({ lvl, step, key, msg });
-  const B = st.bat, N = cells();
+  const B = st.bat, ovp = B.ovp, uvp = B.uvp, cap = B.ah, bmsA = B.bms;
   const bms = bmsEntries();
-  if (!bms.length) add('warn', 'connect', 'BLUETOOTH_BMS', 'No Bluetooth BMS added yet. Without it the driver does not know which JK BMS to talk to.');
+  if (!bms.length) add('info', 'connect', 'BLUETOOTH_BMS', 'No Bluetooth BMS added yet. Without it the driver does not know which JK BMS to talk to.');
   bms.forEach((b, i) => {
     if (!MAC_RE.test(b.mac)) add('bad', 'connect', 'BLUETOOTH_BMS', `BMS ${i + 1}: "${b.mac || '(empty)'}" is not a MAC address. It looks like C8:47:8C:12:34:56.`);
     if (!BMS_TYPES.includes(b.type)) add('bad', 'connect', 'BLUETOOTH_BMS', `BMS ${i + 1}: unknown type "${b.type}".`);
   });
-  const maxC = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), mn = num('MIN_CELL_VOLTAGE'), rst = num('SOC_RESET_CELL_VOLTAGE');
-  const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
-  if (maxC > B.ovp - 0.05) add('bad', 'voltages', 'MAX_CELL_VOLTAGE', `Full charge ${fx(maxC, 3)} V is only ${fx((B.ovp - maxC) * 1000, 0)} mV below the BMS cell OVP of ${fx(B.ovp, 3)} V. Keep 50 to 100 mV of room, or one cell trips the BMS.`);
-  if (fl >= maxC) add('bad', 'voltages', 'FLOAT_CELL_VOLTAGE', `Float ${fx(fl, 3)} V must be lower than full charge ${fx(maxC, 3)} V.`);
-  if (mn <= B.uvp) add('warn', 'voltages', 'MIN_CELL_VOLTAGE', `Empty ${fx(mn, 3)} V is at or below the BMS UVP ${fx(B.uvp, 3)} V. The BMS will cut off before the driver lowers the discharge current.`);
+  // currents
+  const cc = num('MAX_BATTERY_CHARGE_CURRENT'), dc = num('MAX_BATTERY_DISCHARGE_CURRENT');
+  if (cap && cc / cap > LFP.cMax) add('bad', 'currents', 'MAX_BATTERY_CHARGE_CURRENT', `Charge current ${cc} A is ${fx(cc / cap, 2)} C for ${cap} Ah. LiFePO4 cells take at most 1 C (${cap} A); more heats the cells and damages them.`);
+  else if (cap && cc / cap > LFP.cGood) add('warn', 'currents', 'MAX_BATTERY_CHARGE_CURRENT', `Charge current ${cc} A is ${fx(cc / cap, 2)} C for ${cap} Ah. Cells last longest at 0.5 C (${Math.round(cap * 0.5)} A) or less; check the datasheet of your cells before going higher.`);
+  if (cap && dc / cap > 1) add('warn', 'currents', 'MAX_BATTERY_DISCHARGE_CURRENT', `Discharge current ${dc} A is ${fx(dc / cap, 2)} C for ${cap} Ah, above the 1 C most LiFePO4 cells are rated for continuously.`);
+  [['MAX_BATTERY_CHARGE_CURRENT', cc, 'charge'], ['MAX_BATTERY_DISCHARGE_CURRENT', dc, 'discharge']].forEach(([k, v, w]) => {
+    if (bmsA && v > bmsA) add('bad', 'currents', k, `Max ${w} current ${v} A is more than the ${bmsA} A your BMS is built for. The BMS would overheat or cut off; set it below the BMS rating.`);
+    else if (bmsA && v > bmsA * 0.9) add('info', 'currents', k, `Max ${w} current ${v} A is close to the ${bmsA} A of the BMS. Keep some room so the driver limits before the BMS over-current protection trips.`);
+  });
+  // voltages
+  const mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), mn = num('MIN_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
+  if (mx > LFP.cellMax) add('bad', 'voltages', 'MAX_CELL_VOLTAGE', `Full charge ${fx(mx, 3)} V per cell is above 3.65 V, the most a LiFePO4 cell may be charged to.`);
+  else if (mx > ovp - LFP.ovpMargin) add('warn', 'voltages', 'MAX_CELL_VOLTAGE', `Full charge ${fx(mx, 3)} V is only ${Math.round((ovp - mx) * 1000)} mV below the BMS cell OVP of ${fx(ovp, 3)} V. One cell running ahead trips the BMS. Keep 50 to 100 mV of room; 3.45 V is the usual full charge.`);
+  else if (mx < 3.40) add('info', 'voltages', 'MAX_CELL_VOLTAGE', `Full charge ${fx(mx, 3)} V is low: the battery never gets full and the balancer gets no chance at the top.`);
+  if (fl >= mx) add('bad', 'voltages', 'FLOAT_CELL_VOLTAGE', `Float ${fx(fl, 3)} V must be lower than full charge ${fx(mx, 3)} V.`);
+  else if (fl > 3.40) add('info', 'voltages', 'FLOAT_CELL_VOLTAGE', `Float ${fx(fl, 3)} V keeps the cells nearly full all day, which ages them. 3.35 to 3.375 V is usual.`);
+  if (mn < LFP.cellMin) add('bad', 'voltages', 'MIN_CELL_VOLTAGE', `Empty ${fx(mn, 3)} V per cell is below 2.50 V. Discharging LiFePO4 that deep damages the cells.`);
+  else if (mn <= uvp) add('info', 'voltages', 'MIN_CELL_VOLTAGE', `Empty ${fx(mn, 3)} V is at or below the BMS UVP ${fx(uvp, 3)} V: the BMS cuts off before the driver slows the discharge.`);
+  const resetOn = !['', '0'].includes(String(get('SOC_RESET_AFTER_DAYS')).trim());
   if (resetOn) {
-    if (rst <= maxC) add('bad', 'charging', 'SOC_RESET_CELL_VOLTAGE', `Top balance ${fx(rst, 3)} V must be higher than full charge ${fx(maxC, 3)} V.`);
-    if (rst > B.ovp - 0.02) add('warn', 'charging', 'SOC_RESET_CELL_VOLTAGE', `Top balance ${fx(rst, 3)} V is too close to the BMS OVP ${fx(B.ovp, 3)} V. Start at ${fx(B.ovp - 0.03, 3)} V (OVP − 0.030) and move in 0.005 V steps.`);
-    const z = zeroPointCharge();
-    if (bool('CCCM_CV_ENABLE') && z !== null && z <= rst) add('bad', 'charging', 'CELL_VOLTAGES_WHILE_CHARGING', `The charge curve stops charging at ${fx(z, 3)} V, so cells never reach the top balance voltage ${fx(rst, 3)} V. Move the last point of the charge curve (step 6) above ${fx(rst, 3)} V.`);
+    if (rs > LFP.cellMax) add('bad', 'charging', 'SOC_RESET_CELL_VOLTAGE', `Top balance voltage ${fx(rs, 3)} V is above 3.65 V, the most a LiFePO4 cell may be charged to.`);
+    else if (rs > ovp - 0.02) add('warn', 'charging', 'SOC_RESET_CELL_VOLTAGE', `Top balance voltage ${fx(rs, 3)} V is too close to the BMS OVP ${fx(ovp, 3)} V: the BMS will trip on every top balance. Start at ${fx(ovp - 0.03, 3)} V (OVP − 0.030) and move in 0.005 V steps.`);
+    if (rs <= mx) add('info', 'charging', 'SOC_RESET_CELL_VOLTAGE', `Top balance voltage ${fx(rs, 3)} V must be higher than full charge ${fx(mx, 3)} V, otherwise it does nothing.`);
+    const xs = nums(get('CELL_VOLTAGES_WHILE_CHARGING')), ys = nums(get('MAX_CHARGE_CURRENT_CV_FRACTION'));
+    if (bool('CCCM_CV_ENABLE') && xs.length && xs.length === ys.length && curveVal(xs, ys, rs - 0.001, get('CHARGE_MODE') === '2', false) <= 0)
+      add('info', 'charging', 'CELL_VOLTAGES_WHILE_CHARGING', `The charge curve stops charging below the top balance voltage ${fx(rs, 3)} V, so it is never reached. Move the last point of the charge curve (step 6) above it.`);
   }
-  if (bool('CVCM_ENABLE')) {
-    const soc = numOr('SWITCH_TO_BULK_SOC_THRESHOLD', 0), diff = numOr('SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 10);
-    if (soc <= 0 && diff >= 10) add('bad', 'charging', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'Both ways back to a full charge are off: the battery stays at float until the driver restarts.');
-    if (!bool('AUTO_RESET_SOC')) add('info', 'charging', 'AUTO_RESET_SOC', 'The JK BMS SoC is not set to 100 % at float. Its SoC can drift over weeks unless you top balance.');
+  if (numOr('VOLTAGE_DROP', 0) > 0.2) add('warn', 'voltages', 'VOLTAGE_DROP', `Voltage drop ${fx(num('VOLTAGE_DROP'), 2)} V raises what the chargers are asked for by that much. If the cables do not really lose it, the cells are overcharged. Measure it at full current first.`);
+  // protections switched off
+  if (!bool('CCCM_CV_ENABLE')) add('warn', 'cells', 'CCCM_CV_ENABLE', 'Charge current is no longer lowered when one cell gets close to full. A single high cell can then reach the BMS OVP.');
+  if (!bool('DCCM_CV_ENABLE')) add('warn', 'cells', 'DCCM_CV_ENABLE', 'Discharge current is no longer lowered when one cell gets close to empty. A single weak cell can then reach the BMS UVP.');
+  if (!bool('CCCM_T_ENABLE')) add('warn', 'temperature', 'CCCM_T_ENABLE', 'Charging is no longer limited by temperature. Only the low temperature protection of the JK BMS stops charging below 0 °C: check it is on in the JK app.');
+  if (!bool('DCCM_T_ENABLE')) add('info', 'temperature', 'DCCM_T_ENABLE', 'Discharging is no longer limited by temperature.');
+  if (get('CVL_CONTROLLER_MODE') === '0') add('warn', 'cells', 'CVL_CONTROLLER_MODE', 'The charge voltage is no longer lowered when one cell runs ahead of the others. With MPPTs that ignore the current limit this is the only thing keeping that cell from its OVP.');
+  if (!bool('CVCM_ENABLE')) add('info', 'charging', 'CVCM_ENABLE', 'Without float the cells are held at the full charge voltage all day, which ages them.');
+  if (bool('CVCM_ENABLE') && numOr('SWITCH_TO_BULK_SOC_THRESHOLD', 0) <= 0 && numOr('SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 10) >= 10) add('info', 'charging', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'Both ways back to a full charge are off: the battery stays at float until the driver restarts.');
+  // curves
+  if (bool('CCCM_CV_ENABLE')) {
+    const top = curveMax('CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION', ovp, ovp + 0.3);
+    if (top) add('warn', 'cells', 'CELL_VOLTAGES_WHILE_CHARGING', `The charge curve still allows ${Math.round(top * 100)} % of the current at the BMS OVP (${fx(ovp, 3)} V). It should reach 0 below the OVP.`);
   }
+  if (bool('CCCM_T_ENABLE')) {
+    const cold = curveMax('TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', -40, LFP.chargeTMin);
+    if (cold) add('bad', 'temperature', 'TEMPERATURES_WHILE_CHARGING', `The temperature curve allows ${Math.round(cold * 100)} % of the charge current at 0 °C or below. Charging LiFePO4 below 0 °C plates lithium in the cells and damages them for good.`);
+    const hot = curveMax('TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', LFP.chargeTMax, 90);
+    if (hot) add('bad', 'temperature', 'TEMPERATURES_WHILE_CHARGING', `The temperature curve allows ${Math.round(hot * 100)} % of the charge current at 55 °C or above, where LiFePO4 must not be charged.`);
+  }
+  if (bool('DCCM_T_ENABLE')) {
+    if (curveMax('TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION', -40, LFP.disTMin - 0.5)) add('warn', 'temperature', 'TEMPERATURES_WHILE_DISCHARGING', 'The temperature curve allows discharging below -20 °C, colder than LiFePO4 cells are rated for.');
+    if (curveMax('TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION', LFP.disTMax + 0.5, 90)) add('warn', 'temperature', 'TEMPERATURES_WHILE_DISCHARGING', 'The temperature curve allows discharging above 60 °C, hotter than LiFePO4 cells are rated for.');
+  }
+  // lost BMS
+  if (!bool('BLOCK_ON_DISCONNECT')) {
+    const to = numOr('BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 30), lo = num('BLOCK_ON_DISCONNECT_VOLTAGE_MIN'), hi = num('BLOCK_ON_DISCONNECT_VOLTAGE_MAX');
+    if (to > 120) add('warn', 'disconnect', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', `Without BMS data the system keeps charging and discharging for ${to} min. Nobody watches the cells during that time; keep it at 60 min or less.`);
+    if (lo >= hi) add('bad', 'disconnect', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'The lowest cell of the safe range must be below the highest.');
+    else if (lo < 3.10 || hi > 3.40) add('info', 'disconnect', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', `The safe range ${fx(lo, 3)} to ${fx(hi, 3)} V reaches into the steep ends of the LiFePO4 curve, where cells change fast. 3.225 to 3.375 V is the default.`);
+  }
+  if (!bool('BMS_CABLE_ALARM')) add('info', 'connect', 'BMS_CABLE_ALARM', 'Venus OS will not raise an alarm when the BMS stops answering.');
+  // settings that do not fit together
   for (const [a, b] of PAIRS) {
     const na = nums(get(a)).length, nb = nums(get(b)).length;
     if (na !== nb) add('bad', stepOf(a), a, `${DEF[a].label} has ${na} points but ${DEF[b].label.toLowerCase()} has ${nb}. Both lists need the same number.`);
   }
-  const pc = pairs('TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION');
-  if (bool('CCCM_T_ENABLE') && pc && curveAt(pc, 0, 'lower') > 0) add('bad', 'temperature', 'TEMPERATURES_WHILE_CHARGING', 'The charge curve allows current at 0 °C. Charging LiFePO4 below 0 °C damages the cells.');
-  if (!bool('CCCM_T_ENABLE')) add('warn', 'temperature', 'CCCM_T_ENABLE', 'Charging is not limited by temperature. Only the BMS low temperature protection stops charging in the cold.');
-  const cc = num('MAX_BATTERY_CHARGE_CURRENT'), dc = num('MAX_BATTERY_DISCHARGE_CURRENT');
-  if (cc > B.bms) add('bad', 'currents', 'MAX_BATTERY_CHARGE_CURRENT', `${cc} A is more than the ${B.bms} A your BMS can switch.`);
-  if (dc > B.bms) add('bad', 'currents', 'MAX_BATTERY_DISCHARGE_CURRENT', `${dc} A is more than the ${B.bms} A your BMS can switch.`);
-  if (cc / B.ah > 0.5) add('warn', 'currents', 'MAX_BATTERY_CHARGE_CURRENT', `${cc} A is ${fx(cc / B.ah, 2)} C for ${B.ah} Ah. Most LiFePO4 cells want 0.5 C or less for a long life.`);
-  if (num('BLOCK_ON_DISCONNECT_VOLTAGE_MIN') >= num('BLOCK_ON_DISCONNECT_VOLTAGE_MAX')) add('bad', 'disconnect', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'The lowest cell of the safe range must be below the highest.');
   if (bool('SOC_CALCULATION') && String(get('EXTERNAL_SENSOR_DBUS_PATH_SOC')).trim()) add('bad', 'soc', 'SOC_CALCULATION', 'The driver cannot count the SoC itself while an external SoC sensor is set.');
-  if (bool('SOC_CALCULATION') && !bool('CVCM_ENABLE')) add('warn', 'soc', 'SOC_CALCULATION', 'The driver sets 100 % when it switches to float, which needs "Switch to float when full" (step 5).');
-  if (bool('BMS_CAPTURE_RAW_DATA')) add('warn', 'all', 'BMS_CAPTURE_RAW_DATA', 'Raw data capture is on. It wears the SD card: switch it off once you have the recording.');
+  if (bool('SOC_CALCULATION') && !bool('CVCM_ENABLE')) add('info', 'soc', 'SOC_CALCULATION', 'The driver sets 100 % when it switches to float, which needs "Switch to float when full" (step 5).');
+  if (bool('USE_BMS_DVCC_VALUES')) add('info', 'all', 'USE_BMS_DVCC_VALUES', 'Only Felicity and Seplos V3 BMS send their own limits; for a JK BMS leave it off.');
+  if (!bool('AUTO_RESET_SOC') && bool('CVCM_ENABLE')) add('info', 'charging', 'AUTO_RESET_SOC', 'The JK BMS SoC is not set to 100 % at float. Its SoC can drift over weeks unless you top balance.');
+  if (bool('BMS_CAPTURE_RAW_DATA')) add('info', 'all', 'BMS_CAPTURE_RAW_DATA', 'Raw data capture is on. It wears the SD card: switch it off once you have the recording.');
   return out;
 }
 
@@ -593,7 +653,7 @@ function refreshChrome() {
   const bad = w.filter(x => x.lvl === 'bad').length, warn = w.filter(x => x.lvl === 'warn').length;
   const wBtn = $('#chip-warn');
   wBtn.hidden = !(bad || warn);
-  wBtn.textContent = bad ? bad + (bad === 1 ? ' problem' : ' problems') : warn + (warn === 1 ? ' warning' : ' warnings');
+  wBtn.textContent = bad ? bad + ' refused' : warn + ' risky';
   wBtn.className = 'chip ' + (bad ? 'bad' : 'warn');
   document.querySelectorAll('.step-btn').forEach(b => {
     const v = VIEWS.find(x => x.id === b.dataset.view), dot = b.querySelector('.dot');
@@ -606,7 +666,7 @@ function refreshChrome() {
   document.querySelectorAll('[data-reset]').forEach(b => { b.hidden = !isChanged(b.dataset.reset); });
   document.querySelectorAll('.warns[data-step]').forEach(box => {
     const id = box.dataset.step, list = id === '*' ? w : w.filter(x => x.step === id || (box.dataset.keys || '').split(' ').includes(x.key));
-    box.replaceChildren(...list.map(x => h('div', { class: 'w ' + x.lvl }, h('span', { class: 'tag' }, x.lvl === 'bad' ? 'fix' : x.lvl === 'warn' ? 'check' : 'note'),
+    box.replaceChildren(...list.map(x => h('div', { class: 'w ' + x.lvl }, h('span', { class: 'tag' }, x.lvl === 'bad' ? 'refused' : x.lvl === 'warn' ? 'risky' : 'note'),
       h('span', {}, x.msg, id === '*' && x.step !== 'all' ? [' ', h('button', { type: 'button', class: 'link', onclick: () => go(x.step) }, 'Go to step')] : null))));
   });
 }
@@ -1216,7 +1276,23 @@ function copyText(text, ta) {
 // ------------------------------------------------------------ step 11 backup
 function stepBackup(main) {
   main.append(h('p', { class: 'lead' }, 'Check what you changed, then save it. The backup is the same config.ini the driver reads, so you can put it straight back on the Pi or load it here again later.'));
+  main.append(callout(h('b', {}, 'The Pi checks every save the same way. '), h('b', {}, 'Refused'), ': can damage the cells, the Venus page does not write it. ',
+    h('b', {}, 'Risky'), ': written only after you confirm you checked it against your cell datasheet and the JK BMS. ', h('b', {}, 'Note'), ': worth knowing, saved normally. ',
+    'The checks use the battery numbers from step 2 (enter the same ones on the Venus page under Battery → Your battery).'));
   main.append(warnBox('*'));
+  const ck = (title, text) => h('li', {}, h('b', {}, title), ' ', text);
+  main.append(h('h2', {}, 'Also check'), h('div', { class: 'two' },
+    h('div', { class: 'card' }, h('h3', {}, 'Venus OS'), h('ul', { style: 'margin:6px 0 0;padding-left:20px;display:grid;gap:6px' },
+      ck('DVCC on.', 'Settings → System setup → Charge control. Without it the driver’s limits never reach your chargers.'),
+      ck('Controlling BMS = dbus-serialbattery.', 'Same page. Only one battery can control charging.'),
+      ck('Battery monitor = dbus-serialbattery.', 'Settings → System setup. Then Venus OS also acts on the BMS alarms. A SmartShunt there is fine if you chose it on purpose.'),
+      ck('SVS, STS, SCS normally off.', 'The driver docs advise only DVCC on that page; SVS can help if the battery never reaches full voltage.'),
+      ck('The Venus page checks these for you:', 'Battery → Limits & curves → Venus OS settings, live from the Pi.'))),
+    h('div', { class: 'card' }, h('h3', {}, 'JK BMS app'), h('ul', { style: 'margin:6px 0 0;padding-left:20px;display:grid;gap:6px' },
+      ck('Hard limits in the BMS, soft limits in the driver.', 'The driver must always act first so the BMS never has to cut off.'),
+      ck('Cell OVP 3.65 V or lower,', 'cell UVP 2.5 V or higher (2.8 V is common). Enter the real values in step 2.'),
+      ck('Charge low temperature protection on,', 'at 0 °C or a few degrees above. It is the last line if the driver’s temperature limit is off or the link is lost.'),
+      ck('Over-current protection above the driver’s limits', `(now ${num('MAX_BATTERY_CHARGE_CURRENT')} A charge / ${num('MAX_BATTERY_DISCHARGE_CURRENT')} A discharge) and within what the cells allow.`)))));
   // summary of changes
   const sumBox = h('div', { class: 'card tbl' });
   const paintSum = () => {

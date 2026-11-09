@@ -865,6 +865,82 @@ class SerialBatteryTests(AppTestCase):
         self.assertEqual(body_of(self.post('/api/serialbattery', {}))['changed'], [])
 
 
+class BatterySafetyApiTests(AppTestCase):
+    user_text = SerialBatteryTests.user_text
+
+    def setUp(self):
+        super().setUp()
+        r = self.post('/api/serialbattery_facts', {'cells': '4', 'capacity': '280', 'ovp': '3.65', 'uvp': '2.8',
+                                                    'bms_current': '200'})
+        self.assertEqual(r.status, 200, r.body)
+
+    def test_facts_are_kept_and_checked(self):
+        d = body_of(self.get('/api/serialbattery'))
+        self.assertEqual(d['facts']['capacity'], 280)
+        self.assertEqual(d['fact_sources']['capacity'], 'you')
+        self.assertEqual(d['safety'], [])
+        r = self.post('/api/serialbattery_facts', {'ovp': '9', 'cells': 'four'})
+        self.assertEqual(r.status, 400)
+        self.assertEqual(set(body_of(r)['errors']), {'ovp', 'cells'})
+        self.post('/api/serialbattery_facts', {'capacity': ''})
+        self.assertNotIn('capacity', body_of(self.get('/api/serialbattery'))['facts'])
+
+    def test_harmful_value_is_refused(self):
+        before = self.user_text()
+        r = self.post('/api/serialbattery', {'s.MAX_BATTERY_CHARGE_CURRENT': '300', 'confirm': 'charge_c_max'})
+        self.assertEqual(r.status, 400)
+        d = body_of(r)
+        self.assertIn('MAX_BATTERY_CHARGE_CURRENT', d['errors'])
+        self.assertTrue(all(f['level'] == 'block' for f in d['safety']))
+        r = self.post('/api/serialbattery', {'s.MAX_CELL_VOLTAGE': '3.70'})
+        self.assertEqual(r.status, 400)
+        self.assertEqual(self.user_text(), before)
+
+    def test_risky_value_needs_confirmation(self):
+        before = self.user_text()
+        r = self.post('/api/serialbattery', {'s.MAX_CELL_VOLTAGE': '3.62'})
+        self.assertEqual(r.status, 409)
+        d = body_of(r)
+        self.assertTrue(d['needs_confirm'])
+        self.assertEqual(d['confirm'], 'max_cell_ovp')
+        self.assertEqual(self.user_text(), before)
+        r = self.post('/api/serialbattery', {'s.MAX_CELL_VOLTAGE': '3.62', 'confirm': d['confirm']})
+        self.assertEqual(r.status, 200, r.body)
+        self.assertEqual(ct.parse_ini(self.user_text())['DEFAULT']['max_cell_voltage'], '3.62')
+        # the risk is known now: other changes are not held up by it
+        self.assertEqual(self.post('/api/serialbattery', {'s.LOGGING': 'DEBUG'}).status, 200)
+
+    def test_check_only_writes_nothing(self):
+        before = self.user_text()
+        d = body_of(self.post('/api/serialbattery', {'s.MAX_CELL_VOLTAGE': '3.70', 'check_only': '1'}))
+        self.assertIn('max_cell_lfp', [f['id'] for f in d['safety']])
+        self.assertEqual(self.user_text(), before)
+
+    def test_raw_editor_is_checked_too(self):
+        r = self.post('/api/raw', {'file': 'serialbattery', 'text': '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.70\n'})
+        self.assertEqual(r.status, 400)
+        r = self.post('/api/raw', {'file': 'serialbattery', 'text': '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.62\n'})
+        self.assertEqual(r.status, 409)
+        r = self.post('/api/raw', {'file': 'serialbattery', 'text': '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.62\n',
+                                   'confirm': body_of(r)['confirm']})
+        self.assertEqual(r.status, 200, r.body)
+
+    def test_defaults_file_stays_untouched(self):
+        path = os.path.join(self.sb, 'config.default.ini')
+        with open(path) as f:
+            before = f.read()
+        self.post('/api/serialbattery', {'s.MAX_BATTERY_CHARGE_CURRENT': '40', 's.LOGGING': 'DEBUG'})
+        self.post('/api/raw', {'file': 'serialbattery', 'text': '[DEFAULT]\nLOGGING = DEBUG\n'})
+        with open(path) as f:
+            self.assertEqual(f.read(), before)
+        self.assertFalse(os.path.exists(path + '.bak'))
+
+    def test_venus_checks_without_a_battery(self):
+        d = body_of(self.get('/api/serialbattery_system'))
+        levels = dict((c['id'], c['level']) for c in d['checks'])
+        self.assertEqual(levels['driver'], 'bad')
+
+
 class RawFileTests(AppTestCase):
     def test_read_and_write_driver_config(self):
         d = body_of(self.get('/api/raw', query='file=driver'))

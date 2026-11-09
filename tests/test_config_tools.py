@@ -13,6 +13,9 @@ with open(os.path.join(HERE, 'data', 'serialbattery_config.default.ini')) as f:
     DEFAULT = f.read()
 with open(os.path.join(HERE, '..', 'data', 'shared_drivers', 'config.ini.example')) as f:
     EXAMPLE = f.read()
+with open(os.path.join(HERE, 'data', 'serialbattery_config.full.ini')) as f:
+    FULL = f.read()
+FACTS = {'cells': 4, 'capacity': 280, 'ovp': 3.65, 'uvp': 2.8, 'bms_current': 200}
 
 
 class IniEditingTests(unittest.TestCase):
@@ -200,6 +203,112 @@ class SerialBatteryTests(unittest.TestCase):
         self.assertEqual(ct.find_serialbattery(('/nonexistent',)), None)
         d = os.path.join(HERE, 'data')
         self.assertEqual(ct.find_serialbattery((d,)), None)          # no config.default.ini there
+
+
+class BatterySafetyTests(unittest.TestCase):
+    def found(self, user, facts=FACTS, changes=None):
+        eff = ct.serialbattery_effective(FULL, user, changes)
+        return dict((f['id'], f['level']) for f in ct.battery_safety(eff, facts))
+
+    def test_defaults_are_safe(self):
+        self.assertEqual(self.found(''), {})
+        self.assertEqual(set(self.found('', facts={})), {'facts_bms', 'facts_capacity'})
+
+    def test_overcharge_is_refused(self):
+        self.assertEqual(self.found('[DEFAULT]\nMAX_CELL_VOLTAGE = 3.70\n')['max_cell_lfp'], 'block')
+        self.assertEqual(self.found('[DEFAULT]\nMAX_CELL_VOLTAGE = 3.62\n')['max_cell_ovp'], 'danger')
+        self.assertEqual(self.found('[DEFAULT]\nMIN_CELL_VOLTAGE = 2.40\n')['min_cell_lfp'], 'block')
+        self.assertEqual(self.found('[DEFAULT]\nFLOAT_CELL_VOLTAGE = 3.50\n')['float_ge_max'], 'block')
+        # a lower OVP in the BMS moves the margin with it
+        self.assertEqual(self.found('[DEFAULT]\nMAX_CELL_VOLTAGE = 3.52\n', dict(FACTS, ovp=3.55))['max_cell_ovp'], 'danger')
+
+    def test_top_balance_close_to_ovp(self):
+        found = self.found('[DEFAULT]\nSOC_RESET_AFTER_DAYS = 14\n')          # default 3.650 V = OVP
+        self.assertEqual(found['reset_ovp'], 'danger')
+        self.assertEqual(found['cv_curve_reset'], 'warn')                      # charge curve ends at 3.500 V
+        self.assertNotIn('reset_ovp', self.found('[DEFAULT]\nSOC_RESET_AFTER_DAYS = 14\nSOC_RESET_CELL_VOLTAGE = 3.62\n'))
+
+    def test_current_against_capacity_and_bms(self):
+        self.assertEqual(self.found('[DEFAULT]\nMAX_BATTERY_CHARGE_CURRENT = 150\n')['charge_c_high'], 'danger')
+        found = self.found('[DEFAULT]\nMAX_BATTERY_CHARGE_CURRENT = 300\n')
+        self.assertEqual((found['charge_c_max'], found['max_battery_charge_current_bms']), ('block', 'block'))
+        self.assertEqual(self.found('[DEFAULT]\nMAX_BATTERY_DISCHARGE_CURRENT = 190\n')['max_battery_discharge_current_bms_close'], 'warn')
+
+    def test_charging_below_zero_is_refused(self):
+        user = ('[DEFAULT]\nTEMPERATURES_WHILE_CHARGING = -5, 5, 40, 50\n'
+                'MAX_CHARGE_CURRENT_T_FRACTION = 0.5, 1, 1, 0\n')
+        self.assertEqual(self.found(user)['charge_cold'], 'block')
+        # the first point says what happens below it: 0.25 at 2 °C means 0.25 at -10 °C too
+        user = '[DEFAULT]\nTEMPERATURES_WHILE_CHARGING = 2, 10, 40, 50\nMAX_CHARGE_CURRENT_T_FRACTION = 0.25, 1, 1, 0\n'
+        self.assertEqual(self.found(user)['charge_cold'], 'block')
+        self.assertEqual(self.found('[DEFAULT]\nCCCM_T_ENABLE = False\n')['cccm_t_enable_off'], 'danger')
+        user = '[DEFAULT]\nTEMPERATURES_WHILE_CHARGING = 0, 10, 40, 60\nMAX_CHARGE_CURRENT_T_FRACTION = 0, 1, 1, 0.5\n'
+        self.assertEqual(self.found(user)['charge_hot'], 'block')
+
+    def test_step_mode_follows_the_driver(self):
+        xs, ys = [0, 5, 10], [0.0, 0.5, 1.0]
+        self.assertEqual(ct.curve_value(xs, ys, 7), 0.7)
+        self.assertEqual(ct.curve_value(xs, ys, 7, step=True), 0.5)
+        self.assertEqual(ct.curve_value(xs, ys, 7, step=True, return_lower=True), 1.0)
+        self.assertEqual(ct.curve_value(xs, ys, -3), 0.0)
+
+    def test_protections_switched_off(self):
+        found = self.found('[DEFAULT]\nCCCM_CV_ENABLE = False\nCVL_CONTROLLER_MODE = 0\n'
+                           'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES = 240\n')
+        self.assertEqual((found['cccm_cv_enable_off'], found['cvl_off'], found['disconnect_timeout']),
+                         ('danger', 'danger', 'danger'))
+
+    def test_gate_only_counts_what_the_change_brings(self):
+        before = ct.battery_safety(ct.serialbattery_effective(FULL, '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.62\n'), FACTS)
+        same = ct.battery_safety(ct.serialbattery_effective(FULL, '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.62\nLOGGING = DEBUG\n'), FACTS)
+        self.assertEqual(ct.safety_gate(before, same)[0], 'ok')                 # an old finding does not hold up other saves
+        higher = ct.battery_safety(ct.serialbattery_effective(FULL, '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.63\n'), FACTS)
+        verdict, found, token = ct.safety_gate(before, higher)
+        self.assertEqual((verdict, token), ('confirm', 'max_cell_ovp'))         # other numbers: asked again
+        self.assertEqual(ct.safety_gate(before, higher, token)[0], 'ok')
+        self.assertEqual(ct.safety_gate(before, higher, 'something else')[0], 'confirm')
+        worse = ct.battery_safety(ct.serialbattery_effective(FULL, '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.70\n'), FACTS)
+        self.assertEqual(ct.safety_gate(before, worse, 'max_cell_lfp')[0], 'block')   # no way past a block
+
+    def test_back_to_default_in_changes(self):
+        eff = ct.serialbattery_effective(FULL, '[DEFAULT]\nMAX_CELL_VOLTAGE = 3.5\n', {'MAX_CELL_VOLTAGE': None})
+        self.assertEqual(eff['MAX_CELL_VOLTAGE'], '3.450')
+
+    def test_defaults_file_is_never_written(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        with self.assertRaises(PermissionError):
+            ct.write_file(os.path.join(d, 'config.default.ini'), 'x')
+        self.assertFalse(os.path.exists(os.path.join(d, 'config.default.ini')))
+        ct.write_file(os.path.join(d, 'config.ini'), '[DEFAULT]\n')
+
+
+class VenusChecksTests(unittest.TestCase):
+    SVC = 'com.victronenergy.battery.jkbms_ble'
+    BAT = {'/Mgmt/ProcessName': '/data/apps/dbus-serialbattery/dbushelper.py', '/ProductName': 'SerialBattery(Jkbms_Ble)',
+           '/Connected': 1, '/DeviceInstance': 3, '/Info/MaxChargeCurrent': 50, '/Dc/0/Temperature': 18.0,
+           '/System/NrOfCellsPerBattery': 4, '/Info/MaxChargeVoltage': 13.8}
+    GOOD_SETTINGS = {'/Settings/Services/Bol': 1, '/Settings/SystemSetup/MaxChargeCurrent': -1}
+    GOOD_SYSTEM = {'/ActiveBmsService': SVC, '/ActiveBatteryService': 'com.victronenergy.battery/3'}
+
+    def levels(self, bat=None, settings=None, system=None, service=SVC):
+        return dict((c['id'], c['level']) for c in ct.venus_checks(service, bat if bat is not None else self.BAT,
+                    settings if settings is not None else self.GOOD_SETTINGS, system if system is not None else self.GOOD_SYSTEM))
+
+    def test_all_good(self):
+        self.assertTrue(ct.is_serialbattery(self.BAT))
+        self.assertEqual(self.levels(), {'driver': 'ok', 'dvcc': 'ok', 'bms': 'ok', 'monitor': 'ok'})
+
+    def test_wrong_venus_settings(self):
+        lv = self.levels(settings={'/Settings/Services/Bol': 2}, system={'/ActiveBmsService': None,
+                                                                         '/ActiveBatteryService': 'com.victronenergy.battery/288'})
+        self.assertEqual((lv['dvcc'], lv['bms'], lv['monitor']), ('bad', 'bad', 'warn'))   # 2 = forced off
+        self.assertEqual(self.levels(service=None, bat={})['driver'], 'bad')
+
+    def test_charging_allowed_below_zero(self):
+        self.assertEqual(self.levels(bat=dict(self.BAT, **{'/Dc/0/Temperature': -2.0}))['live_cold'], 'bad')
+        self.assertNotIn('live_cold', self.levels(bat=dict(self.BAT, **{'/Dc/0/Temperature': -2.0, '/Info/MaxChargeCurrent': 0})))
+        self.assertEqual(self.levels(bat=dict(self.BAT, **{'/Info/MaxChargeVoltage': 15.0}))['live_cvl'], 'bad')
 
 
 if __name__ == '__main__':

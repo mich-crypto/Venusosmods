@@ -112,8 +112,14 @@ def check_syntax(text):
     return ''
 
 
+PROTECTED_FILES = ('config.default.ini',)
+
+
 def write_file(path, text):
     """Atomic write; the previous version is kept as <path>.bak."""
+    if os.path.basename(path) in PROTECTED_FILES:
+        # dbus-serialbattery's own defaults: read only, all changes go into config.ini
+        raise PermissionError('%s is never written, change config.ini instead' % path)
     if os.path.exists(path):
         with open(path) as f:
             old = f.read()
@@ -671,3 +677,372 @@ def find_serialbattery(candidates=('/data/apps/dbus-serialbattery', '/data/etc/d
         if os.path.isfile(os.path.join(path, 'config.default.ini')):
             return path
     return None
+
+
+# ------------------------------------------- battery safety (LiFePO4 cells)
+#
+# Limits of LiFePO4 cells as given in common cell datasheets (EVE LF280K and alike) and in the
+# dbus-serialbattery documentation: charge to at most 3.65 V and only between 0 and 55 °C,
+# discharge to at least 2.5 V and between -20 and 60 °C, charge current 0.5 C standard and 1 C at
+# most. The driver's own limits must stay below the BMS's (OVP/UVP) so the BMS never has to cut off.
+#
+# Levels: 'block'  the change can damage the cells, it is refused
+#         'danger' risky, saved only after the user confirms these exact findings
+#         'warn'   worth knowing, saved normally
+
+LFP = {'cell_max': 3.65, 'cell_min': 2.50, 'ovp_margin': 0.05,
+       'charge_t_min': 0.0, 'charge_t_max': 55.0, 'discharge_t_min': -20.0, 'discharge_t_max': 60.0,
+       'charge_c_good': 0.5, 'charge_c_max': 1.0, 'discharge_c_max': 1.0}
+FACT_KEYS = ('cells', 'capacity', 'ovp', 'uvp', 'bms_current')
+
+
+def serialbattery_effective(default_text, user_text, changes=None):
+    """Key (upper case) -> the value the driver will use: default, overridden by config.ini and changes."""
+    defaults = dict((e['key'], e['default']) for g in parse_default_ini(default_text) for e in g['entries'])
+    eff = dict(defaults)
+    for k, v in parse_ini(user_text).get('DEFAULT', {}).items():
+        eff[k.upper()] = v
+    for k, v in (changes or {}).items():
+        k = k.upper()
+        if v is not None:
+            eff[k] = v
+        elif k in defaults:                             # None = back to the default
+            eff[k] = defaults[k]
+        else:
+            eff.pop(k, None)
+    return eff
+
+
+def _f(eff, key, fallback=None):
+    try:
+        return float(str(eff.get(key, '')).strip())
+    except ValueError:
+        return fallback
+
+
+def _on(eff, key, fallback=True):
+    v = str(eff.get(key, '')).strip().lower()
+    return fallback if v == '' and key not in eff else v == 'true'
+
+
+def _nums(eff, key):
+    try:
+        return [float(p) for p in str(eff.get(key, '')).split(',') if p.strip()]
+    except ValueError:
+        return []
+
+
+def curve_value(xs, ys, x, step=False, return_lower=False):
+    """Share of the max current at x, as the driver works it out (utils.calc_*_relationship)."""
+    pts = sorted(zip(xs, ys))
+    if not pts:
+        return 1.0
+    if x <= pts[0][0]:
+        return pts[0][1]
+    if x >= pts[-1][0]:
+        return pts[-1][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if x0 <= x < x1:
+            if step:
+                return y0 if not return_lower else y1
+            return y0 if x1 == x0 else y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+    return pts[-1][1]
+
+
+def _curve_max(eff, xk, yk, lo, hi, step, return_lower=False):
+    """Highest share of the max current anywhere between lo and hi (None: lists missing or unequal)."""
+    xs, ys = _nums(eff, xk), _nums(eff, yk)
+    if not xs or len(xs) != len(ys):
+        return None
+    n = 200
+    return max(curve_value(xs, ys, lo + (hi - lo) * i / n, step, return_lower) for i in range(n + 1))
+
+
+def battery_safety(eff, facts=None):
+    """
+    eff: key -> effective value (serialbattery_effective). facts: what the user (or the BMS on
+    D-Bus) told us about the battery: cells, capacity (Ah), ovp, uvp (cell V), bms_current (A).
+    Returns [{'id', 'level', 'keys', 'text'}].
+    """
+    facts = dict((k, v) for k, v in (facts or {}).items() if isinstance(v, (int, float)) and v > 0)
+    out = []
+
+    def add(fid, level, keys, text):
+        out.append({'id': fid, 'level': level, 'keys': list(keys), 'text': text})
+
+    has = lambda k: k in eff
+    step = str(eff.get('CHARGE_MODE', '1')).strip() == '2'
+    ovp = facts.get('ovp', LFP['cell_max'])
+    uvp = facts.get('uvp', LFP['cell_min'])
+    cap, bms_a = facts.get('capacity'), facts.get('bms_current')
+
+    if 'ovp' not in facts or 'uvp' not in facts:
+        add('facts_bms', 'warn', [], 'Enter the cell OVP and UVP of your JK BMS (Battery tab, "Your battery") so the '
+            'checks compare with your BMS. Until then they use the LiFePO4 limits 3.65 V and 2.50 V.')
+    if not cap:
+        add('facts_capacity', 'warn', [], 'Battery capacity unknown, so the charge current cannot be checked '
+            'against the cells. Enter it under "Your battery".')
+
+    # --- currents
+    cc, dc = _f(eff, 'MAX_BATTERY_CHARGE_CURRENT'), _f(eff, 'MAX_BATTERY_DISCHARGE_CURRENT')
+    if cap and cc is not None:
+        c = cc / cap
+        if c > LFP['charge_c_max']:
+            add('charge_c_max', 'block', ['MAX_BATTERY_CHARGE_CURRENT'],
+                'Charge current %g A is %.2f C for %g Ah. LiFePO4 cells take at most 1 C (%g A); more heats '
+                'the cells and damages them.' % (cc, c, cap, cap * LFP['charge_c_max']))
+        elif c > LFP['charge_c_good']:
+            add('charge_c_high', 'danger', ['MAX_BATTERY_CHARGE_CURRENT'],
+                'Charge current %g A is %.2f C for %g Ah. Cells last longest at 0.5 C (%g A) or less; check '
+                'the datasheet of your cells before going higher.' % (cc, c, cap, cap * LFP['charge_c_good']))
+    if cap and dc is not None and dc / cap > LFP['discharge_c_max']:
+        add('discharge_c_max', 'danger', ['MAX_BATTERY_DISCHARGE_CURRENT'],
+            'Discharge current %g A is %.2f C for %g Ah, above the 1 C most LiFePO4 cells are rated for '
+            'continuously.' % (dc, dc / cap, cap))
+    for key, val, what in (('MAX_BATTERY_CHARGE_CURRENT', cc, 'charge'), ('MAX_BATTERY_DISCHARGE_CURRENT', dc, 'discharge')):
+        if bms_a and val is not None and val > bms_a:
+            add(key.lower() + '_bms', 'block', [key],
+                'Max %s current %g A is more than the %g A your BMS is built for. The BMS would overheat '
+                'or cut off; set it below the BMS rating.' % (what, val, bms_a))
+        elif bms_a and val is not None and val > bms_a * 0.9:
+            add(key.lower() + '_bms_close', 'warn', [key],
+                'Max %s current %g A is close to the %g A of the BMS. Keep some room so the driver limits '
+                'before the BMS over-current protection trips.' % (what, val, bms_a))
+
+    # --- voltages
+    mx, fl, mn = _f(eff, 'MAX_CELL_VOLTAGE'), _f(eff, 'FLOAT_CELL_VOLTAGE'), _f(eff, 'MIN_CELL_VOLTAGE')
+    if mx is not None:
+        if mx > LFP['cell_max']:
+            add('max_cell_lfp', 'block', ['MAX_CELL_VOLTAGE'],
+                'Full charge %.3f V per cell is above 3.65 V, the most a LiFePO4 cell may be charged to.' % mx)
+        elif mx > ovp - LFP['ovp_margin']:
+            add('max_cell_ovp', 'danger', ['MAX_CELL_VOLTAGE'],
+                'Full charge %.3f V is only %d mV below the BMS cell OVP of %.3f V. One cell running ahead '
+                'trips the BMS. Keep 50 to 100 mV of room; 3.45 V is the usual full charge.'
+                % (mx, round((ovp - mx) * 1000), ovp))
+        elif mx < 3.40:
+            add('max_cell_low', 'warn', ['MAX_CELL_VOLTAGE'],
+                'Full charge %.3f V is low: the battery never gets full and the balancer gets no chance '
+                'at the top.' % mx)
+    if fl is not None and mx is not None and fl >= mx:
+        add('float_ge_max', 'block', ['FLOAT_CELL_VOLTAGE'],
+            'Float %.3f V must be lower than full charge %.3f V.' % (fl, mx))
+    elif fl is not None and fl > 3.40:
+        add('float_high', 'warn', ['FLOAT_CELL_VOLTAGE'],
+            'Float %.3f V keeps the cells nearly full all day, which ages them. 3.35 to 3.375 V is usual.' % fl)
+    if mn is not None:
+        if mn < LFP['cell_min']:
+            add('min_cell_lfp', 'block', ['MIN_CELL_VOLTAGE'],
+                'Empty %.3f V per cell is below 2.50 V. Discharging LiFePO4 that deep damages the cells.' % mn)
+        elif mn <= uvp:
+            add('min_cell_uvp', 'warn', ['MIN_CELL_VOLTAGE'],
+                'Empty %.3f V is at or below the BMS UVP %.3f V: the BMS cuts off before the driver slows '
+                'the discharge.' % (mn, uvp))
+
+    reset_on = str(eff.get('SOC_RESET_AFTER_DAYS', '')).strip() not in ('', '0')
+    rs = _f(eff, 'SOC_RESET_CELL_VOLTAGE')
+    if reset_on and rs is not None:
+        if rs > LFP['cell_max']:
+            add('reset_lfp', 'block', ['SOC_RESET_CELL_VOLTAGE'],
+                'Top balance voltage %.3f V is above 3.65 V, the most a LiFePO4 cell may be charged to.' % rs)
+        elif rs > ovp - 0.02:
+            add('reset_ovp', 'danger', ['SOC_RESET_CELL_VOLTAGE'],
+                'Top balance voltage %.3f V is too close to the BMS OVP %.3f V: the BMS will trip on every '
+                'top balance. Start at %.3f V (OVP - 0.030) and move in 0.005 V steps.' % (rs, ovp, ovp - 0.03))
+        if mx is not None and rs <= mx:
+            add('reset_le_max', 'warn', ['SOC_RESET_CELL_VOLTAGE'],
+                'Top balance voltage %.3f V must be higher than full charge %.3f V, otherwise it does nothing.' % (rs, mx))
+
+    drop = _f(eff, 'VOLTAGE_DROP', 0) or 0
+    if drop > 0.2:
+        add('voltage_drop', 'danger', ['VOLTAGE_DROP'],
+            'Voltage drop %.2f V raises what the chargers are asked for by that much. If the cables do not '
+            'really lose it, the cells are overcharged. Measure it at full current first.' % drop)
+
+    # --- protections switched off
+    for key, text in (
+            ('CCCM_CV_ENABLE', 'Charge current is no longer lowered when one cell gets close to full. A single '
+                               'high cell can then reach the BMS OVP.'),
+            ('DCCM_CV_ENABLE', 'Discharge current is no longer lowered when one cell gets close to empty. A '
+                               'single weak cell can then reach the BMS UVP.'),
+            ('CCCM_T_ENABLE', 'Charging is no longer limited by temperature. Only the low temperature protection '
+                              'of the JK BMS stops charging below 0 °C: check it is on in the JK app.')):
+        if has(key) and not _on(eff, key):
+            add(key.lower() + '_off', 'danger', [key], text)
+    if has('DCCM_T_ENABLE') and not _on(eff, 'DCCM_T_ENABLE'):
+        add('dccm_t_enable_off', 'warn', ['DCCM_T_ENABLE'], 'Discharging is no longer limited by temperature.')
+    if str(eff.get('CVL_CONTROLLER_MODE', '1')).strip() == '0':
+        add('cvl_off', 'danger', ['CVL_CONTROLLER_MODE'],
+            'The charge voltage is no longer lowered when one cell runs ahead of the others. With MPPTs that '
+            'ignore the current limit this is the only thing keeping that cell from its OVP.')
+    if has('CVCM_ENABLE') and not _on(eff, 'CVCM_ENABLE'):
+        add('cvcm_off', 'warn', ['CVCM_ENABLE'],
+            'Without float the cells are held at the full charge voltage all day, which ages them.')
+
+    # --- curves
+    if _on(eff, 'CCCM_CV_ENABLE'):
+        top = _curve_max(eff, 'CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION', ovp, ovp + 0.3, step)
+        if top:
+            add('cv_curve_ovp', 'danger', ['CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION'],
+                'The charge curve still allows %d %% of the current at the BMS OVP (%.3f V). It should reach '
+                '0 below the OVP.' % (round(top * 100), ovp))
+        if reset_on and rs is not None:
+            xs, ys = _nums(eff, 'CELL_VOLTAGES_WHILE_CHARGING'), _nums(eff, 'MAX_CHARGE_CURRENT_CV_FRACTION')
+            if xs and len(xs) == len(ys) and curve_value(xs, ys, rs - 0.001, step) <= 0:
+                add('cv_curve_reset', 'warn', ['CELL_VOLTAGES_WHILE_CHARGING'],
+                    'The charge curve stops charging below the top balance voltage %.3f V, so it is never '
+                    'reached. Move the last point of the curve above it.' % rs)
+    if _on(eff, 'CCCM_T_ENABLE'):
+        cold = _curve_max(eff, 'TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', -40, LFP['charge_t_min'], step)
+        if cold:
+            add('charge_cold', 'block', ['TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION'],
+                'The temperature curve allows %d %% of the charge current at 0 °C or below. Charging LiFePO4 '
+                'below 0 °C plates lithium in the cells and damages them for good.' % round(cold * 100))
+        hot = _curve_max(eff, 'TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', LFP['charge_t_max'], 90, step)
+        if hot:
+            add('charge_hot', 'block', ['TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION'],
+                'The temperature curve allows %d %% of the charge current at 55 °C or above, where LiFePO4 '
+                'must not be charged.' % round(hot * 100))
+    if _on(eff, 'DCCM_T_ENABLE'):
+        cold = _curve_max(eff, 'TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION', -40, LFP['discharge_t_min'] - 0.5, step)
+        if cold:
+            add('discharge_cold', 'danger', ['TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION'],
+                'The temperature curve allows discharging below -20 °C, colder than LiFePO4 cells are rated for.')
+        hot = _curve_max(eff, 'TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION', LFP['discharge_t_max'] + 0.5, 90, step)
+        if hot:
+            add('discharge_hot', 'danger', ['TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION'],
+                'The temperature curve allows discharging above 60 °C, hotter than LiFePO4 cells are rated for.')
+
+    # --- when the BMS is lost
+    if has('BLOCK_ON_DISCONNECT') and not _on(eff, 'BLOCK_ON_DISCONNECT', False):
+        to = _f(eff, 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 30) or 0
+        if to > 120:
+            add('disconnect_timeout', 'danger', ['BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES'],
+                'Without BMS data the system keeps charging and discharging for %g min. Nobody watches the '
+                'cells during that time; keep it at 60 min or less.' % to)
+        lo, hi = _f(eff, 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN'), _f(eff, 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX')
+        if lo is not None and hi is not None and (lo < 3.10 or hi > 3.40):
+            add('disconnect_range', 'warn', ['BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX'],
+                'The safe range %.3f to %.3f V reaches into the steep ends of the LiFePO4 curve, where cells '
+                'change fast. 3.225 to 3.375 V is the default.' % (lo, hi))
+    if has('BMS_CABLE_ALARM') and not _on(eff, 'BMS_CABLE_ALARM'):
+        add('cable_alarm_off', 'warn', ['BMS_CABLE_ALARM'], 'Venus OS will not raise an alarm when the BMS stops answering.')
+
+    # --- settings that do not fit together
+    if _on(eff, 'SOC_CALCULATION', False) and str(eff.get('EXTERNAL_SENSOR_DBUS_PATH_SOC', '')).strip():
+        add('soc_twice', 'block', ['SOC_CALCULATION'], 'The driver cannot count the SoC itself while an external SoC sensor is set.')
+    if _on(eff, 'USE_BMS_DVCC_VALUES', False):
+        add('bms_dvcc', 'warn', ['USE_BMS_DVCC_VALUES'], 'Only Felicity and Seplos V3 BMS send their own limits; for a JK BMS leave it off.')
+    return out
+
+
+def safety_gate(before, after, confirm=''):
+    """
+    Compare the findings of the file as it is (before) with the file after the change.
+    Only what the change brings in counts; a finding whose text changed (other numbers) is new.
+    -> ('ok' | 'block' | 'confirm', findings that decide it, confirm token)
+    """
+    known = set((f['id'], f['text']) for f in before)
+    new = [f for f in after if (f['id'], f['text']) not in known]
+    blocks = [f for f in new if f['level'] == 'block']
+    if blocks:
+        return 'block', blocks, ''
+    dangers = [f for f in new if f['level'] == 'danger']
+    token = ','.join(sorted(f['id'] for f in dangers))
+    if dangers and (confirm or '') != token:
+        return 'confirm', dangers, token
+    return 'ok', [], token
+
+
+def is_serialbattery(values):
+    """Does this D-Bus battery service come from dbus-serialbattery?"""
+    return ('serialbattery' in str(values.get('/Mgmt/ProcessName', '')).lower() or
+            'serialbattery' in str(values.get('/ProductName', '')).lower())
+
+
+def venus_checks(service, bat, settings, system, eff=None):
+    """
+    Are the Venus OS settings right for dbus-serialbattery to protect the battery?
+    service/bat: the driver's battery service and its values (None/{} when not found);
+    settings/system: values of com.victronenergy.settings and .system; eff: effective driver settings.
+    -> [{'id', 'level': ok|info|warn|bad, 'title', 'text'}]
+    """
+    out, eff = [], eff or {}
+
+    def add(cid, level, title, text):
+        out.append({'id': cid, 'level': level, 'title': title, 'text': text})
+
+    def num(d, path):
+        v = d.get(path)
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    if not service:
+        add('driver', 'bad', 'Battery driver', 'dbus-serialbattery shows no battery on D-Bus. Check its log: '
+            'is the BMS in range and is the MAC address right?')
+    elif num(bat, '/Connected') == 0:
+        add('driver', 'bad', 'Battery driver', 'dbus-serialbattery has lost the BMS.')
+    else:
+        add('driver', 'ok', 'Battery driver', '%s is connected.' % (bat.get('/CustomName') or bat.get('/ProductName') or service))
+
+    bol = num(settings, '/Settings/Services/Bol')
+    dvcc = bool(int(bol) & 1) if bol is not None else (num(system, '/Control/Dvcc') == 1 if num(system, '/Control/Dvcc') is not None else None)
+    if dvcc is None:
+        add('dvcc', 'warn', 'DVCC', 'Could not read the DVCC setting.')
+    elif not dvcc:
+        add('dvcc', 'bad', 'DVCC', 'DVCC is off, so the charge voltage and current limits of the driver do not reach '
+            'your chargers. Turn it on: Settings → System setup → Charge control → DVCC.')
+    else:
+        add('dvcc', 'ok', 'DVCC', 'On: chargers follow the limits of the driver.')
+
+    inst = num(bat, '/DeviceInstance')
+    active_bms = system.get('/ActiveBmsService')
+    if service:
+        if active_bms == service:
+            add('bms', 'ok', 'Controlling BMS', 'dbus-serialbattery controls charging.')
+        else:
+            add('bms', 'bad', 'Controlling BMS', 'The controlling BMS is %s, not dbus-serialbattery. Select it under '
+                'Settings → System setup → Charge control → Controlling BMS.' % (active_bms or 'none'))
+
+    active_mon = str(system.get('/ActiveBatteryService') or '')
+    if service and inst is not None:
+        if active_mon.startswith('com.victronenergy.battery') and active_mon.endswith('/%d' % inst):
+            add('monitor', 'ok', 'Battery monitor', 'dbus-serialbattery is the battery monitor.')
+        else:
+            add('monitor', 'warn', 'Battery monitor', 'The battery monitor is %s. With the BMS as monitor, Venus OS also '
+                'acts on its alarms (Settings → System setup → Battery monitor). A SmartShunt there is fine if you '
+                'chose it on purpose.' % (active_mon or 'not set'))
+
+    mcc = num(settings, '/Settings/SystemSetup/MaxChargeCurrent')
+    driver_cc = None
+    try:
+        driver_cc = float(eff.get('MAX_BATTERY_CHARGE_CURRENT', ''))
+    except ValueError:
+        pass
+    if mcc is not None and mcc >= 0:
+        add('dvcc_current', 'info', 'DVCC charge current limit', 'Venus OS limits charging to %g A as well; the lower '
+            'of this and the driver’s %s A applies.' % (mcc, '%g' % driver_cc if driver_cc is not None else '?'))
+    mcv = num(settings, '/Settings/SystemSetup/MaxChargeVoltage')
+    if mcv:
+        add('dvcc_voltage', 'info', 'DVCC charge voltage limit', 'Venus OS limits the charge voltage to %.2f V as well.' % mcv)
+    shared = [name for path, name in (('/Settings/SystemSetup/SharedVoltageSense', 'SVS'),
+                                      ('/Settings/SystemSetup/SharedTemperatureSense', 'STS'),
+                                      ('/Settings/SystemSetup/BatteryCurrentSense', 'SCS')) if num(settings, path) == 1]
+    if shared:
+        add('shared', 'info', 'Shared sensing', ', '.join(shared) + ' on. The driver docs advise only DVCC on this '
+            'page; SVS can help if the battery never reaches the full voltage.')
+
+    # live: what the driver allows right now
+    ccl, cvl = num(bat, '/Info/MaxChargeCurrent'), num(bat, '/Info/MaxChargeVoltage')
+    temps = [t for t in (num(bat, '/System/MinCellTemperature'), num(bat, '/Dc/0/Temperature')) if t is not None and t > -60]
+    cells = num(bat, '/System/NrOfCellsPerBattery')
+    if temps and ccl is not None:
+        t = min(temps)
+        if t <= LFP['charge_t_min'] and ccl > 0:
+            add('live_cold', 'bad', 'Charging in the cold', 'The battery is at %.1f °C and the driver still allows %g A '
+                'of charge current. LiFePO4 must not be charged at or below 0 °C: check the temperature curve and '
+                'the low temperature protection of the JK BMS.' % (t, ccl))
+        elif t < 5 and ccl > 0:
+            add('live_cold', 'warn', 'Cold battery', 'The battery is at %.1f °C; the driver allows %g A of charge current.' % (t, ccl))
+    if cvl and cells and cvl > cells * LFP['cell_max'] + 0.05:
+        add('live_cvl', 'bad', 'Charge voltage', 'The driver asks for %.2f V, above %d × 3.65 V = %.2f V.' % (cvl, cells, cells * LFP['cell_max']))
+    return out

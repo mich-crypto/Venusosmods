@@ -19,6 +19,7 @@ the GLib main loop and the system D-Bus. No pip packages.
 import argparse
 import configparser
 import glob
+import json
 import logging
 import os
 import re
@@ -361,6 +362,8 @@ class App(object):
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
             'POST /api/serialbattery': self.api_serialbattery_save,
+            'POST /api/serialbattery_facts': self.api_serialbattery_facts,
+            'GET /api/serialbattery_system': self.api_serialbattery_system,
             'GET /api/raw': self.api_raw,
             'POST /api/raw': self.api_raw_save,
             'GET /api/log': self.api_log,
@@ -1327,7 +1330,119 @@ class App(object):
                 if e.get('secret'):               # keep passwords out of the page
                     e['has_value'] = bool(e.get('value'))
                     e['value'] = None if not e.get('value') else ''
-        return jsonr({'ok': True, 'installed': True, 'dir': path, 'view': view})
+        facts, sources = self.battery_facts()
+        return jsonr({'ok': True, 'installed': True, 'dir': path, 'view': view, 'facts': facts,
+                      'fact_sources': sources, 'safety': self.safety_of(default, user, facts)})
+
+    # ------------------------------------------------------ battery safety
+
+    FACT_RANGES = {'cells': (1, 32), 'capacity': (1, 5000), 'ovp': (3.3, 3.8), 'uvp': (2.0, 3.2),
+                   'bms_current': (1, 2000)}
+
+    def facts_path(self):
+        return os.path.join(self.state_dir, 'battery_facts.json')
+
+    def saved_facts(self):
+        try:
+            with open(self.facts_path()) as f:
+                raw = json.load(f)
+        except (OSError, ValueError):
+            return {}
+        return dict((k, float(v)) for k, v in raw.items() if k in self.FACT_RANGES and isinstance(v, (int, float)))
+
+    def serialbattery_service(self):
+        """(service name, values) of the battery dbus-serialbattery publishes, or (None, {})."""
+        for name in self.battery_names():
+            try:
+                values = self.dbus_dump(name)
+            except dbus.exceptions.DBusException:
+                continue
+            if ct.is_serialbattery(values):
+                return name, values
+        return None, {}
+
+    def battery_facts(self):
+        """What we know about the battery: what the user entered, else what the BMS reports."""
+        _, values = self.serialbattery_service()
+        facts, sources = {}, {}
+        for key, path in (('cells', '/System/NrOfCellsPerBattery'), ('capacity', '/InstalledCapacity')):
+            v = values.get(path)
+            if isinstance(v, (int, float)) and v > 0:
+                facts[key], sources[key] = float(v), 'bms'
+        for k, v in self.saved_facts().items():
+            facts[k], sources[k] = v, 'you'
+        return facts, sources
+
+    def safety_of(self, default, user, facts=None):
+        if facts is None:
+            facts, _ = self.battery_facts()
+        return ct.battery_safety(ct.serialbattery_effective(default, user), facts)
+
+    def safety_answer(self, default, before, after, confirm):
+        """None if the change may be written, else the response that refuses it or asks to confirm."""
+        facts, _ = self.battery_facts()
+        verdict, found, token = ct.safety_gate(self.safety_of(default, before, facts),
+                                               self.safety_of(default, after, facts), confirm)
+        if verdict == 'block':
+            errors = {}
+            for f in found:
+                for k in f['keys']:
+                    errors.setdefault(k, f['text'])
+            return jsonr({'ok': False, 'error': 'Not saved: this could damage the battery', 'safety': found,
+                          'errors': errors}, 400)
+        if verdict == 'confirm':
+            return jsonr({'ok': False, 'needs_confirm': True, 'confirm': token, 'safety': found,
+                          'error': 'Please confirm the risky settings'}, 409)
+        return None
+
+    def api_serialbattery_facts(self, req):
+        facts, errors = self.saved_facts(), {}
+        for key, (lo, hi) in self.FACT_RANGES.items():
+            if key not in req.form:
+                continue
+            text = req.form.get(key, '').strip()
+            if text == '':
+                facts.pop(key, None)
+                continue
+            try:
+                v = float(text)
+            except ValueError:
+                errors[key] = 'must be a number'
+                continue
+            if not lo <= v <= hi:
+                errors[key] = 'must be between %g and %g' % (lo, hi)
+            else:
+                facts[key] = v
+        if errors:
+            return jsonr({'ok': False, 'error': 'Please correct the marked values', 'errors': errors}, 400)
+        os.makedirs(self.state_dir, exist_ok=True)
+        tmp = self.facts_path() + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(facts, f)
+        os.replace(tmp, self.facts_path())
+        out = {'ok': True, 'message': 'Saved'}
+        path = self.serialbattery_path()
+        if path:
+            out['safety'] = self.safety_of(self.read_text(os.path.join(path, 'config.default.ini')),
+                                           self.read_text(os.path.join(path, 'config.ini')))
+        return jsonr(out)
+
+    def dump_or_empty(self, name):
+        try:
+            return self.dbus_dump(name)
+        except dbus.exceptions.DBusException:
+            return {}
+
+    def api_serialbattery_system(self, req):
+        path = self.serialbattery_path()
+        eff = {}
+        if path:
+            eff = ct.serialbattery_effective(self.read_text(os.path.join(path, 'config.default.ini')),
+                                             self.read_text(os.path.join(path, 'config.ini')))
+        service, values = self.serialbattery_service()
+        return jsonr({'ok': True, 'checks': ct.venus_checks(service, values,
+                                                            self.dump_or_empty('com.victronenergy.settings'),
+                                                            self.dump_or_empty('com.victronenergy.system'), eff)})
 
     def api_serialbattery_save(self, req):
         path = self.serialbattery_path()
@@ -1347,6 +1462,8 @@ class App(object):
             if entries.get(key, {}).get('secret') and changes[key] == '':
                 del changes[key]
         if not changes:
+            if req.form.get('check_only') == '1':
+                return jsonr({'ok': True, 'safety': self.safety_of(default, user)})
             return jsonr({'ok': True, 'message': 'Nothing to change', 'changed': []})
         new, errors = ct.apply_serialbattery(default, user, changes)
         if errors:
@@ -1354,6 +1471,11 @@ class App(object):
         problem = ct.check_syntax(new)
         if problem:
             return jsonr({'ok': False, 'error': 'file would be invalid: ' + problem}, 400)
+        if req.form.get('check_only') == '1':          # the page asks while you type: nothing is written
+            return jsonr({'ok': True, 'safety': self.safety_of(default, new)})
+        refused = self.safety_answer(default, user, new, req.form.get('confirm', ''))
+        if refused:
+            return refused
         ct.write_file(user_path, new)
         reboot = [k for k in changes if k in ct.REBOOT_KEYS]
         result = {'ok': True, 'message': 'Saved', 'changed': sorted(changes), 'reboot_needed': bool(reboot),
@@ -1418,6 +1540,10 @@ class App(object):
         if problem or errors:
             return jsonr({'ok': False, 'error': problem or 'Some values are not valid',
                           'errors': errors}, 400)
+        if which == 'serialbattery':
+            refused = self.safety_answer(default, self.read_text(path), text, req.form.get('confirm', ''))
+            if refused:
+                return refused
         ct.write_file(path, text)
         return jsonr({'ok': True, 'message': 'Saved'})
 

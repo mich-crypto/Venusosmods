@@ -138,6 +138,13 @@ dialog pre { background:var(--code); border:1px solid var(--line-soft); border-r
 .find { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line-soft); }
 .find:last-child { border-bottom:0; } .dot { flex:none; width:9px; height:9px; border-radius:50%; margin-top:7px; background:var(--muted); }
 .dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); } .dot.bad { background:var(--bad); }
+.sfy { font-size:.84rem; margin-top:6px; padding:6px 10px; border-left:3px solid var(--warn); background:var(--warn-bg); border-radius:2px; }
+.sfy.block { border-left-color:var(--bad); background:var(--bad-bg); } .sfy:empty { display:none; }
+.find .lvl { font-size:.6rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; margin-right:6px; }
+.find .lvl.block, .find .lvl.bad { color:var(--bad); } .find .lvl.danger, .find .lvl.warn { color:var(--warn); } .find .lvl.ok { color:var(--ok); }
+.facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr)); gap:10px 14px; }
+.facts label { display:flex; flex-direction:column; gap:4px; font-size:.82rem; color:var(--muted); }
+.facts input { width:100%; }
 .chart { position:relative; } .chart svg { display:block; width:100%; }
 .chart .legend { display:flex; gap:4px 10px; flex-wrap:wrap; margin:4px 0 2px; font-size:.78rem; }
 .chart .legend button { background:none; border:0; padding:2px 4px; cursor:pointer; color:var(--ink); display:inline-flex; gap:5px; align-items:center; }
@@ -1218,6 +1225,7 @@ function updateSbBar() {
     c.reset.hidden = sameSb(c.entry, c.get(), c.entry.default) || c.entry.secret;
     c.row.dataset.changed = changed ? '1' : '';
   }
+  scheduleSafety();
   if (!canEdit() || !n) { hideSaveBar(); return; }
   showSaveBar('sb', n, saveSb);
 }
@@ -1225,7 +1233,12 @@ function updateSbBar() {
 async function saveSb(restart) {
   const body = { restart: restart ? '1' : '0' };
   for (const [k, v] of Object.entries(sbChanges())) body['s.' + k] = v;
-  const r = await api('/api/serialbattery', body);
+  let r = await api('/api/serialbattery', body);
+  if (r.status === 409 && r.data.needs_confirm) {
+    if (!await confirmRisk(r.data.safety)) { toast('Not saved'); return; }
+    r = await api('/api/serialbattery', Object.assign({ confirm: r.data.confirm }, body));
+  }
+  if (!r.ok && r.data.safety) showSafety(r.data.safety, true);
   if (!r.ok) {
     for (const [k, msg] of Object.entries(r.data.errors || {})) {
       const c = S.sbCtl[k]; if (c) { c.err.textContent = msg; c.row.scrollIntoView({ block: 'center' }); }
@@ -1247,10 +1260,100 @@ function sbEntry(e, ro) {
   const reset = h('button', { type: 'button', class: 'link', hidden: true, onclick: () => { ctl.set(e.default); updateSbBar(); } }, 'Reset to default');
   const help = e.help ? h('pre', { hidden: true }, e.help) : null;
   const more = e.help ? h('button', { type: 'button', class: 'link', onclick: () => { help.hidden = !help.hidden; more.textContent = help.hidden ? 'About this setting' : 'Hide'; } }, 'About this setting') : null;
-  row.append(h('div', { class: 'top' }, h('span', { class: 'name' }, e.label), h('code', {}, e.key)), ctl.node,
-    h('div', { class: 'meta' }, h('span', {}, 'Default: ' + (e.secret ? '–' : (e.default === '' ? '(empty)' : e.default))), reset, more), help, err);
-  S.sbCtl[e.key] = { entry: e, get: ctl.get, set: ctl.set, orig: sbEffective(e), row, reset, err };
+  const note = h('div', { class: 'sfy', role: 'status' });
+  row.append(h('div', { class: 'top' }, h('span', { class: 'name' }, e.label), h('code', {}, e.key)), ctl.node, note,
+    h('div', { class: 'meta' }, h('span', {}, 'Default: ' + (e.secret ? '–' : (e.default === '' ? '(empty)' : e.default))), reset, more), ...[help, err].filter(Boolean));
+  S.sbCtl[e.key] = { entry: e, get: ctl.get, set: ctl.set, orig: sbEffective(e), row, reset, err, note };
   return row;
+}
+
+// ------------------------------------- battery safety (the Pi checks every save)
+const SAFETY_WORD = { block: 'Refused', danger: 'Risky', warn: 'Note' };
+
+function safetyCard(list, title) {
+  const order = { block: 0, danger: 1, warn: 2 };
+  list = (list || []).slice().sort((a, b) => order[a.level] - order[b.level]);
+  return h('div', { class: 'card' }, h('h3', {}, title || 'Battery safety check'),
+    list.length ? list.map(f => h('div', { class: 'find' }, h('span', { class: 'dot ' + (f.level === 'block' ? 'bad' : f.level === 'danger' ? 'warn' : '') }),
+      h('div', {}, h('span', { class: 'lvl ' + f.level }, SAFETY_WORD[f.level]), f.text,
+        f.keys && f.keys[0] ? link(f.keys[0], 'show') : null)))
+      : h('div', { class: 'find' }, h('span', { class: 'dot ok' }), h('div', {}, 'Nothing risky for LiFePO4 cells in these settings.')),
+    h('div', { class: 'muted', style: 'margin-top:8px' }, 'Refused: can damage the cells, the Pi does not save it. Risky: saved only after you confirm it.'));
+}
+
+// Marks the fields and fills the safety box of the settings page.
+function showSafety(list, keep) {
+  for (const c of Object.values(S.sbCtl || {})) { c.note.textContent = ''; c.note.className = 'sfy'; }
+  for (const f of list || []) {
+    if (f.level === 'warn') continue;
+    for (const k of f.keys || []) {
+      const c = S.sbCtl && S.sbCtl[k];
+      if (c && !c.note.textContent) { c.note.textContent = SAFETY_WORD[f.level] + ': ' + f.text; c.note.className = 'sfy ' + f.level; }
+    }
+  }
+  if (S.sbSafetyBox) S.sbSafetyBox.replaceChildren(safetyCard(list, Object.keys(sbChanges()).length && !keep ? 'Battery safety check (with your unsaved changes)' : null));
+}
+
+function scheduleSafety() {
+  clearTimeout(scheduleSafety.t);
+  scheduleSafety.t = setTimeout(async () => {
+    if (S.tab !== 'battery' || S.sbView !== 'settings') return;
+    const body = { check_only: '1' };
+    for (const [k, v] of Object.entries(sbChanges())) body['s.' + k] = v;
+    const r = await api('/api/serialbattery', body);
+    if (r.ok) showSafety(r.data.safety);            // a half-typed value is simply not checked yet
+  }, 450);
+}
+
+function confirmRisk(list) {
+  return new Promise(resolve => {
+    const dlg = $('#dlg');
+    const box = h('input', { type: 'checkbox', id: 'risk-ok' });
+    const go = h('button', { class: 'btn danger', disabled: true }, 'Save anyway');
+    box.addEventListener('change', () => { go.disabled = !box.checked; });
+    let answer = false;
+    go.addEventListener('click', () => { answer = true; dlg.close(); });
+    dlg.addEventListener('close', () => resolve(answer), { once: true });
+    clear(dlg).append(h('h3', {}, 'These settings can harm your battery'),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'The Pi saves them only if you confirm. If you are not sure, cancel and keep the safer value.'),
+      ...list.map(f => h('div', { class: 'find' }, h('span', { class: 'dot warn' }), h('div', {}, f.text))),
+      h('label', { class: 'row', for: 'risk-ok', style: 'margin:14px 0' }, box, ' I checked these values against the datasheet of my cells and the settings of my JK BMS.'),
+      h('div', { class: 'row' }, h('span', { class: 'spacer' }), h('button', { class: 'btn', onclick: () => dlg.close() }, 'Cancel'), go));
+    dlg.showModal();
+  });
+}
+
+function factsCard(facts, sources, onSaved) {
+  facts = facts || {}; sources = sources || {};
+  const defs = [['cells', 'Cells in series', '4 = 12 V, 8 = 24 V, 16 = 48 V', 1], ['capacity', 'Capacity (Ah)', 'JK app: battery capacity', 1],
+    ['ovp', 'Cell OVP (V)', 'JK app: cell over-voltage protection', 0.005], ['uvp', 'Cell UVP (V)', 'JK app: cell under-voltage protection', 0.005],
+    ['bms_current', 'BMS rated current (A)', 'what your JK model is built for', 1]];
+  const ins = {};
+  const grid = h('div', { class: 'facts' }, defs.map(([k, label, hint, step]) => {
+    ins[k] = h('input', { type: 'number', step, inputmode: 'decimal', value: facts[k] != null ? facts[k] : '', disabled: !canEdit() });
+    return h('label', {}, label, ins[k], h('span', { style: 'font-size:.72rem' }, sources[k] === 'bms' ? 'read from the BMS' : hint));
+  }));
+  const err = h('div', { class: 'err' });
+  const save = h('button', { class: 'btn primary', disabled: !canEdit(), onclick: async () => {
+    const body = {}; for (const k of Object.keys(ins)) body[k] = ins[k].value.trim();
+    const r = await api('/api/serialbattery_facts', body);
+    clear(err);
+    if (!r.ok) { err.append(r.data.error || 'Not saved', ...Object.entries(r.data.errors || {}).map(([k, m]) => h('div', {}, k + ': ' + m))); return; }
+    toast('Saved'); if (onSaved) onSaved(r.data.safety);
+  } }, 'Save battery facts');
+  return h('div', { class: 'card' }, h('h3', {}, 'Your battery'),
+    h('div', { class: 'muted', style: 'margin-bottom:10px' }, 'Copy these from the JK BMS app. The Pi checks every setting against them: the driver must always stop before the BMS has to.'),
+    grid, err, h('div', { class: 'row', style: 'margin-top:10px' }, save));
+}
+
+async function venusCheckCard() {
+  const r = await api('/api/serialbattery_system');
+  const card = h('div', { class: 'card' }, h('h3', {}, 'Venus OS settings'));
+  if (!r.ok) { card.append(h('div', { class: 'muted' }, r.data.error || 'Could not check')); return card; }
+  const dot = { ok: 'ok', info: '', warn: 'warn', bad: 'bad' };
+  card.append(...r.data.checks.map(c => h('div', { class: 'find' }, h('span', { class: 'dot ' + dot[c.level] }),
+    h('div', {}, h('span', { class: 'lvl ' + c.level }, c.title), c.text))));
+  return card;
 }
 
 async function tabBatterySettings(main) {
@@ -1265,6 +1368,11 @@ async function tabBatterySettings(main) {
   }
   const ro = !canEdit();
   if (ro) main.append(lockedNotice());
+  S.sbSafetyBox = h('div', {});
+  main.append(S.sbSafetyBox);
+  const missing = ['capacity', 'ovp', 'uvp', 'bms_current'].some(k => r.data.facts == null || r.data.facts[k] == null);
+  main.append(h('details', { class: 'group', open: missing }, h('summary', {}, 'Your battery (used by the safety check)'),
+    h('div', { class: 'body' }, factsCard(r.data.facts, r.data.fact_sources, () => scheduleSafety()))));
   const view = r.data.view, byKey = {};
   view.groups.forEach(g => g.entries.forEach(e => { byKey[e.key] = e; }));
   const search = h('input', { type: 'search', placeholder: 'Search settings…', style: 'max-width:340px' });
@@ -1304,6 +1412,7 @@ async function tabBatterySettings(main) {
   if (Object.keys(view.unknown || {}).length) {
     main.append(h('div', { class: 'banner' }, 'Settings in config.ini this page does not know (kept as they are): ' + Object.keys(view.unknown).join(', ')));
   }
+  showSafety(r.data.safety);
   updateSbBar();
 }
 
@@ -1626,7 +1735,8 @@ function findingsCard(info, hist, cellsNow, balNow) {
   const temps = ['/System/Temperature1', '/System/Temperature2', '/System/Temperature3', '/System/Temperature4', '/Dc/0/Temperature'].map(p => V(p)).filter(x => x != null && x > -50);
   if (temps.length > 1 && Math.max(...temps) - Math.min(...temps) > 5) add('warn', 'Temperature probes differ by ' + (Math.max(...temps) - Math.min(...temps)).toFixed(1) + ' °C.');
   if (V('/System/MOSTemperature') != null && V('/System/MOSTemperature') > 60) add(V('/System/MOSTemperature') > 80 ? 'bad' : 'warn', 'The MOSFETs are at ' + V('/System/MOSTemperature').toFixed(0) + ' °C.');
-  if (temps.length && Math.min(...temps) < 5 && V('/Io/AllowToCharge') !== 0 && (V('/Dc/0/Current') || 0) > 0) add('warn', 'Charging at ' + Math.min(...temps).toFixed(0) + ' °C: LiFePO4 should not be charged below 0 °C.');
+  if (temps.length && Math.min(...temps) <= 0 && (V('/Info/MaxChargeCurrent') || 0) > 0) add('bad', 'The battery is at ' + Math.min(...temps).toFixed(1) + ' °C and the driver still allows ' + V('/Info/MaxChargeCurrent').toFixed(0) + ' A of charge current. LiFePO4 must not be charged at or below 0 °C: check the temperature curve (Limits & curves) and the low temperature protection in the JK app.');
+  else if (temps.length && Math.min(...temps) < 5 && V('/Io/AllowToCharge') !== 0 && (V('/Dc/0/Current') || 0) > 0) add('warn', 'Charging at ' + Math.min(...temps).toFixed(0) + ' °C: LiFePO4 should not be charged below 0 °C.');
   const ccl = V('/Info/MaxChargeCurrent'), dcl = V('/Info/MaxDischargeCurrent'), cclMax = Math.max(...(hist.series.ccl || [0]).filter(x => x != null), 0);
   if (ccl === 0) add('warn', 'Charging is currently blocked (charge current limit is 0 A).');
   else if (ccl != null && cclMax > 0 && ccl < cclMax * 0.9) add('warn', 'Charge current is limited to ' + ccl.toFixed(0) + ' A (it was up to ' + cclMax.toFixed(0) + ' A). That is normal near full or when cold; see Limits & curves.');
@@ -1731,6 +1841,10 @@ async function tabBatteryLimits(box) {
   if (!sb.ok) { box.append(h('div', { class: 'banner bad' }, sb.data.error || 'Could not read the settings')); return; }
   if (!sb.data.installed) { box.append(h('div', { class: 'banner' }, 'dbus-serialbattery was not found in /data/apps/dbus-serialbattery. Install it first (see mr-manuel/venus-os_dbus-serialbattery).')); return; }
   S.sb = sb.data;
+  const venus = await venusCheckCard();
+  if (S.tab !== 'battery' || S.sbView !== 'limits') return;
+  box.append(h('div', { class: 'two' }, safetyCard(sb.data.safety), venus),
+    factsCard(sb.data.facts, sb.data.fact_sources, () => renderTab()));
   const byKey = {};
   sb.data.view.groups.forEach(g => g.entries.forEach(e => { byKey[e.key] = e; }));
   const eff = k => byKey[k] ? sbEffective(byKey[k]) : '';
@@ -2307,7 +2421,11 @@ async function rawEditor(which, title) {
   ta.addEventListener('input', () => ta.classList.toggle('changed', ta.value !== r.data.text));
   card.append(h('div', { class: 'muted' }, r.data.path + ' (the previous version is kept as .bak)'), ta, errs,
     h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn primary', disabled: !canEdit(), onclick: async () => {
-      const w = await api('/api/raw', { file: which, text: ta.value });
+      let w = await api('/api/raw', { file: which, text: ta.value });
+      if (w.status === 409 && w.data.needs_confirm) {
+        if (!await confirmRisk(w.data.safety)) { toast('Not saved'); return; }
+        w = await api('/api/raw', { file: which, text: ta.value, confirm: w.data.confirm });
+      }
       clear(errs);
       if (!w.ok) { errs.append(w.data.error || 'Not saved', ...Object.entries(w.data.errors || {}).map(([k, m]) => h('div', {}, k + ': ' + m))); toast('Not saved', true); }
       else { toast('Saved. Restart the driver to apply it.'); r.data.text = ta.value; ta.classList.remove('changed'); }
