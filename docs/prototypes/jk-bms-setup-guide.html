@@ -903,7 +903,7 @@ function stepBattery(main) {
     const D = [[bx - 6, by + 39], [10, by + 39], [10, 8], [loadMinus[0], 8], loadMinus];
     [A, C, D].forEach(seg => { o += `<path d="${line(seg)}" class="l-ink" stroke-width="3" fill="none"/>`; });
     const loop = A.concat(inCells.slice(1), C.slice(1), [[bx + 40, by + 97], [bx + 40, by + 39]], D);
-    const total = lenOf(loop), step = 34, speed = 30 + amps / 4, off = (t * speed) % step;
+    const total = lenOf(loop), step = 34, speed = 14, off = (t * speed) % step;
     const cls = charging ? 'f-charge' : 'f-dis';
     for (let d = 0; d < total; d += step) {
       const dd = charging ? (d + off) % total : (total - ((d + off) % total));
@@ -933,11 +933,11 @@ function stepCurrents(main) {
     let o = `<rect x="20" y="60" width="150" height="70" rx="6" class="box"/>` + T(95, 92, 'Solar, DC-DC,', 't-strong', 'middle') + T(95, 110, 'shore charger', 't-strong', 'middle');
     o += `<rect x="250" y="44" width="140" height="102" rx="8" class="box"/>` + `<rect x="300" y="36" width="40" height="8" rx="2" class="box"/>` + T(320, 92, 'Battery', 't-strong', 'middle') + T(320, 110, cells() + ' cells · ' + st.bat.ah + ' Ah', '', 'middle');
     o += `<rect x="470" y="60" width="150" height="70" rx="6" class="box"/>` + T(545, 92, 'Inverter and', 't-strong', 'middle') + T(545, 110, '12 V loads', 't-strong', 'middle');
-    // thin wires like the battery picture, with the current as dots; more current = dots closer together and faster
+    // thin wires like the battery picture, with the current as dots at one calm speed, whatever the current
     o += `<line x1="170" y1="95" x2="250" y2="95" class="l-ink" stroke-width="3"/><line x1="390" y1="95" x2="470" y2="95" class="l-ink" stroke-width="3"/>`;
     const dots = (x0, x1, amps, cls) => {
       if (amps <= 0) return '';
-      const gap = clamp(40 - amps / 6, 12, 40), speed = 18 + amps / 3, off = (t * speed) % gap;
+      const gap = 26, speed = 12, off = (t * speed) % gap;
       let d = ''; for (let x = x0 + off; x < x1; x += gap) d += `<circle cx="${x.toFixed(1)}" cy="95" r="3.4" class="${cls}" stroke="var(--surface)" stroke-width="1"/>`;
       return d;
     };
