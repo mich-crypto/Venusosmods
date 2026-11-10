@@ -990,6 +990,43 @@ class DriverUpdateApiTests(AppTestCase):
             self.assertEqual(f.read(), before)
 
 
+class HistoryApiTests(AppTestCase):
+    user_text = SerialBatteryTests.user_text
+
+    def setUp(self):
+        super().setUp()
+        self.post('/api/serialbattery_facts', {'cells': '4', 'capacity': '280', 'ovp': '3.65', 'uvp': '2.8', 'bms_current': '200'})
+
+    def test_every_save_keeps_the_old_version_and_rolls_back(self):
+        self.assertEqual(self.post('/api/serialbattery', {'s.MAX_CELL_VOLTAGE': '3.48'}).status, 200)
+        first = self.user_text()
+        time.sleep(1.05)
+        self.assertEqual(self.post('/api/serialbattery', {'s.MAX_CELL_VOLTAGE': '3.42'}).status, 200)
+        h = body_of(self.get('/api/serialbattery_history'))['history']
+        self.assertEqual(len(h), 1)                       # the 3.48 version (there was no config.ini before)
+        self.assertEqual(h[0]['differs'], ['MAX_CELL_VOLTAGE'])
+        r = self.post('/api/serialbattery_rollback', {'id': h[0]['id']})
+        self.assertEqual(r.status, 200, r.body)
+        self.assertEqual(self.user_text(), first)
+        self.assertEqual(len(body_of(self.get('/api/serialbattery_history'))['history']), 2)   # the rollback is undoable too
+        self.assertEqual(self.post('/api/serialbattery_rollback', {'id': '../../etc/passwd'}).status, 400)
+
+    def test_rollback_goes_through_the_safety_check(self):
+        hd = os.path.join(self.tmp, 'state', 'serialbattery-history')
+        os.makedirs(hd)
+        with open(os.path.join(hd, '20260101-120000.ini'), 'w') as f:
+            f.write('[DEFAULT]\nMAX_CELL_VOLTAGE = 3.62\n')
+        with open(os.path.join(hd, '20260101-130000.ini'), 'w') as f:
+            f.write('[DEFAULT]\nNOT_A_SETTING = 1\n')
+        before = self.user_text()
+        self.assertEqual(self.post('/api/serialbattery_rollback', {'id': '20260101-130000'}).status, 400)   # would block the battery
+        r = self.post('/api/serialbattery_rollback', {'id': '20260101-120000'})
+        self.assertEqual(r.status, 409)                   # risky: needs the confirmation
+        self.assertEqual(self.user_text(), before)
+        r = self.post('/api/serialbattery_rollback', {'id': '20260101-120000', 'confirm': body_of(r)['confirm']})
+        self.assertEqual(r.status, 200, r.body)
+
+
 class SerialBatteryVersionTests(AppTestCase):
     def test_version_from_files_and_release(self):
         with open(os.path.join(self.sb, 'utils.py'), 'w') as f:

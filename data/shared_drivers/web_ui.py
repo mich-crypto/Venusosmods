@@ -367,6 +367,8 @@ class App(object):
             'GET /api/serialbattery_version': self.api_serialbattery_version,
             'POST /api/serialbattery_reviewed': self.api_serialbattery_reviewed,
             'POST /api/serialbattery_remove': self.api_serialbattery_remove,
+            'GET /api/serialbattery_history': self.api_serialbattery_history,
+            'POST /api/serialbattery_rollback': self.api_serialbattery_rollback,
             'POST /api/serialbattery_update': self.api_serialbattery_update,
             'GET /api/serialbattery_update_log': self.api_serialbattery_update_log,
             'GET /api/raw': self.api_raw,
@@ -1375,6 +1377,72 @@ class App(object):
         self.remember_defaults(self.read_text(os.path.join(path, 'config.default.ini')))
         return jsonr({'ok': True, 'message': 'Marked as reviewed'})
 
+    HISTORY_KEEP = 30
+
+    def history_dir(self):
+        return os.path.join(self.state_dir, 'serialbattery-history')
+
+    def write_sb_config(self, path, text):
+        """Write the driver's config.ini, keeping the version it replaces in the history."""
+        old = self.read_text(path) if os.path.isfile(path) else None
+        if old is not None and old != text:
+            hd = self.history_dir()
+            os.makedirs(hd, exist_ok=True)
+            name = time.strftime('%Y%m%d-%H%M%S')
+            n, stem = 1, name
+            while os.path.exists(os.path.join(hd, name + '.ini')):
+                n += 1
+                name = '%s-%d' % (stem, n)
+            with open(os.path.join(hd, name + '.ini'), 'w') as f:
+                f.write(old)
+            for gone in sorted(os.listdir(hd))[:-self.HISTORY_KEEP]:
+                os.remove(os.path.join(hd, gone))
+        ct.write_file(path, text)
+
+    def history_entries(self):
+        hd = self.history_dir()
+        try:
+            names = sorted((n for n in os.listdir(hd) if n.endswith('.ini')), reverse=True)
+        except OSError:
+            return []
+        return [n[:-4] for n in names]
+
+    def api_serialbattery_history(self, req):
+        path = self.serialbattery_path()
+        if not path:
+            return jsonr({'ok': False, 'error': 'dbus-serialbattery is not installed'}, 400)
+        current = dict((k.upper(), v) for k, v in ct.parse_ini(self.read_text(os.path.join(path, 'config.ini'))).get('DEFAULT', {}).items())
+        out = []
+        for hid in self.history_entries():
+            old = dict((k.upper(), v) for k, v in ct.parse_ini(self.read_text(os.path.join(self.history_dir(), hid + '.ini'))).get('DEFAULT', {}).items())
+            diff = sorted(k for k in set(old) | set(current) if old.get(k) != current.get(k))
+            out.append({'id': hid, 'time': time.mktime(time.strptime(hid[:15], '%Y%m%d-%H%M%S')),
+                        'settings': len(old), 'differs': diff,
+                        'values': dict((k, old.get(k, '(default)')) for k in diff)})
+        return jsonr({'ok': True, 'history': out})
+
+    def api_serialbattery_rollback(self, req):
+        """Put an earlier config.ini back; it goes through the same checks as any other save."""
+        path = self.serialbattery_path()
+        if not path:
+            return jsonr({'ok': False, 'error': 'dbus-serialbattery is not installed'}, 400)
+        hid = req.form.get('id', '')
+        if hid not in self.history_entries():
+            return jsonr({'ok': False, 'error': 'no such version'}, 400)
+        default = self.read_text(os.path.join(path, 'config.default.ini'))
+        user_path = os.path.join(path, 'config.ini')
+        text = self.read_text(os.path.join(self.history_dir(), hid + '.ini'))
+        refused = self.safety_answer(default, self.read_text(user_path), text, req.form.get('confirm', ''))
+        if refused:
+            return refused
+        self.write_sb_config(user_path, text)
+        result = {'ok': True, 'message': 'Rolled back to the version from %s' % hid, 'restarted': False}
+        if req.form.get('restart') == '1':
+            result['restarted'] = self.run_restart_script(path)
+            if result['restarted']:
+                result['message'] += ' and restarted the driver'
+        return jsonr(result)
+
     def api_serialbattery_remove(self, req):
         """Remove settings the installed driver does not know (they would block the battery)."""
         path = self.serialbattery_path()
@@ -1389,7 +1457,7 @@ class App(object):
         if not wanted or bad:
             return jsonr({'ok': False, 'error': 'only settings the driver does not know can be removed here: %s'
                           % ', '.join(bad or ['(none given)'])}, 400)
-        ct.write_file(user_path, ct.remove_settings(user, [unknown[k.lower()] for k in wanted]))
+        self.write_sb_config(user_path, ct.remove_settings(user, [unknown[k.lower()] for k in wanted]))
         return jsonr({'ok': True, 'message': 'Removed ' + ', '.join(wanted) + '. Restart the driver to apply it.'})
 
     # ------------------------------------------------------ battery safety
@@ -1629,7 +1697,7 @@ class App(object):
         refused = self.safety_answer(default, user, new, req.form.get('confirm', ''))
         if refused:
             return refused
-        ct.write_file(user_path, new)
+        self.write_sb_config(user_path, new)
         reboot = [k for k in changes if k in ct.REBOOT_KEYS]
         result = {'ok': True, 'message': 'Saved', 'changed': sorted(changes), 'reboot_needed': bool(reboot),
                   'restarted': False}
@@ -1697,6 +1765,8 @@ class App(object):
             refused = self.safety_answer(default, self.read_text(path), text, req.form.get('confirm', ''))
             if refused:
                 return refused
+            self.write_sb_config(path, text)
+            return jsonr({'ok': True, 'message': 'Saved'})
         ct.write_file(path, text)
         return jsonr({'ok': True, 'message': 'Saved'})
 

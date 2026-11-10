@@ -69,6 +69,14 @@ block charging and discharging (error 119). So:
   links there.
 - The setup guide never exports a setting it does not know.
 
+## History and rollback
+
+Every write of the driver's `config.ini` (settings form, raw editor, removing unknown
+settings, a rollback) goes through `web_ui.write_sb_config()`, which first keeps the
+version it replaces in `state/serialbattery-history/` (last 30). The Battery tab lists
+them under "Earlier versions of config.ini"; a rollback
+(`POST /api/serialbattery_rollback`) goes through the same safety gate as any save.
+
 When changing these rules, keep `docs/prototypes/jk-bms-setup-guide.html`
 (`checks()`) in step, and back new limits with the cell datasheet or the driver docs.
 - Bluetooth/CAN changes (`BLUETOOTH_BMS`, `BLUETOOTH_USE_USB`, `CAN_PORT`) need a

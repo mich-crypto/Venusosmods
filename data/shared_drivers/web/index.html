@@ -1258,6 +1258,10 @@ async function saveSb(restart) {
   }
   toast(r.data.message || 'Saved');
   await renderTab();
+  if (!r.data.reboot_needed && !r.data.restarted && restart === false) {
+    $('#main').prepend(h('div', { class: 'banner ok row' }, 'Saved to config.ini. The driver uses the new settings after a restart.',
+      h('span', { class: 'spacer' }), h('button', { class: 'btn primary small', onclick: async ev => { ev.target.disabled = true; await post('/api/restart', { target: 'serialbattery' }); ev.target.closest('.banner').remove(); } }, 'Restart the driver now')));
+  }
   if (r.data.reboot_needed) {
     $('#main').prepend(h('div', { class: 'banner warn row' }, 'Saved. Bluetooth/CAN settings only apply after a reboot of the Pi.',
       h('span', { class: 'spacer' }), h('button', { class: 'btn danger small', onclick: () => confirmThen('Reboot the Pi now?', () => post('/api/reboot', {})) }, 'Reboot now')));
@@ -1410,6 +1414,30 @@ function driverChangesCard(ch, after) {
     } }, 'Mark as reviewed')));
 }
 
+async function historyCard() {
+  const r = await api('/api/serialbattery_history');
+  if (!r.ok || !r.data.history.length) return null;
+  const list = r.data.history;
+  const when = t => new Date(t * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const sel = h('select', { 'aria-label': 'Earlier versions of config.ini' }, list.map(e => h('option', { value: e.id },
+    when(e.time) + ' · ' + (e.differs.length ? e.differs.slice(0, 3).map(k => k + ' ' + e.values[k]).join(', ') + (e.differs.length > 3 ? ' and ' + (e.differs.length - 3) + ' more' : '') : 'same as now'))));
+  const roll = async () => {
+    const e = list.find(x => x.id === sel.value);
+    if (!window.confirm('Put the config.ini from ' + when(e.time) + ' back and restart the driver?')) return;
+    const body = { id: e.id, restart: '1' };
+    let x = await api('/api/serialbattery_rollback', body);
+    if (x.status === 409 && x.data.needs_confirm) {
+      if (!await confirmRisk(x.data.safety)) { toast('Not rolled back'); return; }
+      x = await api('/api/serialbattery_rollback', Object.assign({ confirm: x.data.confirm }, body));
+    }
+    if (!x.ok) { toast(x.data.error || 'Not rolled back', true); if (x.data.safety) showSafety(x.data.safety, true); return; }
+    toast(x.data.message); await renderTab();
+  };
+  return h('details', { class: 'group' }, h('summary', {}, 'Earlier versions of config.ini ', h('span', { class: 'muted' }, '(' + list.length + ')')),
+    h('div', { class: 'body' }, h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Every save keeps the config.ini it replaces. Pick one to go back to; it is checked like any other save.'),
+      h('div', { class: 'row' }, sel, h('button', { class: 'btn', disabled: !canEdit(), onclick: roll }, 'Roll back'))));
+}
+
 async function tabBatterySettings(main) {
   S.sbCtl = {};
   if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
@@ -1423,7 +1451,7 @@ async function tabBatterySettings(main) {
   const ro = !canEdit();
   if (ro) main.append(lockedNotice());
   S.sbSafetyBox = h('div', {});
-  main.append(...[unknownCard(r.data.unknown, () => renderTab()), driverChangesCard(r.data.driver_changes, () => renderTab()), S.sbSafetyBox].filter(Boolean));
+  main.append(...[unknownCard(r.data.unknown, () => renderTab()), driverChangesCard(r.data.driver_changes, () => renderTab()), S.sbSafetyBox, await historyCard()].filter(Boolean));
   const missing = ['capacity', 'ovp', 'uvp', 'bms_current'].some(k => r.data.facts == null || r.data.facts[k] == null);
   main.append(h('details', { class: 'group', open: missing }, h('summary', {}, 'Your battery (used by the safety check)'),
     h('div', { class: 'body' }, factsCard(r.data.facts, r.data.fact_sources, () => scheduleSafety()))));

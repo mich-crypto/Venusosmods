@@ -201,6 +201,9 @@ th { font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var
 .pts input[type=number] { width:86px; padding:5px 8px; }
 .pts td { padding:5px 6px; vertical-align:middle; }
 
+.btn.big { font-size:1.05rem; padding:14px 22px; width:100%; max-width:440px; }
+.upload { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
+.done-ok { font-family:var(--display); font-size:1.7rem; font-weight:600; color:var(--ok); }
 .nav-foot { display:flex; justify-content:space-between; gap:10px; margin-top:26px; padding-top:16px; border-top:1px solid var(--line); flex-wrap:wrap; }
 details.grp { border:1px solid var(--line); border-radius:6px; background:var(--surface); margin-bottom:8px; }
 details.grp > summary { cursor:pointer; padding:12px 16px; font-family:var(--display); font-weight:600; font-size:1.05rem; letter-spacing:.02em; list-style:none; display:flex; gap:10px; align-items:center; }
@@ -421,7 +424,7 @@ const DRIVER_SOURCE = 'v2.0.20250729', DRIVER_STABLE = 'v2.0.20250729';
 // ------------------------------------------------------------------ state
 const STORE = 'jkbms-setup-guide-v1';
 const BAT_DEFAULT = { cells: 4, ah: 280, ovp: 3.65, uvp: 2.8, bms: 200 };
-const st = { daySeg: 0, vSeg: 0, vals: {}, extra: {}, bat: Object.assign({}, BAT_DEFAULT), view: 'connect', motion: true, dayTop: false, recDir: 'c', lastV: 3.30, allJk: true, allChanged: false, allQ: '' };
+const st = { daySeg: 0, vSeg: 0, history: [], vals: {}, extra: {}, bat: Object.assign({}, BAT_DEFAULT), view: 'connect', motion: true, dayTop: false, recDir: 'c', lastV: 3.30, allJk: true, allChanged: false, allQ: '' };
 function load() {
   try {
     const raw = localStorage.getItem(STORE);
@@ -430,13 +433,14 @@ function load() {
     for (const [k, v] of Object.entries(d.vals || {})) if (DEF[k]) st.vals[k] = String(v);
     st.extra = d.extra || {};
     Object.assign(st.bat, d.bat || {});
+    st.history = Array.isArray(d.history) ? d.history : [];
   } catch (e) { /* storage blocked or broken: start from the defaults */ }
 }
 function persist() {
   try {
     const vals = {};
     for (const k of Object.keys(DEF)) if (isChanged(k) && DEF[k].t !== 'secret') vals[k] = get(k);
-    localStorage.setItem(STORE, JSON.stringify({ vals, extra: st.extra, bat: st.bat }));
+    localStorage.setItem(STORE, JSON.stringify({ vals, extra: st.extra, bat: st.bat, history: st.history }));
   } catch (e) { /* not available here */ }
 }
 
@@ -618,9 +622,10 @@ const STEPS = [
     keys: ['BLOCK_ON_DISCONNECT', 'BLOCK_ON_DISCONNECT_TIMEOUT_MINUTES', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX'] },
   { id: 'recovery', title: 'Smooth recovery', short: 'Recovery', render: stepRecovery,
     keys: ['CHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT', 'DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT'] },
-  { id: 'backup', title: 'Review and back up', short: 'Review & backup', render: stepBackup, keys: [] },
+  { id: 'backup', title: 'Review and upload', short: 'Review & upload', render: stepBackup, keys: [] },
 ];
-const EXTRA_VIEWS = [{ id: 'all', title: 'All settings', short: 'All settings', render: viewAll, keys: [] }];
+const EXTRA_VIEWS = [{ id: 'all', title: 'All settings', short: 'All settings', render: viewAll, keys: [] },
+  { id: 'files', title: 'Import and export', short: 'Import / export', render: viewFiles, keys: [] }];
 const VIEWS = STEPS.concat(EXTRA_VIEWS);
 function stepOf(key) { const s = STEPS.find(x => x.keys.includes(key)); return s ? s.id : 'all'; }
 
@@ -1368,20 +1373,22 @@ function stepRecovery(main) {
 }
 
 // ------------------------------------------------------------ export / import
-function iniText() {
+function iniText(full) {
   const ch = changedKeys().filter(k => DEF[k].t !== 'secret'), B = st.bat, now = new Date();
   const lines = ['; dbus-serialbattery config.ini', '; Made with the JK BMS Setup guide on ' + now.toISOString().slice(0, 10) + '.',
-    '; For dbus-serialbattery ' + DRIVER_SOURCE + '. Only settings that differ from config.default.ini are listed.',
+    '; For dbus-serialbattery ' + DRIVER_SOURCE + '. ' + (full
+      ? 'Every setting is listed; the ones you did not change are commented out (;) so the driver keeps using its own default for them.'
+      : 'Only settings that differ from config.default.ini are listed.'),
     '; Goes to /data/apps/dbus-serialbattery/config.ini on the Pi.',
     `; guide-battery: cells=${B.cells} ah=${B.ah} ovp=${B.ovp} uvp=${B.uvp} bms=${B.bms}`, '', '[DEFAULT]'];
   let lastG = null;
   for (const g of GROUPS) for (const k of g.keys) {
-    if (!ch.includes(k)) continue;
+    if (DEF[k].t === 'secret' || (!full && !ch.includes(k))) continue;
     if (g.id !== lastG) { lines.push('', '; --- ' + g.title); lastG = g.id; }
-    lines.push(k + ' = ' + get(k));
+    lines.push(ch.includes(k) ? k + ' = ' + get(k) : '; ' + k + ' = ' + DEF[k].d);
   }
   // settings the driver does not know are never written: they would make it block the battery (error 119)
-  if (!ch.length) lines.push('; (nothing changed: all defaults)');
+  if (!ch.length && !full) lines.push('; (nothing changed: all defaults)');
   return lines.join('\n') + '\n';
 }
 function jsonText() {
@@ -1431,64 +1438,112 @@ function copyText(text, ta) {
 }
 
 // ------------------------------------------------------------ step 11 backup
+const overrides = () => { const o = {}; changedKeys().filter(k => DEF[k].t !== 'secret').forEach(k => { o[k] = get(k); }); return o; };
+const whenOf = ms => { const d = new Date(ms); return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); };
+const shown = v => v === '' ? '(empty)' : v;
 function stepBackup(main) {
-  main.append(h('p', { class: 'lead' }, 'Check what you changed, then save it. The backup is the same config.ini the driver reads, so you can put it straight back on the Pi or load it here again later.'));
-  main.append(callout(h('b', {}, 'The Pi checks every save the same way. '), h('b', {}, 'Refused'), ': can damage the cells, the Venus page does not write it. ',
-    h('b', {}, 'Risky'), ': written only after you confirm you checked it against your cell datasheet and the JK BMS. ', h('b', {}, 'Note'), ': worth knowing, saved normally. ',
-    'The checks use the battery numbers from step 2 (enter the same ones on the Venus page under Battery → Your battery).'));
+  const prev = () => st.history[0] || null;
+  const prevVal = k => { const p = prev(); return p && p.vals[k] !== undefined ? p.vals[k] : DEF[k].d; };
+  const pending = () => Object.keys(DEF).filter(k => DEF[k].t !== 'secret' && !same(DEF[k], get(k), prevVal(k)));
+  // 1. what does not make sense, only when there is something
   main.append(warnBox('*'));
-  const ck = (title, text) => h('li', {}, h('b', {}, title), ' ', text);
-  main.append(h('h2', {}, 'Also check'), h('div', { class: 'two' },
-    h('div', { class: 'card' }, h('h3', {}, 'Venus OS'), h('ul', { style: 'margin:6px 0 0;padding-left:20px;display:grid;gap:6px' },
-      ck('DVCC on.', 'Settings → System setup → Charge control. Without it the driver’s limits never reach your chargers.'),
-      ck('Controlling BMS = dbus-serialbattery.', 'Same page. Only one battery can control charging.'),
-      ck('Battery monitor = dbus-serialbattery.', 'Settings → System setup. Then Venus OS also acts on the BMS alarms. A SmartShunt there is fine if you chose it on purpose.'),
-      ck('SVS, STS, SCS normally off.', 'The driver docs advise only DVCC on that page; SVS can help if the battery never reaches full voltage.'),
-      ck('The Venus page checks these for you:', 'Battery → Limits & curves → Venus OS settings, live from the Pi.'))),
-    h('div', { class: 'card' }, h('h3', {}, 'JK BMS app'), h('ul', { style: 'margin:6px 0 0;padding-left:20px;display:grid;gap:6px' },
-      ck('Hard limits in the BMS, soft limits in the driver.', 'The driver must always act first so the BMS never has to cut off.'),
-      ck('Cell OVP 3.65 V or lower,', 'cell UVP 2.5 V or higher (2.8 V is common). Enter the real values in step 2.'),
-      ck('Charge low temperature protection on,', 'at 0 °C or a few degrees above. It is the last line if the driver’s temperature limit is off or the link is lost.'),
-      ck('Over-current protection above the driver’s limits', `(now ${num('MAX_BATTERY_CHARGE_CURRENT')} A charge / ${num('MAX_BATTERY_DISCHARGE_CURRENT')} A discharge) and within what the cells allow.`)))));
-  // summary of changes
-  const sumBox = h('div', { class: 'card tbl' });
-  const paintSum = () => {
-    const ch = changedKeys();
-    sumBox.replaceChildren(ch.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Setting', 'Default', 'Yours', ''].map(x => h('th', {}, x)))),
-      h('tbody', {}, ch.map(k => h('tr', {}, h('td', {}, h('div', {}, DEF[k].label), h('code', { class: 'muted' }, k)), h('td', { class: 'muted' }, DEF[k].d === '' ? '(empty)' : DEF[k].d),
-        h('td', { style: 'font-weight:600' }, get(k) === '' ? '(empty)' : get(k)), h('td', {}, h('button', { type: 'button', class: 'link', onclick: () => go(stepOf(k), k) }, 'edit'))))))
-      : h('p', { class: 'muted', style: 'margin:0' }, 'Nothing changed yet: the driver would run on its defaults. Go through the steps, or load a backup below.'));
+  // 2. one big button: upload, then restart
+  const up = h('div', { class: 'card upload' });
+  let busy = false;
+  const paintUp = () => {
+    if (busy) return;
+    const n = pending().length, bad = checks().some(x => x.lvl === 'bad'), p = prev();
+    up.replaceChildren(h('button', { type: 'button', class: 'btn primary big', disabled: !n || bad ? true : null, onclick: upload },
+      n ? `Upload ${n} change${n > 1 ? 's' : ''} to the battery driver` : 'Nothing to upload'),
+      h('p', { class: 'muted', style: 'margin:6px 0 0' }, bad ? 'Fix the refused settings above first.'
+        : n ? 'Writes config.ini on the Pi. The version it replaces goes into the history below.'
+          : p ? 'The driver has your settings from ' + whenOf(p.time) + '.' : 'Change a setting in the steps to start.'));
   };
-  hooks.push(paintSum); paintSum();
-  main.append(h('h2', {}, 'What you changed'), sumBox);
+  const upload = () => {
+    const keys = pending(), reboot = keys.some(k => REBOOT_KEYS.includes(k));
+    st.history.unshift({ time: Date.now(), vals: overrides() }); st.history = st.history.slice(0, 20); persist();
+    busy = true;
+    const restart = () => up.replaceChildren(h('div', { class: 'done-ok' }, reboot ? '✓ The Pi is restarting' : '✓ Driver restarted'),
+      h('p', { style: 'margin:4px 0 10px' }, reboot ? 'It is back in about two minutes, with the new Bluetooth settings.' : 'Your new settings are active now.'),
+      h('button', { type: 'button', class: 'btn', onclick: () => { busy = false; render(); } }, 'Done'));
+    up.replaceChildren(h('div', { class: 'done-ok' }, '✓ Uploaded'),
+      h('p', { style: 'margin:4px 0 10px' }, `config.ini on the Pi has your ${keys.length} change${keys.length > 1 ? 's' : ''}. The driver uses them after a ${reboot ? 'reboot of the Pi (Bluetooth settings)' : 'restart'}.`),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn primary big', style: 'width:auto', onclick: restart }, reboot ? 'Reboot the Pi now' : 'Restart the driver now'),
+        h('button', { type: 'button', class: 'btn', onclick: () => { busy = false; render(); } }, 'Later')));
+  };
+  hooks.push(paintUp); paintUp();
+  main.append(up, h('p', { class: 'muted', style: 'margin:6px 0 0' }, 'Preview: this guide cannot reach your Pi, so nothing is sent from here. On the Venus page the same button writes config.ini and restarts the driver.'));
+  // 3. what changes: default, previous (last upload), new
+  const tbl = h('div', { class: 'card tbl' });
+  const paintTbl = () => {
+    const ks = pending();
+    tbl.replaceChildren(ks.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Setting', 'Default', 'Previous', 'New', ''].map(x => h('th', {}, x)))),
+      h('tbody', {}, ks.map(k => h('tr', {}, h('td', {}, h('div', {}, DEF[k].label), h('code', { class: 'muted' }, k)),
+        h('td', { class: 'muted' }, shown(DEF[k].d)), h('td', {}, shown(prevVal(k))), h('td', { style: 'font-weight:600' }, shown(get(k))),
+        h('td', {}, h('button', { type: 'button', class: 'link', onclick: () => go(stepOf(k), k) }, 'edit'))))))
+      : h('p', { class: 'muted', style: 'margin:0' }, prev() ? 'No changes since the last upload.' : 'Nothing changed yet: the driver runs on its defaults.'));
+  };
+  hooks.push(paintTbl); paintTbl();
+  main.append(h('h2', {}, 'What changes'), tbl);
+  // 4. history: roll back to an earlier upload
+  if (st.history.length) {
+    const sel = h('select', { id: 'hist-sel', 'aria-label': 'Earlier uploads' },
+      st.history.map((e, i) => h('option', { value: i }, whenOf(e.time) + (i === 0 ? ' · on the Pi now' : '') + ' · ' + Object.keys(e.vals).length + (Object.keys(e.vals).length === 1 ? ' setting' : ' settings') + ' changed from default')),
+      h('option', { value: 'defaults' }, 'Driver defaults (no changes)'));
+    const box = h('div');
+    const ask = () => {
+      const v = sel.value, entry = v === 'defaults' ? { vals: {} } : st.history[+v];
+      box.replaceChildren(h('div', { class: 'confirm', style: 'margin-top:10px' }, h('span', {}, 'Load ', h('b', {}, v === 'defaults' ? 'the driver defaults' : 'the version from ' + whenOf(entry.time)), '? Your current settings are replaced; upload afterwards to send it to the driver.'),
+        h('button', { type: 'button', class: 'btn primary small', onclick: () => { st.vals = Object.assign({}, entry.vals); st.extra = {}; changed(); render(); toast('Rolled back. Upload to apply it.'); } }, 'Roll back'),
+        h('button', { type: 'button', class: 'btn small', onclick: () => box.replaceChildren() }, 'Cancel')));
+    };
+    main.append(h('h2', {}, 'History'), h('div', { class: 'card' }, h('div', { class: 'row' }, sel, h('button', { type: 'button', class: 'btn', onclick: ask }, 'Roll back to this version')), box));
+  }
+  // the checklist, folded away
+  const ck = (title, text) => h('li', {}, h('b', {}, title), ' ', text);
+  main.append(h('details', { class: 'grp', style: 'margin-top:18px' }, h('summary', {}, 'Venus OS and JK BMS checklist'), h('div', { class: 'body' }, h('div', { class: 'two' },
+    h('div', {}, h('h3', {}, 'Venus OS'), h('ul', { style: 'margin:6px 0 0;padding-left:20px;display:grid;gap:6px' },
+      ck('DVCC on,', 'Controlling BMS and Battery monitor = dbus-serialbattery (Settings → System setup).'),
+      ck('SVS, STS, SCS normally off.', 'The Venus page checks all of these under Battery → Limits & curves.'))),
+    h('div', {}, h('h3', {}, 'JK BMS app'), h('ul', { style: 'margin:6px 0 0;padding-left:20px;display:grid;gap:6px' },
+      ck('Cell OVP 3.65 V or lower, UVP 2.5 V or higher,', 'charge low temperature protection on.'),
+      ck('Over-current protection above', `the driver’s ${num('MAX_BATTERY_CHARGE_CURRENT')} A / ${num('MAX_BATTERY_DISCHARGE_CURRENT')} A.`)))))));
+}
 
-  // export
+function viewFiles(main) {
+  main.append(h('p', { class: 'lead' }, 'Save your settings as a file, or load one.'));
+  // export: changes only (what the driver needs) or the whole file
   const ta = h('textarea', { class: 'preview', id: 'ini-preview', readonly: true, spellcheck: 'false', 'aria-label': 'config.ini preview' });
-  const paintIni = () => { ta.value = iniText(); }; hooks.push(paintIni); paintIni();
-  const saveIni = h('button', { type: 'button', class: 'btn primary', onclick: () => saveFile('dbus-serialbattery-config.ini.txt', iniText()) }, 'Save config.ini backup');
+  let full = false;
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'What to export' });
+  const paintIni = () => {
+    ta.value = iniText(full);
+    seg.replaceChildren(...[[false, 'Your changes'], [true, 'Full file']].map(([v, l]) => h('button', { type: 'button', 'aria-pressed': String(full === v), onclick: () => { full = v; paintIni(); } }, l)));
+  };
+  hooks.push(paintIni); paintIni();
+  const saveIni = h('button', { type: 'button', class: 'btn primary', onclick: () => saveFile(full ? 'dbus-serialbattery-config-full.ini.txt' : 'dbus-serialbattery-config.ini.txt', iniText(full)) }, 'Save config.ini');
   const saveJson = h('button', { type: 'button', class: 'btn', onclick: () => saveFile('jk-bms-settings-' + new Date().toISOString().slice(0, 10) + '.json', jsonText()) }, 'Save as JSON');
   const saveBtns = [saveIni, saveJson];
   saveBtns.forEach(b => { b.hidden = !dl; });
   hooks.push(() => saveBtns.forEach(b => { b.hidden = !dl; }));
-  main.append(h('h2', {}, 'Export'), h('div', { class: 'card stack' },
-    h('div', { class: 'row' }, ...saveBtns, h('button', { type: 'button', class: 'btn', onclick: () => copyText(iniText(), ta) }, 'Copy config.ini')),
-    h('p', { class: 'f-plain' }, 'The file is saved as .ini.txt because the browser frame only allows a few file types; rename it to config.ini if you copy it to the Pi. Your battery numbers from step 2 travel along as a comment line.'),
+  main.append(h('h2', {}, 'Export'), h('div', { class: 'card stack' }, seg,
+    h('p', { class: 'muted', style: 'margin:0' }, 'The driver reads its defaults from config.default.ini, so config.ini only needs your changes. The full file lists every setting too, with the unchanged ones commented out: still safe, and new defaults of a driver update still apply.'),
+    h('div', { class: 'row' }, ...saveBtns, h('button', { type: 'button', class: 'btn', onclick: () => copyText(iniText(full), ta) }, 'Copy')),
     ta));
-
   // import
   const status = h('div', { 'aria-live': 'polite' });
   const fileIn = h('input', { type: 'file', id: 'import-file', accept: '.ini,.txt,.json,text/plain,application/json', hidden: true });
   const paste = h('textarea', { id: 'import-paste', rows: 5, placeholder: 'Or paste the contents of a config.ini here…', spellcheck: 'false', style: 'font-family:var(--mono);font-size:.8rem' });
-  let pending = null;
+  let pendingImport = null;
   const offer = (text, from) => {
     let r;
     try { r = parseAny(text); } catch (e) { status.replaceChildren(h('div', { class: 'w bad' }, h('span', { class: 'tag' }, 'fix'), h('span', {}, from + ': ' + e.message))); return; }
-    pending = r;
+    pendingImport = r;
     const nKnown = Object.keys(r.values).filter(k => DEF[k]).length, nNew = Object.keys(r.values).length - nKnown, nNow = changedKeys().length;
     status.replaceChildren(h('div', { class: 'confirm' }, h('span', {}, `${from}: ${nKnown} settings${nNew ? ', ' + nNew + ' the driver does not know (left out: they would block the battery)' : ''}${Object.keys(r.bat).length ? ', battery numbers' : ''}. `,
       nNow ? h('b', {}, `This replaces your ${nNow} current change${nNow === 1 ? '' : 's'}.`) : ''),
-      h('button', { type: 'button', class: 'btn primary small', onclick: () => { const res = applyImport(pending); pending = null; render(); toast(`Loaded ${res.known} settings${res.unknown ? ', left out ' + res.unknown + ' unknown' : ''}`); } }, 'Load it'),
-      h('button', { type: 'button', class: 'btn small', onclick: () => { pending = null; status.replaceChildren(); } }, 'Cancel')));
+      h('button', { type: 'button', class: 'btn primary small', onclick: () => { const res = applyImport(pendingImport); pendingImport = null; render(); toast(`Loaded ${res.known} settings${res.unknown ? ', left out ' + res.unknown + ' unknown' : ''}`); } }, 'Load it'),
+      h('button', { type: 'button', class: 'btn small', onclick: () => { pendingImport = null; status.replaceChildren(); } }, 'Cancel')));
   };
   const readFile = f => { if (!f) return; const rd = new FileReader(); rd.onload = () => offer(String(rd.result), f.name); rd.onerror = () => toast('Could not read ' + f.name); rd.readAsText(f); };
   fileIn.addEventListener('change', () => { readFile(fileIn.files[0]); fileIn.value = ''; });
@@ -1498,17 +1553,11 @@ function stepBackup(main) {
   drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); readFile(e.dataTransfer.files[0]); });
   main.append(h('h2', {}, 'Import'), h('div', { class: 'card stack' }, drop, paste,
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: () => paste.value.trim() ? offer(paste.value, 'Pasted text') : toast('Paste a config.ini first') }, 'Load pasted text')), status));
-
   // reset all
   const resetBox = h('div');
-  const askReset = () => resetBox.replaceChildren(h('div', { class: 'confirm' }, h('span', {}, 'Set every setting back to the dbus-serialbattery default?'),
+  main.append(h('div', { class: 'row', style: 'margin-top:16px' }, h('button', { type: 'button', class: 'btn danger', onclick: () => resetBox.replaceChildren(h('div', { class: 'confirm' }, h('span', {}, 'Set every setting back to the dbus-serialbattery default?'),
     h('button', { type: 'button', class: 'btn danger small', onclick: () => { st.vals = {}; st.extra = {}; changed(); render(); toast('All settings are back to default'); } }, 'Yes, reset all'),
-    h('button', { type: 'button', class: 'btn small', onclick: () => resetBox.replaceChildren() }, 'Cancel')));
-  main.append(h('h2', {}, 'On the Pi'), h('div', { class: 'card' }, h('ol', { style: 'margin:0;padding-left:20px;display:grid;gap:6px' },
-    h('li', {}, 'Venus web page → ', h('b', {}, 'Files & logs'), ' → dbus-serialbattery: config.ini. Paste the text and save. (Or copy the file to ', h('code', {}, '/data/apps/dbus-serialbattery/config.ini'), '.)'),
-    h('li', {}, 'Restart dbus-serialbattery from the Overview tab. Changed Bluetooth settings need a reboot of the Pi.'),
-    h('li', {}, 'To back up from the Pi: open the same config.ini, copy everything, and load it here with ', h('b', {}, 'Import'), '. config.ini survives driver updates; keep a copy anyway before you reinstall Venus OS.'))),
-  h('div', { class: 'row', style: 'margin-top:12px' }, h('button', { type: 'button', class: 'btn danger', onclick: askReset }, 'Reset all to default')), resetBox);
+    h('button', { type: 'button', class: 'btn small', onclick: () => resetBox.replaceChildren() }, 'Cancel'))) }, 'Reset all to default')), resetBox);
 }
 
 // ------------------------------------------------------------- all settings
