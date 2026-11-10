@@ -110,6 +110,9 @@ p { max-width:68ch; }
 .viz .cell { fill:var(--surface-2); stroke:var(--faint); stroke-width:1.2; }
 .viz .cell-fill { fill:var(--ok); opacity:.75; }
 .viz .wire { stroke:var(--faint); stroke-width:1.2; fill:none; } .viz .ico { stroke:var(--faint); stroke-width:1.8; fill:none; } .viz .ico.on-c { stroke:var(--charge); } .viz .ico.on-d { stroke:var(--dis); } .viz .led { fill:var(--ok); }
+.viz .grip { fill:var(--surface); stroke:var(--ink); stroke-width:2; } .viz .grip.on { fill:var(--ink); }
+.viz .grip-line { stroke:var(--ink); stroke-width:1.2; stroke-dasharray:5 4; fill:none; opacity:.75; }
+.drag-hint { font-size:.8rem; color:var(--faint); margin:4px 2px 0; }
 .viz .flow-c { stroke:var(--charge); fill:none; stroke-linecap:round; } .viz .flow-d { stroke:var(--dis); fill:none; stroke-linecap:round; }
 
 /* fields */
@@ -616,7 +619,7 @@ const STEPS = [
     keys: ['CVCM_ENABLE', 'SWITCH_TO_FLOAT_WAIT_FOR_SEC', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 'SOC_RESET_CELL_VOLTAGE', 'SOC_RESET_AFTER_DAYS', 'AUTO_RESET_SOC'] },
   { id: 'cells', title: 'Protect every cell', short: 'Cell curves', render: stepCells,
     keys: ['CCCM_CV_ENABLE', 'DCCM_CV_ENABLE', 'CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION', 'CELL_VOLTAGES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_CV_FRACTION', 'CHARGE_MODE', 'CVL_CONTROLLER_MODE', 'CVL_ICONTROLLER_FACTOR'] },
-  { id: 'temperature', title: 'Heat and cold', short: 'Temperature', render: stepTemperature,
+  { id: 'temperature', title: 'Temperature limits', short: 'Temperature', render: stepTemperature,
     keys: ['CCCM_T_ENABLE', 'DCCM_T_ENABLE', 'TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_FRACTION', 'TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_FRACTION',
       'CCCM_T_MOSFET_ENABLE', 'DCCM_T_MOSFET_ENABLE', 'MOSFET_TEMPERATURES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_T_MOSFET_FRACTION', 'MOSFET_TEMPERATURES_WHILE_DISCHARGING', 'MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION'] },
   { id: 'soc', title: 'State of charge', short: 'SoC', render: stepSoc,
@@ -641,6 +644,37 @@ function viz(viewBox, draw, label) {
   anims.push(t => { node.innerHTML = draw(t); });
   return node;
 }
+// Settings you drag in a graph: draw() fills node._handles every frame ({id, x, y, axis 'xy' | 'y', x0, x1, drag(qx, qy)}),
+// the pointer moves the one it grabbed. Values go through setLive(), so fields, checks and warnings follow.
+function draggable(node) {
+  node._handles = []; node.style.touchAction = 'none';
+  let act = null;
+  const at = e => { const p = node.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(node.getScreenCTM().inverse()); };
+  const hit = q => {
+    let best = null, bd = Infinity;
+    for (const hd of node._handles) {
+      const d = hd.axis === 'y' ? (q.x >= hd.x0 && q.x <= hd.x1 ? Math.abs(q.y - hd.y) : Infinity) : Math.hypot(q.x - hd.x, q.y - hd.y);
+      if (d < (hd.axis === 'y' ? 8 : 16) && d < bd) { bd = d; best = hd; }
+    }
+    return best;
+  };
+  node.addEventListener('pointerdown', e => {
+    const hd = hit(at(e)); if (!hd) return;
+    act = hd; node._dragging = hd.id; node.setPointerCapture(e.pointerId); node.style.cursor = 'grabbing'; e.preventDefault(); dirty = true;
+  });
+  node.addEventListener('pointermove', e => {
+    const q = at(e);
+    if (act) { act.drag(q.x, q.y); dirty = true; return; }
+    const hd = hit(q); node.style.cursor = hd ? (hd.axis === 'y' ? 'ns-resize' : 'grab') : '';
+  });
+  const stop = () => { act = null; node._dragging = null; node._frozen = null; node.style.cursor = ''; dirty = true; };
+  node.addEventListener('pointerup', stop); node.addEventListener('pointercancel', stop);
+  return node;
+}
+function setLive(k, v) { st.vals[k] = String(v); (ctls[k] || []).forEach(c => c.set(String(v))); changed(); }
+const snap = (v, step) => Math.round(v / step) * step;
+const decOf = step => (String(step).split('.')[1] || '').length;
+
 let clock = 0, lastTs = null, lastDraw = 0;
 function frame(ts) {
   if (lastTs !== null && st.motion) clock += Math.min(0.1, (ts - lastTs) / 1000);
@@ -990,44 +1024,60 @@ function voltPhases() {
 }
 function stepVoltages(main) {
   const cap = h('p', { class: 'viz-cap' }), vStep = h('span', { class: 'muted' });
-  main.append(h('div', { class: 'card viz-card' }, viz('0 0 640 245', t => {
+  const g = draggable(viz('0 0 640 300', t => {
     const B = st.bat, N = cells(), mn = num('MIN_CELL_VOLTAGE'), mx = num('MAX_CELL_VOLTAGE'), fl = num('FLOAT_CELL_VOLTAGE'), rs = num('SOC_RESET_CELL_VOLTAGE');
-    const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '', dy = 52;
-    const lo = Math.min(B.uvp, mn) - 0.12, hi = Math.max(B.ovp, resetOn ? rs : mx) + 0.08, X = v => 20 + (v - lo) / (hi - lo) * 600;
+    const resetOn = String(get('SOC_RESET_AFTER_DAYS')).trim() !== '';
     const P = voltPhases(), ph = P[st.vSeg % P.length], u = 0.05 + 0.9 * ((t % 6) / 6);
     const cv = ph.from + (ph.to - ph.from) * u, rising = ph.dir === 'c', resting = ph.dir === 'r', p = clamp((cv - mn) / Math.max(0.01, mx - mn), 0, 1);
     let o = '';
-    // load ← battery ← charger
+    // charger → battery → load
     const ld = rising || resting ? 'ico' : 'ico on-d', cg = rising ? 'ico on-c' : 'ico';
     o += `<circle cx="60" cy="22" r="9" class="${ld}"/><path d="M55,31 L55,37 L65,37 L65,31" class="${ld}"/>` + T(60, 50, 'Load', rising || resting ? 't-small' : 't-dis', 'middle');
     o += `<circle cx="580" cy="22" r="7" class="${cg}"/>` + [0, 45, 90, 135, 180, 225, 270, 315].map(a => { const r = a * Math.PI / 180; return `<line x1="${580 + Math.cos(r) * 10}" y1="${22 + Math.sin(r) * 10}" x2="${580 + Math.cos(r) * 14}" y2="${22 + Math.sin(r) * 14}" class="${cg}"/>`; }).join('') + T(580, 50, 'Charging', rising ? 't-charge' : 't-small', 'middle');
     o += `<rect x="285" y="8" width="70" height="28" rx="4" class="cell"/><rect x="355" y="16" width="5" height="12" rx="1" class="cell"/><rect x="288" y="11" width="${64 * p}" height="22" rx="2" class="cell-fill"/>` + T(320, 50, fx(cv * N, 2) + ' V', 't-strong', 'middle');
-    const off = -(t * 16) % 20;
-    if (!resting) o += `<line x1="${rising ? 555 : 280}" y1="22" x2="${rising ? 365 : 85}" y2="22" class="${rising ? 'flow-c' : 'flow-d'}" stroke-width="3" stroke-dasharray="8 12" stroke-dashoffset="${off}"/>`;
-    // the scale
-    const zones = [[lo, B.uvp, 'z-bad'], [B.uvp, mn, 'z-warn'], [mn, fl, 'z-ok'], [fl, mx, 'z-charge']];
-    if (resetOn && rs > mx) zones.push([mx, rs, 'z-top']);
-    zones.push([resetOn ? Math.max(mx, rs) : mx, B.ovp, 'z-none'], [B.ovp, hi, 'z-bad']);
-    zones.forEach(([a, b, c]) => { if (b > a) o += `<rect x="${X(a)}" y="${78 + dy}" width="${X(b) - X(a)}" height="28" class="${c}"/>`; });
-    o += `<rect x="20" y="${78 + dy}" width="600" height="28" class="grid"/>`;
-    const marks = [[B.uvp, 'BMS UVP', 't-bad'], [mn, '0 % SoC', 't-warn'], [fl, 'Float', 't-ok'], [mx, '100 % SoC', 't-charge']];
-    if (resetOn) marks.push([rs, 'Top balance', 't-top']);
-    marks.push([B.ovp, 'BMS OVP', 't-bad']);
-    marks.sort((a, b) => a[0] - b[0]).forEach(([v, l, c], i) => {
-      const row = i % 4, up = row % 2 === 0, y = (up ? (row === 0 ? 66 : 40) : (row === 1 ? 126 : 152)) + dy, x = X(v);
-      o += `<line x1="${x}" y1="${up ? y + 4 : 106 + dy}" x2="${x}" y2="${up ? 78 + dy : y - 12}" class="axis"/>`;
-      o += T(x, y - (up ? 12 : 0), l, c, 'middle') + T(x, y + (up ? 2 : 13), fx(v, 3) + ' V', 't-small', 'middle');
+    if (!resting) o += `<line x1="${rising ? 555 : 280}" y1="22" x2="${rising ? 365 : 85}" y2="22" class="${rising ? 'flow-c' : 'flow-d'}" stroke-width="3" stroke-dasharray="8 12" stroke-dashoffset="${-(t * 16) % 20}"/>`;
+    // the graph: cell voltage against state of charge; the scale stays put while a line is dragged
+    if (!g._frozen) { const lo = Math.min(B.uvp, mn) - 0.1, hi = Math.max(B.ovp, resetOn ? rs : mx) + 0.08; g._frozen = g._dragging ? { lo, hi } : null; g._dom = { lo, hi }; }
+    const { lo, hi } = g._frozen || g._dom;
+    const gx0 = 64, gx1 = 500, gy0 = 70, gy1 = 270, X = soc => gx0 + soc / 100 * (gx1 - gx0), Y = v => gy1 - (v - lo) / (hi - lo) * (gy1 - gy0), invY = q => lo + (gy1 - q) / (gy1 - gy0) * (hi - lo);
+    o += `<rect x="${gx0}" y="${gy0}" width="${gx1 - gx0}" height="${Math.max(0, Y(B.ovp) - gy0)}" class="z-bad"/><rect x="${gx0}" y="${Y(B.uvp)}" width="${gx1 - gx0}" height="${Math.max(0, gy1 - Y(B.uvp))}" class="z-bad"/>`;
+    for (let v = Math.ceil(lo * 10) / 10; v <= hi; v += 0.1) o += `<line x1="${gx0}" x2="${gx1}" y1="${Y(v)}" y2="${Y(v)}" class="grid"/>` + T(gx0 - 6, Y(v) + 4, fx(v, 1), 't-small', 'end');
+    [0, 25, 50, 75, 100].forEach(sv => { o += T(X(sv), gy1 + 16, sv + ' %', 't-small', 'middle'); });
+    o += T(gx0, gy0 - 8, 'cell voltage (V)', 't-small') + T(gx1, gy1 + 30, 'state of charge', 't-small', 'end');
+    // LiFePO4 curve between 0 % and 100 % SoC
+    let d = ''; for (let i = 0; i <= 100; i++) d += (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(mn + (mx - mn) * lfp(i / 100)).toFixed(1);
+    o += `<path d="${d}" class="l-ok" stroke-width="2.2"/>`;
+    // the lines you can drag
+    const lines = [
+      { id: 'ovp', name: 'BMS OVP', v: B.ovp, cls: 't-bad', set: v => { st.bat.ovp = clamp(snap(v, 0.005), 3.5, 3.8); changed(); } },
+      resetOn ? { id: 'rs', name: 'Top balance', v: rs, cls: 't-top', set: v => setLive('SOC_RESET_CELL_VOLTAGE', fx(clamp(snap(v, 0.005), 3.4, 3.7), 3)) } : null,
+      { id: 'mx', name: '100 % SoC', v: mx, cls: 't-charge', set: v => setLive('MAX_CELL_VOLTAGE', fx(clamp(snap(v, 0.005), 3.3, 3.65), 3)) },
+      { id: 'fl', name: 'Float', v: fl, cls: 't-ok', set: v => setLive('FLOAT_CELL_VOLTAGE', fx(clamp(snap(v, 0.005), 3.3, 3.5), 3)) },
+      { id: 'mn', name: '0 % SoC', v: mn, cls: 't-warn', set: v => setLive('MIN_CELL_VOLTAGE', fx(clamp(snap(v, 0.005), 2.5, 3.2), 3)) },
+      { id: 'uvp', name: 'BMS UVP', v: B.uvp, cls: 't-bad', set: v => { st.bat.uvp = clamp(snap(v, 0.005), 2.5, 3.1); changed(); } }].filter(Boolean);
+    // labels on the right, pushed apart so they never overlap
+    const lab = {};
+    let last = -Infinity; lines.slice().sort((a, b) => Y(a.v) - Y(b.v)).forEach(l => { const y = Math.max(Y(l.v), last + 13); lab[l.id] = y; last = y; });
+    g._handles = lines.map(l => ({ id: l.id, x: gx1, y: Y(l.v), axis: 'y', x0: gx0, x1: 640, drag: (qx, qy) => l.set(invY(qy)) }));
+    lines.forEach(l => {
+      const y = Y(l.v), on = g._dragging === l.id;
+      o += `<line x1="${gx0}" x2="${gx1}" y1="${y}" y2="${y}" class="grip-line" stroke-width="${on ? 2.2 : 1.2}"/><circle cx="${gx1}" cy="${y}" r="${on ? 6.5 : 5}" class="grip${on ? ' on' : ''}"/>`;
+      o += `<line x1="${gx1 + 6}" y1="${y}" x2="${gx1 + 14}" y2="${lab[l.id] - 4}" class="axis"/>` + T(gx1 + 16, lab[l.id], l.name + ' ' + fx(l.v, 3), l.cls);
     });
-    o += `<line x1="${X(cv)}" y1="${72 + dy}" x2="${X(cv)}" y2="${112 + dy}" stroke-width="3" class="l-ink"/><circle cx="${X(cv)}" cy="${72 + dy}" r="4" class="f-ink"/>`;
+    // the cell, where it is now
+    let soc = 100;
+    if (ph.dir !== 'r' && ph.name !== 'Top balance') { let a = 0, b = 100; for (let i = 0; i < 30; i++) { const m = (a + b) / 2; if (mn + (mx - mn) * lfp(m / 100) < cv) a = m; else b = m; } soc = (a + b) / 2; }
+    o += `<line x1="${X(soc)}" x2="${X(soc)}" y1="${Y(cv)}" y2="${gy1}" class="playhead"/><circle cx="${X(soc)}" cy="${Y(cv)}" r="6" class="${rising ? 'f-charge' : resting ? 'f-ink' : 'f-dis'}"/>`;
     cap.replaceChildren(h('b', {}, ph.name), ' · ', h('b', {}, fx(cv, 3) + ' V'), ' per cell = ', h('b', {}, fx(cv * N, 2) + ' V'), ' battery. ' + ph.why);
     vStep.textContent = 'Phase ' + (st.vSeg % P.length + 1) + ' of ' + P.length;
     return o;
-  }, 'Charger, battery and load above the cell voltage scale with the BMS limits and your settings'), cap,
+  }, 'Cell voltage against state of charge with the lines you can drag: BMS limits, 100 % and 0 % SoC, float and top balance'));
+  main.append(h('div', { class: 'card viz-card' }, g, h('p', { class: 'drag-hint' }, 'Drag a line up or down to change it.'), cap,
     h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { type: 'button', class: 'btn', onclick: () => { const n = voltPhases().length; st.vSeg = (st.vSeg % n + n - 1) % n; dirty = true; } }, '◀ Previous'), vStep,
       h('span', { style: 'flex:1' }), h('button', { type: 'button', class: 'btn primary', onclick: () => { st.vSeg = (st.vSeg + 1) % voltPhases().length; dirty = true; } }, 'Next ▶'))));
   main.append(warnBox('voltages'));
-  main.append(h('h2', {}, 'Your voltages'), fields(['MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'MIN_CELL_VOLTAGE']));
-  main.append(h('h2', {}, 'Long or thin cables'), fields(['VOLTAGE_DROP']));
+  main.append(h('details', { class: 'grp', style: 'margin-top:12px' }, h('summary', {}, 'Settings as numbers'), h('div', { class: 'body' },
+    ...['MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'MIN_CELL_VOLTAGE', 'VOLTAGE_DROP'].map(k => field(k)))));
 }
 
 // ------------------------------------------------------- step 5 charge cycle
@@ -1082,10 +1132,12 @@ function stepCharging(main) {
     if (!resetOn() && st.dayTop) { st.dayTop = false; paintSeg(); }
   };
   paintSeg(); hooks.push(paintSeg);
+  let dayG = null;
   main.append(h('div', { class: 'card viz-card' }, h('div', { class: 'row', style: 'justify-content:space-between' }, pills, seg),
-    viz('0 0 640 335', t => {
+    dayG = draggable(viz('0 0 640 335', t => {
       const M = dayModel(), X = h_ => 52 + h_ / 24 * 568;
-      const vLo = 3.18, vHi = Math.max(M.target, M.mx) + 0.04, Y = v => 170 - (v - vLo) / (vHi - vLo) * 150, YS = s => 305 - s / 100 * 70;
+      if (!dayG._frozen) { const hi = Math.max(M.target, M.mx, num('SOC_RESET_CELL_VOLTAGE')) + 0.04; dayG._frozen = dayG._dragging ? { hi } : null; dayG._dom = { hi }; }
+      const vLo = 3.18, vHi = (dayG._frozen || dayG._dom).hi, Y = v => 170 - (v - vLo) / (vHi - vLo) * 150, YS = s => 305 - s / 100 * 70;
       let o = '';
       // phase bands
       const band = (a, b, c) => { if (b > a) o += `<rect x="${X(a)}" y="20" width="${X(b) - X(a)}" height="150" class="${c}"/>`; };
@@ -1101,7 +1153,18 @@ function stepCharging(main) {
       for (let i = 0; i <= 240; i++) { const hh = i / 10; cv += (i ? 'L' : 'M') + X(hh).toFixed(1) + ',' + Y(M.cvl(hh)).toFixed(1); pv += (i ? 'L' : 'M') + X(hh).toFixed(1) + ',' + Y(M.cellV(hh)).toFixed(1); sp += 'L' + X(hh).toFixed(1) + ',' + YS(M.soc(hh)).toFixed(1); }
       o += `<path d="M52,305${sp}L620,305Z" class="a-charge"/><path d="${'M' + sp.slice(1)}" class="l-charge" stroke-width="1.5"/>`;
       o += `<path d="${pv}" class="l-ink"/><path d="${cv}" class="l-charge"/>`;
-      if (M.cvcm && M.bulkSoc > 0 && M.bulkSoc < 100) o += `<line x1="52" x2="620" y1="${YS(M.bulkSoc)}" y2="${YS(M.bulkSoc)}" class="l-warn"/>` + T(616, YS(M.bulkSoc) - 4, 'full charge again below ' + M.bulkSoc + ' %', 't-warn', 'end');
+      // the lines you can drag: full, float, top balance (on a top balance day) and "full charge again below"
+      const vLines = [{ id: 'mx', name: '100 % SoC', v: M.mx, cls: 't-charge', set: v => setLive('MAX_CELL_VOLTAGE', fx(clamp(snap(v, 0.005), 3.3, 3.65), 3)) }];
+      if (M.cvcm) vLines.push({ id: 'fl', name: 'Float', v: M.fl, cls: 't-ok', set: v => setLive('FLOAT_CELL_VOLTAGE', fx(clamp(snap(v, 0.005), 3.3, 3.5), 3)) });
+      if (M.top) vLines.push({ id: 'rs', name: 'Top balance', v: num('SOC_RESET_CELL_VOLTAGE'), cls: 't-top', set: v => setLive('SOC_RESET_CELL_VOLTAGE', fx(clamp(snap(v, 0.005), 3.4, 3.7), 3)) });
+      const handles = vLines.map(l => ({ id: l.id, x: 600, y: Y(l.v), axis: 'y', x0: 52, x1: 620, drag: (qx, qy) => l.set(vLo + (170 - qy) / 150 * (vHi - vLo)) }));
+      vLines.forEach(l => { const on = dayG._dragging === l.id, y = Y(l.v); o += `<line x1="52" x2="620" y1="${y}" y2="${y}" class="grip-line" stroke-width="${on ? 2 : 1}"/><circle cx="600" cy="${y}" r="${on ? 6.5 : 5}" class="grip${on ? ' on' : ''}"/>` + T(590, y - 6, l.name + ' ' + fx(l.v * M.N, 2) + ' V', l.cls, 'end'); });
+      if (M.cvcm) {
+        const b = M.bulkSoc > 0 ? M.bulkSoc : 0, y = YS(b), on = dayG._dragging === 'soc';
+        handles.push({ id: 'soc', x: 600, y, axis: 'y', x0: 52, x1: 620, drag: (qx, qy) => setLive('SWITCH_TO_BULK_SOC_THRESHOLD', String(clamp(Math.round((305 - qy) / 70 * 100), 0, 99))) });
+        o += `<line x1="52" x2="620" y1="${y}" y2="${y}" class="l-warn" stroke-width="${on ? 2.2 : 1.5}"/><circle cx="600" cy="${y}" r="${on ? 6.5 : 5}" class="grip${on ? ' on' : ''}"/>` + T(590, y - 6, b > 0 ? 'full charge again below ' + b + ' %' : 'full charge again by SoC: off', 't-warn', 'end');
+      }
+      dayG._handles = handles;
       o += T(52, 224, 'State of charge', 't-strong') + T(52, 13, 'Voltage', 't-strong');
       o += `<line x1="430" x2="450" y1="12" y2="12" class="l-charge"/>` + T(454, 16, 'charge voltage (CVL)', 't-small') + `<line x1="560" x2="580" y1="12" y2="12" class="l-ink"/>` + T(584, 16, 'battery', 't-small');
       // playhead
@@ -1133,12 +1196,13 @@ function stepCharging(main) {
         stat('SoC', fx(soc, 0) + ' %'), stat('Cells apart', fx(d * 1000, 0) + ' mV'), stat('Chargers aim for', fx(M.cvl(hh) * M.N, 2) + ' V'),
         h('div', { class: 'why' }, why, prog !== null ? h('div', { class: 'bar' }, h('i', { style: 'width:' + (prog * 100).toFixed(1) + '%' })) : null));
       return o;
-    }, 'A simulated day: charge voltage, battery voltage and state of charge'), cap, stepper));
+    }, 'A simulated day: charge voltage, battery voltage and state of charge')), h('p', { class: 'drag-hint' }, 'Drag the lines to change full, float, top balance and when it charges fully again.'), cap, stepper));
   main.append(warnBox('charging'));
-  main.append(h('h2', {}, 'Float'), fields(['CVCM_ENABLE', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 'SWITCH_TO_FLOAT_WAIT_FOR_SEC', 'SWITCH_TO_BULK_SOC_THRESHOLD', 'SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 'AUTO_RESET_SOC']));
-  main.append(h('h2', {}, 'Top balance and SoC reset'), fields(['SOC_RESET_AFTER_DAYS', 'SOC_RESET_CELL_VOLTAGE'], { tips: {
-    SOC_RESET_CELL_VOLTAGE: ['Start at ', h('b', {}, fx(st.bat.ovp - 0.03, 3) + ' V'), ' (your OVP − 0.030). Raise by 0.005 V if the battery never switches to float; lower it if the BMS trips on OVP.'] } }));
-  main.append(h('details', { class: 'grp', style: 'margin-top:12px' }, h('summary', {}, 'Fine tuning'), h('div', { class: 'body' }, field('SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION'))));
+  // the rest of this step's settings, folded away: the graph above covers the voltages and the SoC line
+  main.append(h('details', { class: 'grp', style: 'margin-top:12px' }, h('summary', {}, 'More settings for this step'), h('div', { class: 'body' },
+    ...['CVCM_ENABLE', 'SOC_RESET_AFTER_DAYS', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DIFF', 'SWITCH_TO_FLOAT_WAIT_FOR_SEC', 'SWITCH_TO_BULK_CELL_VOLTAGE_DIFF', 'AUTO_RESET_SOC', 'SWITCH_TO_FLOAT_CELL_VOLTAGE_DEVIATION'].map(k => field(k)),
+    field('SWITCH_TO_BULK_SOC_THRESHOLD'), field('MAX_CELL_VOLTAGE'), field('FLOAT_CELL_VOLTAGE'),
+    field('SOC_RESET_CELL_VOLTAGE', { tip: ['Start at ', h('b', {}, fx(st.bat.ovp - 0.03, 3) + ' V'), ' (your OVP − 0.030). Raise by 0.005 V if the battery never switches to float; lower it if the BMS trips on OVP.'] }))));
 }
 
 // ------------------------------------------------------- curve editor (shared)
@@ -1148,11 +1212,14 @@ function curveEditor(o) {
   const en = o.enKey ? control(o.enKey) : null;
   if (en) (ctls[o.enKey] = ctls[o.enKey] || []).push(en);
   const head = h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', {}, o.title), en ? en.node : null);
-  const svgNode = viz('0 0 520 230', t => {
+  const det = h('details', {});
+  const svgNode = draggable(viz('0 0 520 230', t => {
     const p = pairs(o.xKey, o.yKey), max = numOr(o.maxKey, 0), on = o.enKey ? bool(o.enKey) : true, isC = o.dir === 'c';
-    if (!p) { cap.textContent = 'The two lists need the same number of points.'; return T(260, 115, 'Lists do not match', 't-bad', 'middle'); }
-    const xs = p.map(q => q[0]).concat(o.sweep), lo = Math.min(...xs), hi = Math.max(...xs), pad = (hi - lo) * 0.06 || 1;
-    const X = v => 50 + (v - (lo - pad)) / ((hi + pad) - (lo - pad)) * 455, Y = f => 190 - f * 165;
+    if (!p) { cap.textContent = 'The two lists need the same number of points.'; svgNode._handles = []; return T(260, 115, 'Lists do not match', 't-bad', 'middle'); }
+    // the scale stays put while a point is dragged
+    if (!svgNode._frozen) { const xs = p.map(q => q[0]).concat(o.sweep), lo = Math.min(...xs), hi = Math.max(...xs); svgNode._frozen = svgNode._dragging ? { lo, hi, pad: (hi - lo) * 0.06 || 1 } : null; o._dom = { lo, hi, pad: (hi - lo) * 0.06 || 1 }; }
+    const { lo, hi, pad } = svgNode._frozen || o._dom;
+    const X = v => 50 + (v - (lo - pad)) / ((hi + pad) - (lo - pad)) * 455, Y = f => 190 - f * 165, invX = q => (lo - pad) + (q - 50) / 455 * ((hi + pad) - (lo - pad));
     let s = '';
     [0, 0.25, 0.5, 0.75, 1].forEach(f => { s += `<line x1="50" x2="505" y1="${Y(f)}" y2="${Y(f)}" class="grid"/>` + T(44, Y(f) + 4, fx(f * max, 0) + ' A', 't-small', 'end'); });
     const ticks = 6; for (let i = 0; i <= ticks; i++) { const v = lo + (hi - lo) * i / ticks; s += T(X(v), 210, fx(v, o.dec), 't-small', 'middle'); }
@@ -1162,13 +1229,19 @@ function curveEditor(o) {
     for (let i = 0; i <= steps; i++) { const v = x0 + (x1 - x0) * i / steps, f = curveAt(p, v, o.side); d += (i ? 'L' : 'M') + X(v).toFixed(1) + ',' + Y(f).toFixed(1); }
     a = d + `L${X(x1)},${Y(0)}L${X(x0)},${Y(0)}Z`;
     s += `<path d="${a}" class="${on ? (isC ? 'a-charge' : 'a-dis') : 'z-none'}"/><path d="${d}" class="${on ? (isC ? 'l-charge' : 'l-dis') : 'l-muted'}"/>`;
-    p.forEach(([x, f]) => { s += `<circle cx="${X(x)}" cy="${Y(f)}" r="4" class="f-surface"/>`; });
+    const xsR = nums(get(o.xKey)), ysR = nums(get(o.yKey)), stepX = o.unit === 'V' ? 0.005 : 1;
+    svgNode._handles = xsR.map((x0, oi) => ({ id: o.xKey + ':' + oi, x: X(x0), y: Y(ysR[oi]), axis: 'xy', drag: (qx, qy) => {
+      const xs2 = nums(get(o.xKey)), ys2 = nums(get(o.yKey)), ord = xs2.map((_, i) => i).sort((a, b) => xs2[a] - xs2[b]), k = ord.indexOf(oi);
+      const lo2 = k > 0 ? xs2[ord[k - 1]] + stepX : -Infinity, hi2 = k < ord.length - 1 ? xs2[ord[k + 1]] - stepX : Infinity;
+      xs2[oi] = clamp(snap(invX(qx), stepX), lo2, hi2); ys2[oi] = clamp(snap((190 - qy) / 165, 0.005), 0, 1);
+      st.vals[o.xKey] = fmtList(xs2, o.dec); st.vals[o.yKey] = fmtList(ys2, 3); changed(); fill(); det.open = true; } }));
+    svgNode._handles.forEach(hd => { s += `<circle cx="${hd.x}" cy="${hd.y}" r="${svgNode._dragging === hd.id ? 7 : 5.5}" class="grip${svgNode._dragging === hd.id ? ' on' : ''}"/>`; });
     const ph = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI / (o.period || 10)), v = o.sweep[0] + (o.sweep[1] - o.sweep[0]) * ph, f = on ? curveAt(p, v, o.side) : 1;
     s += `<line x1="${X(v)}" x2="${X(v)}" y1="25" y2="190" class="playhead"/><circle cx="${X(v)}" cy="${Y(f)}" r="5.5" class="${isC ? 'f-charge' : 'f-dis'}"/>`;
     s += `<rect x="512" y="${Y(f)}" width="8" height="${Y(0) - Y(f)}" class="${isC ? 'f-charge' : 'f-dis'}"/>`;
     cap.replaceChildren(o.what + ' ', h('b', {}, fx(v, o.dec) + ' ' + o.unit), ' → ', h('b', {}, fx(f * max, 1) + ' A'), ` allowed (${fx(f * 100, 0)} % of ${fx(max, 0)} A)` + (on ? '' : '. This limit is off.'));
     return s;
-  }, o.title);
+  }, o.title));
   const fill = () => {
     const xs = nums(get(o.xKey)), ys = nums(get(o.yKey)), n = Math.max(xs.length, ys.length);
     tbody.replaceChildren();
@@ -1193,15 +1266,16 @@ function curveEditor(o) {
     const p = pairs(o.xKey, o.yKey) || []; const last = p.length ? p[p.length - 1] : [o.sweep[1], 1];
     st.vals[o.xKey] = fmtList(nums(get(o.xKey)).concat([last[0] + (o.unit === 'V' ? 0.025 : 5)]), o.dec); st.vals[o.yKey] = fmtList(nums(get(o.yKey)).concat([last[1]]), 3); changed(); fill();
   } }, '+ Add point');
-  return h('div', { class: 'card viz-card', 'data-key': o.xKey }, head, o.note ? h('p', { class: 'f-plain' }, o.note) : null, svgNode, cap,
-    h('details', {}, h('summary', { style: 'cursor:pointer;color:var(--charge);font-size:.88rem;margin-top:6px' }, 'Edit the points'),
+  det.append(h('summary', { style: 'cursor:pointer;color:var(--charge);font-size:.88rem;margin-top:6px' }, 'The points as numbers'),
       h('div', { class: 'tbl' }, h('table', { class: 'pts' }, h('thead', {}, h('tr', {}, h('th', {}, o.unit === 'V' ? 'Cell voltage' : o.unit === '°C' ? 'Temperature' : 'SoC'), h('th', {}, 'Current allowed'), h('th'))), tbody)),
-      h('div', { class: 'row', style: 'margin-top:8px' }, addBtn, resetBtn, h('code', { class: 'muted' }, o.xKey + ' / ' + o.yKey)), err));
+      h('div', { class: 'row', style: 'margin-top:8px' }, addBtn, resetBtn, h('code', { class: 'muted' }, o.xKey + ' / ' + o.yKey)), err);
+  return h('div', { class: 'card viz-card', 'data-key': o.xKey }, head, o.note ? h('p', { class: 'f-plain' }, o.note) : null, svgNode,
+    h('p', { class: 'drag-hint' }, 'Drag the dots to change the curve.'), cap, det);
 }
 const fmtList = (arr, dec) => arr.map(v => Number(v).toFixed(dec)).join(', ');
 
 // ------------------------------------------------------------ step 6 cells
-function modeViz() {
+function modeViz(extra) {
   const cap = h('p', { class: 'viz-cap' });
   const node = viz('0 0 520 215', t => {
     const p = pairs('CELL_VOLTAGES_WHILE_CHARGING', 'MAX_CHARGE_CURRENT_CV_FRACTION'), max = numOr('MAX_BATTERY_CHARGE_CURRENT', 0);
@@ -1223,9 +1297,9 @@ function modeViz() {
     cap.replaceChildren('At ', h('b', {}, fx(v, 3) + ' V'), ': linear allows ', h('b', {}, fx(a * max, 1) + ' A'), ', step allows ', h('b', {}, fx(b * max, 1) + ' A'), '.');
     return o;
   }, 'Linear and step following of the charge curve');
-  return h('div', { class: 'card viz-card', style: 'margin-top:12px' }, node, cap);
+  return h('div', { class: 'card viz-card', style: 'margin-top:12px' }, node, cap, extra || null);
 }
-function cvlViz() {
+function cvlViz(extra) {
   const cap = h('p', { class: 'viz-cap' });
   const node = viz('0 0 520 235', t => {
     const mode = get('CVL_CONTROLLER_MODE'), mx = num('MAX_CELL_VOLTAGE'), ovp = st.bat.ovp, N = cells(), every = Math.max(5, numOr('CVL_RECALCULATION_EVERY', 60));
@@ -1263,7 +1337,7 @@ function cvlViz() {
     cap.replaceChildren(h('b', {}, 'Illustration. '), words[mode] || '');
     return o;
   }, 'How the selected controller holds the highest cell below the BMS OVP');
-  return h('div', { class: 'card viz-card', style: 'margin-top:12px' }, node, cap);
+  return h('div', { class: 'card viz-card', style: 'margin-top:12px' }, node, cap, extra || null);
 }
 function stepCells(main) {
   main.append(h('p', { class: 'lead' }, 'The current drops as the highest cell nears full or the lowest nears empty.'));
@@ -1274,19 +1348,18 @@ function stepCells(main) {
       sweep: [3.33, Math.max(3.52, rsOn ? num('SOC_RESET_CELL_VOLTAGE') : 0)], period: 11, side: 'lower', what: 'Highest cell at' }),
     curveEditor({ title: 'Discharge current by lowest cell voltage', xKey: 'CELL_VOLTAGES_WHILE_DISCHARGING', yKey: 'MAX_DISCHARGE_CURRENT_CV_FRACTION', enKey: 'DCCM_CV_ENABLE', maxKey: 'MAX_BATTERY_DISCHARGE_CURRENT', dir: 'd', unit: 'V', dec: 3,
       sweep: [Math.min(2.78, B.uvp), 3.26], period: 11, side: 'upper', what: 'Lowest cell at' })));
-  main.append(h('h2', {}, 'Between the points'), fields(['CHARGE_MODE']), modeViz());
-  main.append(h('h2', {}, 'One cell running ahead'), fields(['CVL_CONTROLLER_MODE']), cvlViz(),
+  main.append(h('h2', {}, 'Between the points'), modeViz(field('CHARGE_MODE')));
+  main.append(h('h2', {}, 'One cell running ahead'), cvlViz(field('CVL_CONTROLLER_MODE')),
     h('details', { class: 'grp', style: 'margin-top:12px' }, h('summary', {}, 'Fine tuning'), h('div', { class: 'body' }, field('CVL_ICONTROLLER_FACTOR'))));
 }
 
 // ------------------------------------------------------- step 7 temperature
 function stepTemperature(main) {
-  main.append(h('p', { class: 'lead' }, 'No charging below 0 °C. The driver uses the worst temperature sensor.'));
   main.append(warnBox('temperature'));
   main.append(h('div', { class: 'two' },
     curveEditor({ title: 'Charge current by temperature', xKey: 'TEMPERATURES_WHILE_CHARGING', yKey: 'MAX_CHARGE_CURRENT_T_FRACTION', enKey: 'CCCM_T_ENABLE', maxKey: 'MAX_BATTERY_CHARGE_CURRENT', dir: 'c', unit: '°C', dec: 0, sweep: [-5, 58], period: 13, side: 'lower', what: 'Cells at' }),
     curveEditor({ title: 'Discharge current by temperature', xKey: 'TEMPERATURES_WHILE_DISCHARGING', yKey: 'MAX_DISCHARGE_CURRENT_T_FRACTION', enKey: 'DCCM_T_ENABLE', maxKey: 'MAX_BATTERY_DISCHARGE_CURRENT', dir: 'd', unit: '°C', dec: 0, sweep: [-14, 58], period: 13, side: 'lower', what: 'Cells at' })));
-  main.append(h('h2', {}, 'Hot BMS (MOSFET temperature)'),
+  main.append(h('h2', {}, 'MOSFET temperature'),
     h('div', { class: 'two' },
       curveEditor({ title: 'Charge current by MOSFET temperature', xKey: 'MOSFET_TEMPERATURES_WHILE_CHARGING', yKey: 'MAX_CHARGE_CURRENT_T_MOSFET_FRACTION', enKey: 'CCCM_T_MOSFET_ENABLE', maxKey: 'MAX_BATTERY_CHARGE_CURRENT', dir: 'c', unit: '°C', dec: 0, sweep: [40, 95], period: 12, side: 'lower', what: 'MOSFETs at' }),
       curveEditor({ title: 'Discharge current by MOSFET temperature', xKey: 'MOSFET_TEMPERATURES_WHILE_DISCHARGING', yKey: 'MAX_DISCHARGE_CURRENT_T_MOSFET_FRACTION', enKey: 'DCCM_T_MOSFET_ENABLE', maxKey: 'MAX_BATTERY_DISCHARGE_CURRENT', dir: 'd', unit: '°C', dec: 0, sweep: [40, 95], period: 12, side: 'lower', what: 'MOSFETs at' })));
