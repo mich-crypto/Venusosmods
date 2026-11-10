@@ -79,5 +79,9 @@ them under "Earlier versions of config.ini"; a rollback
 
 When changing these rules, keep `docs/prototypes/jk-bms-setup-guide.html`
 (`checks()`) in step, and back new limits with the cell datasheet or the driver docs.
-- Bluetooth/CAN changes (`BLUETOOTH_BMS`, `BLUETOOTH_USE_USB`, `CAN_PORT`) need a
-  reboot; other changes need a driver restart.
+- Restart vs reboot (from the stable driver's `enable.sh` / `restart.sh`):
+  `BLUETOOTH_BMS` and `CAN_PORT` become services of their own (`dbus-blebattery.N`,
+  `dbus-canbattery.X`) that `enable.sh` builds from config.ini, so a change needs
+  `enable.sh` then `restart.sh` (`run_restart_script(setup=True)`), no reboot.
+  Only `BLUETOOTH_USE_USB` needs a reboot: `enable.sh` edits `/u-boot/config.txt` for it.
+  Every other change needs a driver restart (`restart.sh`).

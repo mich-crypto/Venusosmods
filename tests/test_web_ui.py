@@ -168,6 +168,8 @@ class AppTestCase(unittest.TestCase):
             f.write(SB_DEFAULT)
         with open(os.path.join(self.sb, 'restart.sh'), 'w') as f:
             f.write('echo restarted > %s\n' % os.path.join(t, 'sb_restarted'))
+        with open(os.path.join(self.sb, 'enable.sh'), 'w') as f:
+            f.write('echo enabled > %s\n' % os.path.join(t, 'sb_enabled'))
         self.rc = os.path.join(t, 'rc.local')
         self.app = self.make_app(self.PASSWORD)
 
@@ -843,11 +845,24 @@ class SerialBatteryTests(AppTestCase):
         r = self.post('/api/serialbattery', {'r.LOGGING': '1'})
         self.assertEqual(ct.parse_ini(self.user_text())['DEFAULT'], {'max_battery_charge_current': '40'})
 
-    def test_bluetooth_change_needs_a_reboot_not_a_restart(self):
-        os.remove(os.path.join(self.tmp, 'sb_restarted')) if os.path.exists(os.path.join(self.tmp, 'sb_restarted')) else None
-        r = self.post('/api/serialbattery', {'s.BLUETOOTH_BMS': 'Jkbms_Ble C8:47:8C:ED:1B:FB',
-                                             'restart': '1'})
+    def wait_for(self, name):
+        for _ in range(40):                                        # the scripts run in the background
+            if os.path.exists(os.path.join(self.tmp, name)):
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_new_bluetooth_bms_is_set_up_without_a_reboot(self):
+        r = self.post('/api/serialbattery', {'s.BLUETOOTH_BMS': 'Jkbms_Ble C8:47:8C:ED:1B:FB', 'restart': '1'})
         d = body_of(r)
+        self.assertFalse(d['reboot_needed'])
+        self.assertTrue(d['setup_needed'] and d['restarted'], d)
+        self.assertIn('no reboot', d['message'])
+        self.assertTrue(self.wait_for('sb_enabled'))              # enable.sh rebuilt the services
+        self.assertTrue(self.wait_for('sb_restarted'))            # then restart.sh started them
+
+    def test_usb_bluetooth_stick_needs_a_reboot(self):
+        d = body_of(self.post('/api/serialbattery', {'s.BLUETOOTH_USE_USB': 'True', 'restart': '1'}))
         self.assertTrue(d['reboot_needed'])
         self.assertFalse(d['restarted'])
         self.assertIn('reboot', d['message'].lower())

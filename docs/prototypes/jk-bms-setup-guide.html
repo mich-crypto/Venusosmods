@@ -415,7 +415,8 @@ s('UBMS_CAN_MODULE_SERIES', '4', 'int', 'U-BMS modules in series', '', { jk: fal
 s('UBMS_CAN_MODULE_PARALLEL', '2', 'int', 'U-BMS modules in parallel', '', { jk: false });
 
 const BMS_TYPES = ['Jkbms_Ble', 'Kilovault_Ble', 'LiTime_Ble', 'LltJbd_Ble', 'Xdzn_Ble'];
-const REBOOT_KEYS = ['BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'CAN_PORT'];
+const REBOOT_KEYS = ['BLUETOOTH_USE_USB'];          // changes the Pi's boot configuration
+const SETUP_KEYS = ['BLUETOOTH_BMS', 'CAN_PORT'];    // the driver's enable.sh sets them up again: no reboot
 ['MIN_CELL_VOLTAGE', 'MAX_CELL_VOLTAGE', 'FLOAT_CELL_VOLTAGE', 'SOC_RESET_CELL_VOLTAGE', 'BLOCK_ON_DISCONNECT_VOLTAGE_MIN', 'BLOCK_ON_DISCONNECT_VOLTAGE_MAX'].forEach(k => { DEF[k].cellV = true; });
 const BMS_NAMES = { Jkbms_Ble: 'JK BMS', Kilovault_Ble: 'Kilovault', LiTime_Ble: 'LiTime', LltJbd_Ble: 'JBD', Xdzn_Ble: 'XDZN' };
 // Written from config.default.ini of the stable release of dbus-serialbattery.
@@ -458,6 +459,8 @@ function same(d, a, b) {
   return a === b;
 }
 const isChanged = k => !same(DEF[k], get(k), DEF[k].d);
+const baseOf = k => { const p = st.history && st.history[0]; return p && p.vals[k] !== undefined ? p.vals[k] : DEF[k].d; };
+const isPending = k => DEF[k].t !== 'secret' && !same(DEF[k], get(k), baseOf(k));
 const changedKeys = () => Object.keys(DEF).filter(isChanged);
 function setVal(k, v) { st.vals[k] = String(v); changed(); }
 const cells = () => clamp(Math.round(st.bat.cells) || 4, 1, 32);
@@ -653,9 +656,9 @@ function changed() {
   dirty = true;
 }
 function refreshChrome() {
-  const ch = changedKeys(), w = checks();
+  const ch = Object.keys(DEF).filter(isPending), w = checks();
   const cBtn = $('#chip-changes');
-  cBtn.textContent = ch.length + ' changed'; cBtn.className = 'chip' + (ch.length ? ' on' : '');
+  cBtn.textContent = ch.length ? ch.length + ' to upload' : (st.history.length ? 'all uploaded' : '0 changed'); cBtn.className = 'chip' + (ch.length ? ' on' : '');
   const bad = w.filter(x => x.lvl === 'bad').length, warn = w.filter(x => x.lvl === 'warn').length;
   const wBtn = $('#chip-warn');
   wBtn.hidden = !(bad || warn);
@@ -664,11 +667,11 @@ function refreshChrome() {
   document.querySelectorAll('.step-btn').forEach(b => {
     const v = VIEWS.find(x => x.id === b.dataset.view), dot = b.querySelector('.dot');
     const sw = w.filter(x => x.step === v.id), lvl = sw.some(x => x.lvl === 'bad') ? 'bad' : sw.some(x => x.lvl === 'warn') ? 'warn' : '';
-    const nCh = v.keys.filter(isChanged).length;
+    const nCh = v.keys.filter(isPending).length;
     dot.className = 'dot ' + (lvl || (nCh ? 'changed' : ''));
     dot.title = lvl ? sw.map(x => x.msg).join('\n') : nCh ? nCh + ' changed' : '';
   });
-  document.querySelectorAll('.field[data-key]').forEach(r => r.classList.toggle('changed', isChanged(r.dataset.key)));
+  document.querySelectorAll('.field[data-key]').forEach(r => r.classList.toggle('changed', isPending(r.dataset.key)));
   document.querySelectorAll('[data-reset]').forEach(b => { b.hidden = !isChanged(b.dataset.reset); });
   document.querySelectorAll('.warns[data-step]').forEach(box => {
     const id = box.dataset.step, list = id === '*' ? w : w.filter(x => x.step === id || (box.dataset.keys || '').split(' ').includes(x.key));
@@ -788,14 +791,15 @@ function field(key, o) {
   (ctls[key] = ctls[key] || []).push(c);
   const reset = h('button', { type: 'button', class: 'link', 'data-reset': key, hidden: !isChanged(key), onclick: () => { st.vals[key] = d.d; (ctls[key] || []).forEach(x => x.set(d.d)); changed(); } }, 'Back to default');
   const dShown = d.t === 'secret' ? '–' : d.d === '' ? (d.empty || 'empty') : (d.opts ? (d.opts.find(x => x[0] === d.d) || [0, d.d])[1] : d.d + (d.unit && d.t !== 'list' ? ' ' + d.unit : ''));
-  const row = h('div', { class: 'field' + (isChanged(key) ? ' changed' : ''), 'data-key': key });
+  const row = h('div', { class: 'field' + (isPending(key) ? ' changed' : ''), 'data-key': key });
   const info = (plain || tip) ? h('button', { type: 'button', class: 'info-btn', title: 'About this setting', 'aria-label': 'About ' + (o.label || d.label), onclick: () => row.classList.toggle('open') }, 'i') : null;
   row.append(...[h('div', { class: 'f-head' }, h('label', { class: 'f-label', for: 'in-' + key }, o.label || d.label), info, h('code', {}, key),
       REBOOT_KEYS.includes(key) ? h('span', { class: 'chip warn' }, 'reboot') : null),
     h('div', { class: 'f-ctl' }, c.node),
     plain ? h('p', { class: 'f-plain' }, plain) : null,
     tip ? h('div', { class: 'f-tip' }, tip) : null,
-    REBOOT_KEYS.includes(key) ? h('div', { class: 'f-reboot' }, h('b', {}, 'Needs a reboot of the Pi. '), 'On the Venus page this change shows ', h('b', {}, 'Save & reboot Pi'), ' in the save bar.') : null,
+    REBOOT_KEYS.includes(key) ? h('div', { class: 'f-reboot' }, h('b', {}, 'Needs a reboot of the Pi: '), 'switching between the built-in Bluetooth and a USB stick changes its boot settings. The Venus page offers ', h('b', {}, 'Save & reboot Pi'), '.') : null,
+    SETUP_KEYS.includes(key) ? h('div', { class: 'f-reboot' }, h('b', {}, 'No reboot needed: '), 'when the driver restarts, it sets the battery connection up again (the driver\u2019s enable.sh, as at boot).') : null,
     h('div', { class: 'f-meta' }, h('span', {}, 'Default: ' + dShown), reset)].filter(Boolean));
   return row;
 }
@@ -1443,8 +1447,8 @@ const whenOf = ms => { const d = new Date(ms); return d.toLocaleDateString(undef
 const shown = v => v === '' ? '(empty)' : v;
 function stepBackup(main) {
   const prev = () => st.history[0] || null;
-  const prevVal = k => { const p = prev(); return p && p.vals[k] !== undefined ? p.vals[k] : DEF[k].d; };
-  const pending = () => Object.keys(DEF).filter(k => DEF[k].t !== 'secret' && !same(DEF[k], get(k), prevVal(k)));
+  const prevVal = baseOf;
+  const pending = () => Object.keys(DEF).filter(isPending);
   // 1. what does not make sense, only when there is something
   main.append(warnBox('*'));
   // 2. one big button: upload, then restart
@@ -1453,22 +1457,32 @@ function stepBackup(main) {
   const paintUp = () => {
     if (busy) return;
     const n = pending().length, bad = checks().some(x => x.lvl === 'bad'), p = prev();
-    up.replaceChildren(h('button', { type: 'button', class: 'btn primary big', disabled: !n || bad ? true : null, onclick: upload },
+    up.replaceChildren(h('button', { type: 'button', class: 'btn primary big', disabled: !n || bad ? true : null, onclick: askUpload },
       n ? `Upload ${n} change${n > 1 ? 's' : ''} to the battery driver` : 'Nothing to upload'),
       h('p', { class: 'muted', style: 'margin:6px 0 0' }, bad ? 'Fix the refused settings above first.'
         : n ? 'Writes config.ini on the Pi. The version it replaces goes into the history below.'
           : p ? 'The driver has your settings from ' + whenOf(p.time) + '.' : 'Change a setting in the steps to start.'));
   };
+  const askUpload = () => {
+    const keys = pending();
+    busy = true;
+    up.replaceChildren(h('h3', {}, `Upload ${keys.length} change${keys.length > 1 ? 's' : ''} to the battery driver?`),
+      h('ul', { style: 'margin:4px 0 10px;padding-left:20px' }, keys.map(k => h('li', {}, DEF[k].label + ': ', h('b', {}, shown(prevVal(k)) + ' → ' + shown(get(k)))))),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn primary', onclick: upload }, 'Yes, upload'), h('button', { type: 'button', class: 'btn', onclick: () => { busy = false; paintUp(); } }, 'Cancel')));
+  };
   const upload = () => {
-    const keys = pending(), reboot = keys.some(k => REBOOT_KEYS.includes(k));
+    const keys = pending(), reboot = keys.some(k => REBOOT_KEYS.includes(k)), setup = keys.some(k => SETUP_KEYS.includes(k));
     st.history.unshift({ time: Date.now(), vals: overrides() }); st.history = st.history.slice(0, 20); persist();
     busy = true;
     const restart = () => up.replaceChildren(h('div', { class: 'done-ok' }, reboot ? '✓ The Pi is restarting' : '✓ Driver restarted'),
-      h('p', { style: 'margin:4px 0 10px' }, reboot ? 'It is back in about two minutes, with the new Bluetooth settings.' : 'Your new settings are active now.'),
+      h('p', { style: 'margin:4px 0 10px' }, reboot ? 'It is back in about two minutes, with the new Bluetooth settings.' : setup ? 'The battery connection was set up again; your new settings are active now.' : 'Your new settings are active now.'),
       h('button', { type: 'button', class: 'btn', onclick: () => { busy = false; render(); } }, 'Done'));
+    const askRestart = () => up.replaceChildren(h('h3', {}, reboot ? 'Reboot the Pi now?' : 'Restart the battery driver now?'),
+      h('p', { style: 'margin:4px 0 10px' }, reboot ? 'Venus OS and the driver are back in about two minutes.' : 'The driver stops for a few seconds; the BMS keeps protecting the cells meanwhile.'),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn primary', onclick: restart }, reboot ? 'Yes, reboot' : 'Yes, restart'), h('button', { type: 'button', class: 'btn', onclick: () => { busy = false; render(); } }, 'Later')));
     up.replaceChildren(h('div', { class: 'done-ok' }, '✓ Uploaded'),
-      h('p', { style: 'margin:4px 0 10px' }, `config.ini on the Pi has your ${keys.length} change${keys.length > 1 ? 's' : ''}. The driver uses them after a ${reboot ? 'reboot of the Pi (Bluetooth settings)' : 'restart'}.`),
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn primary big', style: 'width:auto', onclick: restart }, reboot ? 'Reboot the Pi now' : 'Restart the driver now'),
+      h('p', { style: 'margin:4px 0 10px' }, `config.ini on the Pi has your ${keys.length} change${keys.length > 1 ? 's' : ''}. The driver uses them after a ${reboot ? 'reboot of the Pi (USB Bluetooth stick)' : 'restart'}.`),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn primary big', style: 'width:auto', onclick: askRestart }, reboot ? 'Reboot the Pi now' : 'Restart the driver now'),
         h('button', { type: 'button', class: 'btn', onclick: () => { busy = false; render(); } }, 'Later')));
   };
   hooks.push(paintUp); paintUp();

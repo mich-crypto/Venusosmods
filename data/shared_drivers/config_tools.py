@@ -472,7 +472,12 @@ ESSENTIALS = ['BLUETOOTH_BMS', 'BMS_TYPE', 'MAX_BATTERY_CHARGE_CURRENT',
               'FLOAT_CELL_VOLTAGE', 'SOC_CALCULATION', 'SOC_RESET_CELL_VOLTAGE',
               'SOC_RESET_AFTER_DAYS', 'BATTERY_CAPACITY', 'USE_BMS_DVCC_VALUES', 'LOGGING']
 # a change in these needs a reboot, a restart of the driver is not enough
-REBOOT_KEYS = ('BLUETOOTH_BMS', 'BLUETOOTH_USE_USB', 'CAN_PORT')
+# Only switching between the Pi's own Bluetooth and a USB stick needs a reboot: enable.sh changes
+# the boot configuration (/u-boot/config.txt) for it.
+REBOOT_KEYS = ('BLUETOOTH_USE_USB',)
+# Bluetooth BMS and CAN ports become services of their own (dbus-blebattery.N, dbus-canbattery.X).
+# The driver's enable.sh builds them from config.ini, then restart.sh starts them: no reboot needed.
+SETUP_KEYS = ('BLUETOOTH_BMS', 'CAN_PORT')
 
 
 def guess_type(key, default):
@@ -621,7 +626,7 @@ def serialbattery_view(default_text, user_text):
     essentials = [by_key[k] for k in ESSENTIALS if k in by_key]
     unknown = dict((k, v) for k, v in over.items() if k.lower() not in known)
     return {'essentials': [e['key'] for e in essentials], 'groups': groups, 'unknown': unknown,
-            'reboot_keys': list(REBOOT_KEYS)}
+            'reboot_keys': list(REBOOT_KEYS), 'setup_keys': list(SETUP_KEYS)}
 
 
 def apply_serialbattery(default_text, user_text, changes):

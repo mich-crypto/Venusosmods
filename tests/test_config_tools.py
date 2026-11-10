@@ -199,7 +199,8 @@ class SerialBatteryTests(unittest.TestCase):
         self.assertFalse(ct.same_value(e['MAX_CELL_VOLTAGE'], '3.5', '3.450'))
 
     def test_secret_and_reboot_keys(self):
-        self.assertTrue('BLUETOOTH_BMS' in ct.REBOOT_KEYS)
+        self.assertEqual(ct.REBOOT_KEYS, ('BLUETOOTH_USE_USB',))
+        self.assertIn('BLUETOOTH_BMS', ct.SETUP_KEYS)
         self.assertEqual(ct.find_serialbattery(('/nonexistent',)), None)
         d = os.path.join(HERE, 'data')
         self.assertEqual(ct.find_serialbattery((d,)), None)          # no config.default.ini there

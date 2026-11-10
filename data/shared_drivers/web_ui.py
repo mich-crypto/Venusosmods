@@ -1435,10 +1435,14 @@ class App(object):
         refused = self.safety_answer(default, self.read_text(user_path), text, req.form.get('confirm', ''))
         if refused:
             return refused
+        before = dict((k.upper(), v) for k, v in ct.parse_ini(self.read_text(user_path)).get('DEFAULT', {}).items())
+        after = dict((k.upper(), v) for k, v in ct.parse_ini(text).get('DEFAULT', {}).items())
+        moved = set(k for k in set(before) | set(after) if before.get(k) != after.get(k))
         self.write_sb_config(user_path, text)
-        result = {'ok': True, 'message': 'Rolled back to the version from %s' % hid, 'restarted': False}
+        result = {'ok': True, 'message': 'Rolled back to the version from %s' % hid, 'restarted': False,
+                  'reboot_needed': bool(moved & set(ct.REBOOT_KEYS))}
         if req.form.get('restart') == '1':
-            result['restarted'] = self.run_restart_script(path)
+            result['restarted'] = self.run_restart_script(path, setup=bool(moved & set(ct.SETUP_KEYS)))
             if result['restarted']:
                 result['message'] += ' and restarted the driver'
         return jsonr(result)
@@ -1699,22 +1703,30 @@ class App(object):
             return refused
         self.write_sb_config(user_path, new)
         reboot = [k for k in changes if k in ct.REBOOT_KEYS]
+        setup = [k for k in changes if k in ct.SETUP_KEYS]
         result = {'ok': True, 'message': 'Saved', 'changed': sorted(changes), 'reboot_needed': bool(reboot),
-                  'restarted': False}
+                  'setup_needed': bool(setup), 'restarted': False}
         if req.form.get('restart') == '1' and not reboot:
-            result['restarted'] = self.run_restart_script(path)
-            result['message'] = 'Saved and restarted' if result['restarted'] else \
+            result['restarted'] = self.run_restart_script(path, setup=bool(setup))
+            result['message'] = (('Saved. The Bluetooth/CAN battery is being set up again and the driver restarts '
+                                  '(no reboot needed)') if setup else 'Saved and restarted') if result['restarted'] else \
                 'Saved (restart.sh not found: restart the driver or reboot)'
         elif reboot:
-            result['message'] = 'Saved. Bluetooth/CAN settings need a reboot of the Pi.'
+            result['message'] = 'Saved. Switching to or from a USB Bluetooth stick needs a reboot of the Pi.'
         return jsonr(result)
 
-    def run_restart_script(self, path):
+    def run_restart_script(self, path, setup=False):
+        """Restart the driver. setup: first let enable.sh rebuild the Bluetooth/CAN battery services
+        from config.ini (what happens at boot), so a new BMS or CAN port needs no reboot."""
         script = os.path.join(path, 'restart.sh')
         if not os.path.isfile(script):
             return False
-        subprocess.Popen(['sh', script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+        enable = os.path.join(path, 'enable.sh')
+        if setup and os.path.isfile(enable):
+            argv = ['bash', '-c', 'bash "$1" > /dev/null 2>&1; bash "$2"', 'restart', enable, script]
+        else:
+            argv = ['sh', script]
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return True
 
     # ----------------------------------------------------------- raw files
@@ -1800,7 +1812,7 @@ class App(object):
         target = req.form.get('target', '')
         if target == 'serialbattery':
             path = self.serialbattery_path()
-            if path and self.run_restart_script(path):
+            if path and self.run_restart_script(path, setup=req.form.get('setup') == '1'):
                 return jsonr({'ok': True, 'message': 'dbus-serialbattery is restarting'})
             return jsonr({'ok': False, 'error': 'restart.sh not found'}, 400)
         if target not in self.init_services():

@@ -1237,11 +1237,13 @@ function updateSbBar() {
 // Bluetooth/CAN settings only apply after a reboot: save, then reboot when the save went through.
 async function saveSbReboot(go) {
   if (!go) return saveSb(false);
-  if (!window.confirm('Save and reboot the Pi now? The battery driver and Venus OS are back in about two minutes.')) return;
-  if (await saveSb(false)) { await post('/api/reboot', {}); }
+  if (!window.confirm('Save and reboot the Pi now? Switching to or from a USB Bluetooth stick needs it. The battery driver and Venus OS are back in about two minutes.')) return;
+  if (await saveSb(false, true)) { await post('/api/reboot', {}); }
 }
 
-async function saveSb(restart) {
+async function saveSb(restart, confirmed) {
+  const n = Object.keys(sbChanges()).length;
+  if (!confirmed && !window.confirm('Write ' + n + ' change' + (n > 1 ? 's' : '') + ' to config.ini of the battery driver' + (restart ? ' and restart the driver' : '') + '?')) return false;
   const body = { restart: restart ? '1' : '0' };
   for (const [k, v] of Object.entries(sbChanges())) body['s.' + k] = v;
   let r = await api('/api/serialbattery', body);
@@ -1260,10 +1262,12 @@ async function saveSb(restart) {
   await renderTab();
   if (!r.data.reboot_needed && !r.data.restarted && restart === false) {
     $('#main').prepend(h('div', { class: 'banner ok row' }, 'Saved to config.ini. The driver uses the new settings after a restart.',
-      h('span', { class: 'spacer' }), h('button', { class: 'btn primary small', onclick: async ev => { ev.target.disabled = true; await post('/api/restart', { target: 'serialbattery' }); ev.target.closest('.banner').remove(); } }, 'Restart the driver now')));
+      h('span', { class: 'spacer' }), h('button', { class: 'btn primary small', onclick: async ev => {
+        if (!window.confirm('Restart the battery driver now? It stops for a few seconds.')) return;
+        ev.target.disabled = true; await post('/api/restart', { target: 'serialbattery', setup: r.data.setup_needed ? '1' : '0' }); ev.target.closest('.banner').remove(); } }, 'Restart the driver now')));
   }
   if (r.data.reboot_needed) {
-    $('#main').prepend(h('div', { class: 'banner warn row' }, 'Saved. Bluetooth/CAN settings only apply after a reboot of the Pi.',
+    $('#main').prepend(h('div', { class: 'banner warn row' }, 'Saved. Switching to or from a USB Bluetooth stick only applies after a reboot of the Pi.',
       h('span', { class: 'spacer' }), h('button', { class: 'btn danger small', onclick: () => confirmThen('Reboot the Pi now?', () => post('/api/reboot', {})) }, 'Reboot now')));
   }
   return true;
