@@ -357,5 +357,46 @@ class WebRouteTests(unittest.TestCase):
         return test_web_ui.basic(self.case.PASSWORD)
 
 
+class SharedConstantsTests(unittest.TestCase):
+    """Firmware, Pi and iPhone app are three code bases: their protocol constants must agree."""
+
+    def read(self, *parts):
+        with open(os.path.join(HERE, '..', *parts)) as f:
+            return f.read()
+
+    def test_uuids_everywhere(self):
+        ino = self.read('firmware', 'esp32_hydro_tank', 'esp32_hydro_tank.ino').lower()
+        swift = self.read('ios', 'WaterSensor.swiftpm', 'SensorProtocol.swift').lower()
+        for uuid in (ota.SERVICE_UUID, ota.CTRL_UUID, ota.DATA_UUID):
+            self.assertIn(uuid, ino)
+            self.assertIn(uuid, swift)
+        for n in ('1', '2', '3'):
+            nus = '6e40000%s-b5a3-f393-e0a9-e50e24dcca9e' % n
+            self.assertIn(nus, ino)
+            self.assertIn(nus, swift)
+
+    def test_marker_format(self):
+        ino = self.read('firmware', 'esp32_hydro_tank', 'esp32_hydro_tank.ino')
+        self.assertIn('"VHT-FW " FW_VERSION " id=" STR(DEVICE_ID) " ;"', ino)
+        swift = self.read('ios', 'WaterSensor.swiftpm', 'SensorProtocol.swift')
+        self.assertIn('VHT-FW ([0-9A-Za-z._+-]{1,24}) id=(\\d{1,3}) ;', swift)
+        self.assertEqual(ota.MARKER_RE.pattern, rb'VHT-FW ([0-9A-Za-z._+-]{1,24}) id=(\d{1,3}) ;')
+
+    def test_auth_message(self):
+        swift = self.read('ios', 'WaterSensor.swiftpm', 'SensorProtocol.swift')
+        self.assertIn('"\\(nonce) \\(size) \\(md5)"', swift)
+        ino = self.read('firmware', 'esp32_hydro_tank', 'esp32_hydro_tank.ino')
+        self.assertIn('hexOf(otaNonce, sizeof(otaNonce)) + " " + sizeText + " " + md5', ino)
+
+    def test_advert_layout(self):
+        # the app reads the payload after the 2-byte company id; same offsets as the Pi parser
+        import esp32_hydro_protocol as proto
+        swift = self.read('ios', 'WaterSensor.swiftpm', 'SensorProtocol.swift')
+        self.assertEqual(proto._FMT, '<2sBBBBHHHHh')
+        for snippet in ('level = Double(u16(6)) / 100', 'volumeL = Double(u16(8)) / 10',
+                        'capacityL = Double(u16(10)) / 10', 'heightMM = u16(12)', 'u16(14)'):
+            self.assertIn(snippet, swift)
+
+
 if __name__ == '__main__':
     unittest.main()

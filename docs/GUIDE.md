@@ -111,6 +111,8 @@ converter still reads 5.0 V (about 4.7 V after the diode).
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
    * `USE_DS18B20`: `1` with the probe, `0` without
    * `DEVICE_ID`: leave at `1` unless you build a second sender
+   * `CONSOLE_PIN`: 6 digits if you want to use the iPhone app
+     ([ios/README.md](../ios/README.md)); `0` = off
    * `OTA_KEY`: a secret of your own (12+ characters, no spaces) if you want
      to update the firmware later from the settings page over Bluetooth,
      without a cable. Leave it `""` to switch that off. See
@@ -574,6 +576,14 @@ python3 /data/shared_drivers/esp32_ota.py /tmp/esp32_hydro_tank.ino.bin
 `ota off` in the Serial Monitor switches updates over the air off again
 (back to the `OTA_KEY` from the sketch). With an OTA key the sender accepts
 Bluetooth connections; without one it only broadcasts, as before.
+
+### iPhone app for the water sensor
+
+`ios/WaterSensor.swiftpm` is an app that shows the level straight from the sensor
+and, after logging in with a PIN, calibrates it, opens its console and updates its
+firmware. All over Bluetooth, the Pi is not needed. Set `CONSOLE_PIN` in the sketch
+(or type `pin 123456` in the Serial Monitor). How to install the app with Xcode or
+Swift Playgrounds: [ios/README.md](../ios/README.md).
 
 ### Venus OS firmware updates
 Nothing to do: everything lives in `/data`, and `/data/rc.local` restores

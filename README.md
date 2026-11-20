@@ -23,6 +23,9 @@ password. Open that address on your phone, press **Unlock** and follow the **set
 gas sensor, fridge and water sender over Bluetooth, adds them to Venus OS and tells you where to find them.
 Run the same command again any time to update; your settings are kept.
 
+There is also an **iPhone app** for the water sensor (level, calibration and firmware updates over
+Bluetooth, without the Pi): [ios/README.md](ios/README.md).
+
 More: the [step-by-step guide](docs/GUIDE.md) (building the water sensor, wiring, manual setup), also as a
 printable **[PDF](docs/Venus-OS-Mods-Guide.pdf)**.
 
@@ -58,6 +61,7 @@ data/                              -> copied to /data on the Pi
     install.sh / uninstall.sh
   etc/init.d/<service>/run         daemontools services (+ log/run)
 firmware/esp32_hydro_tank/         Arduino sketch for the ESP32-S3 (calibration via serial)
+ios/WaterSensor.swiftpm/           iPhone/iPad app for the water sender: level, PIN login, calibration, console, firmware update
 tools/tank_table.py                height->litres table from tank dimensions
 tools/tank_wheelarch.py            filling chart of the wheel-arch tank (docs/tank/tank-drawing.jpg)
 docs/                              guide, wiring, calibration

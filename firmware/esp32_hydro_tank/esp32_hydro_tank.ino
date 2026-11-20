@@ -26,6 +26,11 @@
  * Serial Monitor) and put the same key in config.ini (ota_key). From then on a
  * new firmware (.bin) is flashed from the settings page on the Pi over
  * Bluetooth; no cable needed. See docs/GUIDE.md, "Firmware updates over the air".
+ *
+ * iPhone app (ios/WaterSensor.swiftpm): set CONSOLE_PIN below (or type
+ * "pin 123456" in the Serial Monitor). The app then logs in with that PIN
+ * (iOS asks for it once) and gets this serial console over Bluetooth:
+ * status, zero, calibration, everything listed by "help".
  */
 
 #include <Arduino.h>
@@ -33,6 +38,7 @@
 #include <BLEAdvertising.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+#include <BLESecurity.h>
 #include <Update.h>
 #include <mbedtls/md.h>
 #include <esp_random.h>
@@ -50,6 +56,11 @@
 //      in config.ini on the Pi ([esp32_hydro] ota_key). 12+ random characters, no spaces.
 //      A key set with the serial command "ota key <secret>" is stored in flash and wins.
 #define OTA_KEY              ""
+
+// ---- Console over Bluetooth for the iPhone app. 0 = off. Otherwise a 6-digit PIN (100000..999999):
+//      the phone has to pair with it once, and the link is encrypted from then on.
+//      A PIN set with the serial command "pin <6 digits>" is stored in flash and wins.
+#define CONSOLE_PIN          0
 
 // ---- Pins (ESP32-S3: use GPIO1..GPIO10 = ADC1; ADC2 shares hardware with the radio)
 #define PIN_PRESSURE         4
@@ -195,6 +206,29 @@ static Preferences prefs;
 static bool serialLog = SERIAL_LOG;
 
 static float capacityL() { return table[tablePoints - 1].litres; }
+
+// Console output goes to the USB serial port and, while a phone is logged in, to the app.
+// Only used from loop() (the Bluetooth task prints to Serial directly), so no locking.
+static bool consoleOn = false;                 // console service running
+static uint8_t conBuf[2048];                   // waiting to be sent to the phone
+static size_t conHead = 0, conLen = 0;
+
+class TeePrint : public Print {
+ public:
+  size_t write(uint8_t c) override { return write(&c, 1); }
+  size_t write(const uint8_t *p, size_t n) override {
+    Serial.write(p, n);
+    if (consoleOn) {
+      for (size_t i = 0; i < n; i++) {
+        if (conLen == sizeof(conBuf)) { conHead = (conHead + 1) % sizeof(conBuf); conLen--; }  // drop the oldest
+        conBuf[(conHead + conLen) % sizeof(conBuf)] = p[i];
+        conLen++;
+      }
+    }
+    return n;
+  }
+};
+static TeePrint con;
 
 // State
 static float emaHeight = NAN;
@@ -347,7 +381,7 @@ static void buildPayload(uint8_t *p) {
   put16(p + 14, (uint16_t)(int16_t)(tempValid ? lroundf(temperatureC * 100.0f) : 0));
 
   if (serialLog) {
-    Serial.printf("signal=%.3f height=%.1fmm litres=%.1f level=%.1f%% temp=%.1f "
+    con.printf("signal=%.3f height=%.1fmm litres=%.1f level=%.1f%% temp=%.1f "
                   "activity=%.1f%s%s%s%s\n",
                   lastSignal, height, litres, level, temperatureC, activity,
                   sloshing ? " SLOSH" : "", filling ? " FILLING" : "",
@@ -546,28 +580,69 @@ class OtaDataCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-class OtaServerCallbacks : public BLEServerCallbacks {
+// ---------------------------------------------------- console for the iPhone app
+//
+// Nordic UART Service, the usual "serial port over Bluetooth" (other terminal apps such as
+// Bluefruit Connect or nRF Toolbox work too). Only when a console PIN is set, and only for a
+// paired (bonded, encrypted) phone: iOS asks for the PIN once.
+//   RX (write)  one command per write, as typed in the Serial Monitor
+//   TX (notify) everything the console prints
+
+static const char *CON_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+static const char *CON_RX_UUID      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+static const char *CON_TX_UUID      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+static const size_t CON_CHUNK = 160;          // per notification; iOS uses an MTU of 185 or more
+
+static uint32_t consolePin = CONSOLE_PIN;
+static BLECharacteristic *conTx = nullptr;
+static BLE2902 *conTxCccd = nullptr;
+static char conRxLine[128];
+static volatile bool conRxPending = false;
+static volatile uint8_t bleClients = 0;
+
+static void handleCommand(String line);
+
+class ConRxCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+    // Bluetooth task: only hand the line over, loop() runs it
+    if (conRxPending) return;                          // one command at a time
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    String v = c->getValue();
+#else
+    std::string v = c->getValue();
+#endif
+    size_t n = min((size_t)v.length(), sizeof(conRxLine) - 1);
+    memcpy(conRxLine, v.c_str(), n);
+    conRxLine[n] = 0;
+    conRxPending = true;
+  }
+};
+
+class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *s) override {
+    bleClients++;
     otaNewNonce();
     BLEDevice::startAdvertising();                    // keep broadcasting the level while connected
   }
   void onDisconnect(BLEServer *s) override {
+    if (bleClients) bleClients--;
     if (otaActive) { Serial.println("OTA: connection lost, update dropped"); otaStop(); }
     BLEDevice::startAdvertising();
   }
 };
 
-static void loadOtaKey() {
+static void loadBleSettings() {
   prefs.begin("ota", true);
   otaKey = prefs.getString("key", OTA_KEY);
   prefs.end();
+  prefs.begin("ble", true);
+  consolePin = prefs.getUInt("pin", CONSOLE_PIN);
+  prefs.end();
+  if (consolePin && (consolePin < 100000 || consolePin > 999999)) consolePin = 0;
 }
 
-static void otaStart() {
+static void otaStart(BLEServer *server) {
   otaNewNonce();
-  BLEDevice::setMTU(517);                             // bigger chunks, faster update
-  BLEServer *server = BLEDevice::createServer();
-  server->setCallbacks(new OtaServerCallbacks());
   BLEService *service = server->createService(OTA_SERVICE_UUID);
   otaCtrl = service->createCharacteristic(OTA_CTRL_UUID,
       BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
@@ -580,6 +655,66 @@ static void otaStart() {
   service->start();
 }
 
+#if !defined(CONFIG_NIMBLE_ENABLED)
+// Bonded phones are remembered; a new PIN should lock them out again.
+static void forgetPhones() {
+  int n = esp_ble_get_bond_device_num();
+  if (n <= 0) return;
+  esp_ble_bond_dev_t *list = (esp_ble_bond_dev_t *)malloc(sizeof(esp_ble_bond_dev_t) * n);
+  if (!list) return;
+  esp_ble_get_bond_device_list(&n, list);
+  for (int i = 0; i < n; i++) esp_ble_remove_bond_device(list[i].bd_addr);
+  free(list);
+}
+
+static void consoleStart(BLEServer *server) {
+  BLESecurity *security = new BLESecurity();
+  security->setStaticPIN(consolePin);                // passkey pairing, bonding, MITM protection
+  BLEService *service = server->createService(CON_SERVICE_UUID);
+  BLECharacteristic *rx = service->createCharacteristic(CON_RX_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  rx->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+  rx->setCallbacks(new ConRxCallbacks());
+  conTx = service->createCharacteristic(CON_TX_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+  conTx->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+  conTxCccd = new BLE2902();
+  // subscribing needs the pairing too: this is where iOS asks for the PIN
+  conTxCccd->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM | ESP_GATT_PERM_WRITE_ENC_MITM);
+  conTx->addDescriptor(conTxCccd);
+  service->start();
+  consoleOn = true;
+}
+#else
+static void forgetPhones() {}
+static void consoleStart(BLEServer *) {
+  con.println("The Bluetooth console needs the Bluedroid stack; it is off with NimBLE.");
+}
+#endif
+
+static void consoleLoop() {
+  if (!consoleOn) return;
+  if (conRxPending) {
+    String line(conRxLine);
+    conRxPending = false;
+    line.trim();
+    if (line.length()) {
+      con.printf("> %s\n", line.c_str());
+      handleCommand(line);
+    }
+  }
+  bool listening = bleClients > 0 && conTxCccd && conTxCccd->getNotifications();
+  if (!listening) { conLen = 0; return; }            // nobody to send to: drop it
+  for (int i = 0; i < 4 && conLen; i++) {            // a few notifications per pass
+    uint8_t chunk[CON_CHUNK];
+    size_t n = min(conLen, CON_CHUNK);
+    for (size_t k = 0; k < n; k++) chunk[k] = conBuf[(conHead + k) % sizeof(conBuf)];
+    conHead = (conHead + n) % sizeof(conBuf);
+    conLen -= n;
+    conTx->setValue(chunk, n);
+    conTx->notify();
+  }
+}
+
 static void otaLoop() {
   if (otaRestartAt && (int32_t)(millis() - otaRestartAt) >= 0) {
     Serial.println("OTA: restarting into the new firmware");
@@ -590,25 +725,33 @@ static void otaLoop() {
 
 static void bleStart() {
   BLEDevice::init(ADV_NAME);
-  bool ota = otaKey.length() > 0;
-  if (ota) otaStart();
+  bool ota = otaKey.length() > 0, console = consolePin != 0;
+  bool connectable = ota || console;
+  if (connectable) {
+    BLEDevice::setMTU(517);                           // bigger chunks, faster update
+    BLEServer *server = BLEDevice::createServer();
+    server->setCallbacks(new ServerCallbacks());
+    if (ota) otaStart(server);
+    if (console) consoleStart(server);
+  }
   advertising = BLEDevice::getAdvertising();
 
   uint16_t interval = ADV_INTERVAL_MS * 1000 / 625;  // 0.625 ms units
   advertising->setMinInterval(interval);
   advertising->setMaxInterval(interval + interval / 5);
   advertising->setScanResponse(false);
-  // Broadcast only, unless updates over the air are on: then the Pi may connect
+  // Broadcast only, unless updates over the air or the console are on: then one may connect
 #if defined(CONFIG_NIMBLE_ENABLED)
-  advertising->setAdvertisementType(ota ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON);
+  advertising->setAdvertisementType(connectable ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON);
 #else
-  advertising->setAdvertisementType(ota ? ADV_TYPE_IND : ADV_TYPE_NONCONN_IND);
+  advertising->setAdvertisementType(connectable ? ADV_TYPE_IND : ADV_TYPE_NONCONN_IND);
 #endif
 
   updateAdvertisement();
   advertising->start();
-  Serial.printf("Advertising as %s, MAC %s, updates over the air %s\n", ADV_NAME,
-                BLEDevice::getAddress().toString().c_str(), ota ? "on" : "off (no OTA key)");
+  con.printf("Advertising as %s, MAC %s, updates over the air %s, iPhone console %s\n", ADV_NAME,
+             BLEDevice::getAddress().toString().c_str(), ota ? "on" : "off (no OTA key)",
+             console ? "on" : "off (no PIN)");
 }
 
 // ------------------------------------------------------------- calibration
@@ -642,10 +785,10 @@ static void loadCalibration() {
       tableValid(stored, n)) {
     memcpy(table, stored, n * sizeof(TankPoint));
     tablePoints = n;
-    Serial.printf("Loaded calibration: %u points, %.1f L, zero offset %.1f mm\n",
+    con.printf("Loaded calibration: %u points, %.1f L, zero offset %.1f mm\n",
                   (unsigned)n, capacityL(), zeroOffsetMm);
   } else {
-    Serial.println("Using the default tank table from the sketch (no calibration stored)");
+    con.println("Using the default tank table from the sketch (no calibration stored)");
   }
   prefs.end();
 }
@@ -667,7 +810,7 @@ static void saveTable() {
 // Blocks the loop; BLE keeps advertising the last payload meanwhile.
 static bool measureSteadyHeight(float &out, uint32_t ms = 5000) {
   if (sloshing) {
-    Serial.println("Water is still moving (SLOSH) - wait until it settles and try again.");
+    con.println("Water is still moving (SLOSH) - wait until it settles and try again.");
     return false;
   }
   double sum = 0;
@@ -675,7 +818,7 @@ static bool measureSteadyHeight(float &out, uint32_t ms = 5000) {
   float lo = 1e9f, hi = -1e9f;
   for (uint32_t t0 = millis(); millis() - t0 < ms; ) {
     sampleLevel();
-    if (fault) { Serial.println("Sensor fault - check wiring."); return false; }
+    if (fault) { con.println("Sensor fault - check wiring."); return false; }
     sum += lastRawHeight;
     n++;
     lo = min(lo, lastRawHeight);
@@ -683,9 +826,9 @@ static bool measureSteadyHeight(float &out, uint32_t ms = 5000) {
     delay(SAMPLE_PERIOD_MS);
   }
   out = (float)(sum / n);
-  Serial.printf("  measured %.1f mm (spread %.1f mm over %u bursts)\n", out, hi - lo, (unsigned)n);
+  con.printf("  measured %.1f mm (spread %.1f mm over %u bursts)\n", out, hi - lo, (unsigned)n);
   if (hi - lo > 4 * SLOSH_EXIT_MM) {
-    Serial.println("  spread is large - the level was still changing. Wait and repeat.");
+    con.println("  spread is large - the level was still changing. Wait and repeat.");
     return false;
   }
   return true;
@@ -698,32 +841,32 @@ static float calTotal = 0;
 static bool calActive = false;
 
 static void printTable(const TankPoint *t, size_t n) {
-  Serial.println("  #   height mm   litres");
+  con.println("  #   height mm   litres");
   for (size_t i = 0; i < n; i++)
-    Serial.printf("  %-3u %9.1f %8.1f\n", (unsigned)i, t[i].mm, t[i].litres);
+    con.printf("  %-3u %9.1f %8.1f\n", (unsigned)i, t[i].mm, t[i].litres);
 }
 
 static void printAsCode() {
-  Serial.println("// paste into DEFAULT_TABLE in the sketch:");
+  con.println("// paste into DEFAULT_TABLE in the sketch:");
   for (size_t i = 0; i < tablePoints; i++)
-    Serial.printf("  { %6.1ff, %6.1ff },\n", table[i].mm, table[i].litres);
-  Serial.printf("// zero offset: #define ZERO_OFFSET_MM %.1ff\n", zeroOffsetMm);
+    con.printf("  { %6.1ff, %6.1ff },\n", table[i].mm, table[i].litres);
+  con.printf("// zero offset: #define ZERO_OFFSET_MM %.1ff\n", zeroOffsetMm);
 }
 
 static void calAppend(float mm, float litres) {
-  if (calCount >= MAX_POINTS) { Serial.println("Table full."); return; }
+  if (calCount >= MAX_POINTS) { con.println("Table full."); return; }
   if (calCount > 0 && mm <= calPts[calCount - 1].mm) {
-    Serial.printf("Height %.1f mm is not above the previous point (%.1f mm) - not added. "
+    con.printf("Height %.1f mm is not above the previous point (%.1f mm) - not added. "
                   "Add more water per step, or check the sensor.\n", mm, calPts[calCount - 1].mm);
     return;
   }
   calPts[calCount++] = { mm, litres };
   calTotal = litres;
-  Serial.printf("Point %u: %.1f mm = %.1f L\n", (unsigned)(calCount - 1), mm, litres);
+  con.printf("Point %u: %.1f mm = %.1f L\n", (unsigned)(calCount - 1), mm, litres);
 }
 
 static void printHelp() {
-  Serial.println(
+  con.println(
     "Commands (end with Enter):\n"
     "  status              current reading and active table\n"
     "  log                 toggle the periodic status line\n"
@@ -741,7 +884,10 @@ static void printHelp() {
     "  version             firmware version\n"
     "  ota                 are updates over the air on?\n"
     "  ota key <secret>    switch them on with this key (same as ota_key on the Pi), restarts\n"
-    "  ota off             switch them off (back to OTA_KEY from the sketch), restarts");
+    "  ota off             switch them off (back to OTA_KEY from the sketch), restarts\n"
+    "  pin                 is the iPhone console on?\n"
+    "  pin <6 digits>      switch it on with this PIN; paired phones must pair again, restarts\n"
+    "  pin off             switch it off (back to CONSOLE_PIN from the sketch), restarts");
 }
 
 static void handleCommand(String line) {
@@ -757,9 +903,9 @@ static void handleCommand(String line) {
     printHelp();
   } else if (cmd == "log") {
     serialLog = !serialLog;
-    Serial.printf("Periodic log %s\n", serialLog ? "on" : "off");
+    con.printf("Periodic log %s\n", serialLog ? "on" : "off");
   } else if (cmd == "status") {
-    Serial.printf("signal=%.3f raw height=%.1f mm filtered=%.1f mm zero offset=%.1f mm "
+    con.printf("signal=%.3f raw height=%.1f mm filtered=%.1f mm zero offset=%.1f mm "
                   "litres=%.1f/%.1f%s%s\n", lastSignal, lastRawHeight, emaHeight, zeroOffsetMm,
                   heightToLitres(max(0.0f, emaHeight)), capacityL(),
                   sloshing ? " SLOSH" : "", fault ? " FAULT" : "");
@@ -774,7 +920,7 @@ static void handleCommand(String line) {
     }
     saveZero();
     emaHeight = NAN;                  // restart the filter at the new zero
-    Serial.printf("Zero offset %.1f mm stored.\n", zeroOffsetMm);
+    con.printf("Zero offset %.1f mm stored.\n", zeroOffsetMm);
   } else if (cmd == "cal") {
     int sp2 = rest.indexOf(' ');
     String sub = sp2 < 0 ? rest : rest.substring(0, sp2);
@@ -787,18 +933,18 @@ static void handleCommand(String line) {
       calCount = 0;
       calActive = true;
       calAppend(h, 0.0f);
-      Serial.println("Now pour in a known amount, wait ~30 s, then: cal add <litres>");
+      con.println("Now pour in a known amount, wait ~30 s, then: cal add <litres>");
     } else if (sub == "add" || sub == "point") {
       if (!calActive) { calActive = true; calCount = 0; calTotal = 0; }
       if (sub == "add") {
         float l = arg.toFloat();
-        if (l <= 0) { Serial.println("Usage: cal add <litres poured in this step>"); return; }
+        if (l <= 0) { con.println("Usage: cal add <litres poured in this step>"); return; }
         float h;
         if (!measureSteadyHeight(h)) return;
         calAppend(h, calTotal + l);
       } else {
         int sp3 = arg.indexOf(' ');
-        if (sp3 < 0) { Serial.println("Usage: cal point <mm> <total litres>"); return; }
+        if (sp3 < 0) { con.println("Usage: cal point <mm> <total litres>"); return; }
         calAppend(arg.substring(0, sp3).toFloat(), arg.substring(sp3 + 1).toFloat());
       }
     } else if (sub == "undo") {
@@ -806,24 +952,24 @@ static void handleCommand(String line) {
       printTable(calPts, calCount);
     } else if (sub == "show") {
       printTable(calPts, calCount);
-      Serial.printf("  total so far: %.1f L\n", calTotal);
+      con.printf("  total so far: %.1f L\n", calTotal);
     } else if (sub == "save") {
       if (!tableValid(calPts, calCount)) {
-        Serial.println("Need at least 2 points with rising height and litres.");
+        con.println("Need at least 2 points with rising height and litres.");
         return;
       }
       memcpy(table, calPts, calCount * sizeof(TankPoint));
       tablePoints = calCount;
       saveTable();
       calActive = false;
-      Serial.printf("Saved %u points, capacity %.1f L.\n", (unsigned)tablePoints, capacityL());
+      con.printf("Saved %u points, capacity %.1f L.\n", (unsigned)tablePoints, capacityL());
       printAsCode();
     } else if (sub == "cancel") {
       calActive = false;
       calCount = 0;
-      Serial.println("Calibration discarded.");
+      con.println("Calibration discarded.");
     } else {
-      Serial.println("cal start | add <L> | point <mm> <L> | undo | show | save | cancel");
+      con.println("cal start | add <L> | point <mm> <L> | undo | show | save | cancel");
     }
   } else if (cmd == "table") {
     printAsCode();
@@ -833,32 +979,51 @@ static void handleCommand(String line) {
     prefs.end();
     loadDefaults();
     emaHeight = NAN;
-    Serial.println("Stored calibration erased, using sketch defaults.");
+    con.println("Stored calibration erased, using sketch defaults.");
   } else if (cmd == "version") {
-    Serial.println(FW_MARKER);
+    con.println(FW_MARKER);
+  } else if (cmd == "pin") {
+    if (rest.length() == 0) {
+      con.printf("iPhone console: %s\n", consolePin ? "on" : "off (no PIN)");
+      return;
+    }
+    long pin = rest.toInt();
+    bool off = rest == "off";
+    if (!off && (rest.length() != 6 || pin < 100000 || pin > 999999)) {
+      con.println("The PIN has 6 digits and does not start with 0.");
+      return;
+    }
+    prefs.begin("ble", false);
+    if (off) prefs.clear(); else prefs.putUInt("pin", (uint32_t)pin);
+    prefs.end();
+    forgetPhones();
+    con.println(off ? "Stored PIN removed. Restarting..." : "PIN stored, paired phones forgotten. Restarting...");
+    for (uint32_t t0 = millis(); millis() - t0 < 600; ) { consoleLoop(); delay(20); }   // let the phone see it
+    Serial.flush();
+    ESP.restart();
   } else if (cmd == "ota") {
     if (rest.startsWith("key ")) {
       String key = rest.substring(4);
       key.trim();
-      if (key.length() < 8 || key.indexOf(' ') >= 0) { Serial.println("The key needs 8+ characters and no spaces."); return; }
+      if (key.length() < 8 || key.indexOf(' ') >= 0) { con.println("The key needs 8+ characters and no spaces."); return; }
       prefs.begin("ota", false);
       prefs.putString("key", key);
       prefs.end();
-      Serial.println("OTA key stored. Restarting...");
+      con.println("OTA key stored. Restarting...");
       Serial.flush();
       ESP.restart();
     } else if (rest == "off") {
       prefs.begin("ota", false);
       prefs.clear();
       prefs.end();
-      Serial.println("Stored OTA key removed. Restarting...");
+      con.println("Stored OTA key removed. Restarting...");
       Serial.flush();
       ESP.restart();
     } else {
-      Serial.printf("Updates over the air: %s\n", otaKey.length() ? "on" : "off (no key)");
+      con.printf("Updates over the air: %s\n", otaKey.length() ? "on" : "off (no key)");
     }
   } else {
-    Serial.printf("Unknown command '%s' - type help\n", cmd.c_str());
+    con.printf("Unknown command '%s' - type help\n", cmd.c_str());
   }
 }
 
@@ -880,9 +1045,9 @@ static void pollSerial() {
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println(FW_MARKER);
+  con.println(FW_MARKER);
   loadCalibration();
-  loadOtaKey();
+  loadBleSettings();
   analogReadResolution(12);
   pinMode(PIN_PRESSURE, INPUT);
 
@@ -897,7 +1062,7 @@ void setup() {
   updateTemperature();
 
   bleStart();
-  Serial.println("Type 'help' for calibration commands.");
+  con.println("Type 'help' for calibration commands.");
 }
 
 void loop() {
@@ -909,6 +1074,7 @@ void loop() {
   if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
   pollSerial();
   otaLoop();
+  consoleLoop();
 
   delay(5);
 }
