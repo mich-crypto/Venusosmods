@@ -21,17 +21,35 @@
  * type "help". The height -> litres table is measured by filling the tank in
  * steps ("cal start", "cal add 10", ..., "cal save") and stored in flash, so
  * no re-flashing is needed. See docs/calibration.md.
+ *
+ * Updates over the air: set OTA_KEY below (or type "ota key <secret>" in the
+ * Serial Monitor) and put the same key in config.ini (ota_key). From then on a
+ * new firmware (.bin) is flashed from the settings page on the Pi over
+ * Bluetooth; no cable needed. See docs/GUIDE.md, "Firmware updates over the air".
  */
 
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEAdvertising.h>
+#include <BLEServer.h>
+#include <BLE2902.h>
+#include <Update.h>
+#include <mbedtls/md.h>
+#include <esp_random.h>
 #include <esp_arduino_version.h>
 #include <Preferences.h>
 
 // ============================================================ CONFIGURATION
 
 #define DEVICE_ID            1      // must match device_id in config.ini on the Pi
+#define FW_VERSION           "1.1.0"// shown on the settings page; raise it when you change the sketch
+
+// ---- Over-the-air updates over Bluetooth (settings page on the Pi -> Water tank -> Update firmware).
+//      "" = off: the sender only broadcasts, nobody can connect to it.
+//      Any other text = on, and only someone who knows this key can flash it. Put the same key
+//      in config.ini on the Pi ([esp32_hydro] ota_key). 12+ random characters, no spaces.
+//      A key set with the serial command "ota key <secret>" is stored in flash and wins.
+#define OTA_KEY              ""
 
 // ---- Pins (ESP32-S3: use GPIO1..GPIO10 = ADC1; ADC2 shares hardware with the radio)
 #define PIN_PRESSURE         4
@@ -161,6 +179,12 @@ enum : uint8_t {
   FLAG_SLOSHING   = 0x10,
 };
 static const size_t PAYLOAD_LEN = 16;
+
+// The Pi looks for this text in a .bin before it flashes it: is it this sketch, which version,
+// which sender id. Keep the format.
+#define STR_(x) #x
+#define STR(x) STR_(x)
+static const char FW_MARKER[] __attribute__((used)) = "VHT-FW " FW_VERSION " id=" STR(DEVICE_ID) " ;";
 
 // Active calibration (sketch defaults or loaded from flash)
 #define MAX_POINTS 40
@@ -357,24 +381,234 @@ static void updateAdvertisement() {
   advertising->setAdvertisementData(data);
 }
 
+// ------------------------------------------------------- updates over the air
+//
+// GATT service, only when an OTA key is set. Protocol (keep in sync with
+// data/shared_drivers/esp32_ota.py):
+//
+//   control characteristic (write + notify), text:
+//     Pi  "info"                       -> "info fw=<version> id=<device id> nonce=<32 hex> free=<bytes>"
+//     Pi  "begin <size> <md5> <auth>"  -> "ok begin" | "err auth" | "err begin <reason>"
+//          auth = hex HMAC-SHA256(key, "<nonce> <size> <md5>"); each nonce allows one try
+//     Pi  "end"                        -> "ok end" (then restarts into the new firmware)
+//                                       | "err <reason>"
+//     Pi  "abort"                      -> "ok abort"
+//   data characteristic (write with response): <offset uint32 LE><image bytes>, in order.
+//     A wrong offset or a flash error is reported as "err ..." on the control characteristic.
+//
+// The image is written to the other app partition (default partition schemes have two) and
+// checked against its MD5 before the boot partition is switched. A failed or interrupted
+// update leaves the running firmware as it is.
+
+static const char *OTA_SERVICE_UUID = "8e7f0001-5648-4f54-a1c3-5f2d7c3a9b10";
+static const char *OTA_CTRL_UUID    = "8e7f0002-5648-4f54-a1c3-5f2d7c3a9b10";
+static const char *OTA_DATA_UUID    = "8e7f0003-5648-4f54-a1c3-5f2d7c3a9b10";
+
+static String otaKey;
+static BLECharacteristic *otaCtrl = nullptr;
+static uint8_t otaNonce[16];
+static bool otaActive = false, otaFailed = false;
+static uint32_t otaSize = 0, otaWritten = 0;
+static volatile uint32_t otaRestartAt = 0;   // millis() of the planned restart, 0 = none
+
+static void otaNewNonce() { esp_fill_random(otaNonce, sizeof(otaNonce)); }
+
+static String hexOf(const uint8_t *p, size_t n) {
+  static const char *digits = "0123456789abcdef";
+  String s;
+  s.reserve(n * 2);
+  for (size_t i = 0; i < n; i++) { s += digits[p[i] >> 4]; s += digits[p[i] & 0x0F]; }
+  return s;
+}
+
+static void otaReply(const String &text) {
+  Serial.printf("OTA: %s\n", text.c_str());
+  if (!otaCtrl) return;
+  otaCtrl->setValue((uint8_t *)text.c_str(), text.length());
+  otaCtrl->notify();
+}
+
+static bool otaAuthOk(const String &msg, String given) {
+  uint8_t mac[32];
+  const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (mbedtls_md_hmac(md, (const uint8_t *)otaKey.c_str(), otaKey.length(),
+                      (const uint8_t *)msg.c_str(), msg.length(), mac) != 0) return false;
+  String expect = hexOf(mac, sizeof(mac));
+  given.toLowerCase();
+  if (given.length() != expect.length()) return false;
+  uint8_t diff = 0;                                   // constant time compare
+  for (size_t i = 0; i < expect.length(); i++) diff |= (uint8_t)(given[i] ^ expect[i]);
+  return diff == 0;
+}
+
+static void otaStop() {
+  if (otaActive) Update.abort();
+  otaActive = false;
+  otaFailed = false;
+}
+
+static void otaControl(String line) {
+  line.trim();
+  int sp = line.indexOf(' ');
+  String cmd = sp < 0 ? line : line.substring(0, sp);
+  String rest = sp < 0 ? String() : line.substring(sp + 1);
+
+  if (cmd == "info") {
+    otaReply(String("info fw=") + FW_VERSION + " id=" + DEVICE_ID + " nonce=" + hexOf(otaNonce, sizeof(otaNonce)) +
+             " free=" + String((uint32_t)ESP.getFreeSketchSpace()));
+  } else if (cmd == "begin") {
+    int a = rest.indexOf(' '), b = a < 0 ? -1 : rest.indexOf(' ', a + 1);
+    if (a < 0 || b < 0) { otaReply("err usage: begin <size> <md5> <auth>"); return; }
+    String sizeText = rest.substring(0, a), md5 = rest.substring(a + 1, b), auth = rest.substring(b + 1);
+    bool ok = otaAuthOk(hexOf(otaNonce, sizeof(otaNonce)) + " " + sizeText + " " + md5, auth);
+    otaNewNonce();                                    // one try per nonce: no replay, no guessing
+    if (!ok) { otaReply("err auth"); return; }
+    otaStop();
+    long size = sizeText.toInt();
+    if (size <= 0 || md5.length() != 32) { otaReply("err begin bad size or md5"); return; }
+    if (!Update.begin((size_t)size, U_FLASH)) { otaReply(String("err begin ") + Update.errorString()); return; }
+    Update.setMD5(md5.c_str());
+    otaActive = true;
+    otaSize = (uint32_t)size;
+    otaWritten = 0;
+    otaReply("ok begin");
+  } else if (cmd == "end") {
+    if (!otaActive) { otaReply("err not started"); return; }
+    if (otaFailed) { otaStop(); otaReply("err failed earlier"); return; }
+    if (otaWritten != otaSize) { otaReply("err incomplete " + String(otaWritten)); return; }
+    if (!Update.end()) {                              // checks the MD5, then switches the boot partition
+      String why = Update.errorString();
+      otaStop();
+      otaReply("err " + why);
+      return;
+    }
+    otaActive = false;
+    otaReply("ok end");
+    otaRestartAt = millis() + 1500;                   // let the reply go out first
+    if (!otaRestartAt) otaRestartAt = 1;
+  } else if (cmd == "abort") {
+    otaStop();
+    otaReply("ok abort");
+  } else {
+    otaReply("err unknown command");
+  }
+}
+
+static void otaData(const uint8_t *p, size_t n) {
+  if (!otaActive || otaFailed || n < 5) return;
+  uint32_t offset = p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
+  if (offset != otaWritten) {
+    otaFailed = true;
+    otaReply("err offset " + String(otaWritten));
+    return;
+  }
+  const uint8_t *data = p + 4;
+  size_t len = n - 4;
+  if (otaWritten == 0) {
+    // ESP image header: magic 0xE9 at 0, chip id (uint16) at 12
+    bool bad = data[0] != 0xE9;
+#ifdef CONFIG_IDF_FIRMWARE_CHIP_ID
+    if (len >= 14 && (data[12] | (data[13] << 8)) != CONFIG_IDF_FIRMWARE_CHIP_ID) bad = true;
+#endif
+    if (bad) { otaFailed = true; otaReply("err not a firmware for this chip"); return; }
+  }
+  if (otaWritten + len > otaSize || Update.write((uint8_t *)data, len) != len) {
+    otaFailed = true;
+    otaReply(String("err write ") + Update.errorString());
+    return;
+  }
+  otaWritten += len;
+}
+
+class OtaCtrlCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    String v = c->getValue();
+    otaControl(v);
+#else
+    std::string v = c->getValue();
+    otaControl(String(v.c_str()));
+#endif
+  }
+};
+
+class OtaDataCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+    // Runs in the Bluetooth task; the write response goes out when this returns,
+    // which is the flow control for the Pi.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    String v = c->getValue();                         // keeps the length, zero bytes included
+    otaData((const uint8_t *)v.c_str(), v.length());
+#else
+    std::string v = c->getValue();
+    otaData((const uint8_t *)v.data(), v.length());
+#endif
+  }
+};
+
+class OtaServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *s) override {
+    otaNewNonce();
+    BLEDevice::startAdvertising();                    // keep broadcasting the level while connected
+  }
+  void onDisconnect(BLEServer *s) override {
+    if (otaActive) { Serial.println("OTA: connection lost, update dropped"); otaStop(); }
+    BLEDevice::startAdvertising();
+  }
+};
+
+static void loadOtaKey() {
+  prefs.begin("ota", true);
+  otaKey = prefs.getString("key", OTA_KEY);
+  prefs.end();
+}
+
+static void otaStart() {
+  otaNewNonce();
+  BLEDevice::setMTU(517);                             // bigger chunks, faster update
+  BLEServer *server = BLEDevice::createServer();
+  server->setCallbacks(new OtaServerCallbacks());
+  BLEService *service = server->createService(OTA_SERVICE_UUID);
+  otaCtrl = service->createCharacteristic(OTA_CTRL_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+  otaCtrl->setCallbacks(new OtaCtrlCallbacks());
+#if !defined(CONFIG_NIMBLE_ENABLED)
+  otaCtrl->addDescriptor(new BLE2902());              // NimBLE adds it by itself
+#endif
+  BLECharacteristic *data = service->createCharacteristic(OTA_DATA_UUID, BLECharacteristic::PROPERTY_WRITE);
+  data->setCallbacks(new OtaDataCallbacks());
+  service->start();
+}
+
+static void otaLoop() {
+  if (otaRestartAt && (int32_t)(millis() - otaRestartAt) >= 0) {
+    Serial.println("OTA: restarting into the new firmware");
+    Serial.flush();
+    ESP.restart();
+  }
+}
+
 static void bleStart() {
   BLEDevice::init(ADV_NAME);
+  bool ota = otaKey.length() > 0;
+  if (ota) otaStart();
   advertising = BLEDevice::getAdvertising();
 
   uint16_t interval = ADV_INTERVAL_MS * 1000 / 625;  // 0.625 ms units
   advertising->setMinInterval(interval);
   advertising->setMaxInterval(interval + interval / 5);
   advertising->setScanResponse(false);
+  // Broadcast only, unless updates over the air are on: then the Pi may connect
 #if defined(CONFIG_NIMBLE_ENABLED)
-  advertising->setAdvertisementType(BLE_GAP_CONN_MODE_NON);  // broadcast only
+  advertising->setAdvertisementType(ota ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON);
 #else
-  advertising->setAdvertisementType(ADV_TYPE_NONCONN_IND);
+  advertising->setAdvertisementType(ota ? ADV_TYPE_IND : ADV_TYPE_NONCONN_IND);
 #endif
 
   updateAdvertisement();
   advertising->start();
-  Serial.printf("Advertising as %s, MAC %s\n", ADV_NAME,
-                BLEDevice::getAddress().toString().c_str());
+  Serial.printf("Advertising as %s, MAC %s, updates over the air %s\n", ADV_NAME,
+                BLEDevice::getAddress().toString().c_str(), ota ? "on" : "off (no OTA key)");
 }
 
 // ------------------------------------------------------------- calibration
@@ -503,7 +737,11 @@ static void printHelp() {
     "  cal save            use and store the new table (last point = 100 %)\n"
     "  cal cancel          discard the table being measured\n"
     "  table               print the active table as code for the sketch\n"
-    "  reset               forget stored calibration, use the sketch defaults");
+    "  reset               forget stored calibration, use the sketch defaults\n"
+    "  version             firmware version\n"
+    "  ota                 are updates over the air on?\n"
+    "  ota key <secret>    switch them on with this key (same as ota_key on the Pi), restarts\n"
+    "  ota off             switch them off (back to OTA_KEY from the sketch), restarts");
 }
 
 static void handleCommand(String line) {
@@ -596,6 +834,29 @@ static void handleCommand(String line) {
     loadDefaults();
     emaHeight = NAN;
     Serial.println("Stored calibration erased, using sketch defaults.");
+  } else if (cmd == "version") {
+    Serial.println(FW_MARKER);
+  } else if (cmd == "ota") {
+    if (rest.startsWith("key ")) {
+      String key = rest.substring(4);
+      key.trim();
+      if (key.length() < 8 || key.indexOf(' ') >= 0) { Serial.println("The key needs 8+ characters and no spaces."); return; }
+      prefs.begin("ota", false);
+      prefs.putString("key", key);
+      prefs.end();
+      Serial.println("OTA key stored. Restarting...");
+      Serial.flush();
+      ESP.restart();
+    } else if (rest == "off") {
+      prefs.begin("ota", false);
+      prefs.clear();
+      prefs.end();
+      Serial.println("Stored OTA key removed. Restarting...");
+      Serial.flush();
+      ESP.restart();
+    } else {
+      Serial.printf("Updates over the air: %s\n", otaKey.length() ? "on" : "off (no key)");
+    }
   } else {
     Serial.printf("Unknown command '%s' - type help\n", cmd.c_str());
   }
@@ -619,7 +880,9 @@ static void pollSerial() {
 void setup() {
   Serial.begin(115200);
   delay(500);
+  Serial.println(FW_MARKER);
   loadCalibration();
+  loadOtaKey();
   analogReadResolution(12);
   pinMode(PIN_PRESSURE, INPUT);
 
@@ -645,6 +908,7 @@ void loop() {
   if (now - tTrend >= TREND_PERIOD_MS)   { tTrend = now; updateTrend(); updateTemperature(); }
   if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
   pollSerial();
+  otaLoop();
 
   delay(5);
 }

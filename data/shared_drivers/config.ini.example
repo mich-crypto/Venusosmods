@@ -59,6 +59,9 @@ device_id = 1
 custom_name = Fresh water
 # mac is optional: filtering on device_id is enough, but setting it saves CPU
 #mac = 11:22:33:44:55:66
+# Firmware updates over Bluetooth from the settings page: the same text as OTA_KEY in
+# the sketch (or "ota key <secret>" on the sender's serial console). Empty = off.
+#ota_key =
 # Publish the DS18B20 water temperature as its own temperature sensor
 # (com.victronenergy.temperature.esp32_hydro_temp). Victron documents the
 # tank /Temperature path only for Mopeka sensors, so the GUI may not show it

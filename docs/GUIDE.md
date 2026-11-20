@@ -111,6 +111,10 @@ converter still reads 5.0 V (about 4.7 V after the diode).
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
    * `USE_DS18B20`: `1` with the probe, `0` without
    * `DEVICE_ID`: leave at `1` unless you build a second sender
+   * `OTA_KEY`: a secret of your own (12+ characters, no spaces) if you want
+     to update the firmware later from the settings page over Bluetooth,
+     without a cable. Leave it `""` to switch that off. See
+     [Firmware updates over the air](#esp32-firmware-updates-over-the-air).
    * `DEFAULT_TABLE`: leave as it is. You calibrate later over USB, without
      editing code.
 
@@ -121,7 +125,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
 | Board | **ESP32S3 Dev Module** |
 | USB CDC On Boot | **Enabled** (otherwise you see no serial output) |
 | Flash Size | match your board (4 MB / 8 MB / 16 MB; 4 MB always works) |
-| Partition Scheme | Default |
+| Partition Scheme | Default (it has the two app slots that updates over the air need) |
 | Upload Speed | 921600 (use 115200 if uploads fail) |
 | Port | the new COM / `/dev/ttyACM*` / `/dev/cu.usbmodem*` port |
 
@@ -143,7 +147,8 @@ Boot* to *Disabled*.
 You should see:
 ```
 Using the default tank table from the sketch (no calibration stored)
-Advertising as VHT, MAC 34:85:18:xx:xx:xx
+VHT-FW 1.1.0 id=1 ;
+Advertising as VHT, MAC 34:85:18:xx:xx:xx, updates over the air on
 Type 'help' for calibration commands.
 signal=0.512 height=3.0mm litres=0.4 level=0.5% temp=19.6 activity=0.4
 ```
@@ -539,6 +544,36 @@ sh /data/shared_drivers/update.sh
 It downloads the latest version from GitHub, copies it over the old files and
 restarts the running services. `config.ini` is not overwritten (it isn't in
 the repository).
+
+### ESP32 firmware updates over the air
+
+Once the sender runs a firmware with an OTA key (Part 3.2, or type
+`ota key <secret>` in the Serial Monitor), new versions go over Bluetooth
+from the settings page. No cable, the sender can stay in the van.
+
+1. Settings page → **Water** tab → *Settings*: enter the same key as
+   **Firmware update key** and save (once).
+2. Arduino IDE: change the sketch, raise `FW_VERSION`, then
+   *Sketch → Export Compiled Binary*. Same board settings as in Part 3.3.
+3. Water tab → **Update firmware** → pick the file ending in **`.ino.bin`**
+   (in the sketch folder, under `build/`; not `.merged.bin` or
+   `.bootloader.bin`) → *Send to the sender*.
+
+The Pi checks the file first: is it an ESP32-S3 image of this sketch, with
+the same `DEVICE_ID`? Then it proves it knows the key (HMAC with a fresh
+random number from the sender each time, so the key never goes over the air
+and a recorded update cannot be replayed). Sending takes one to three minutes;
+the tank level keeps updating meanwhile. The sender checks the MD5 of the
+whole image before it switches to it. If anything fails (wrong key, signal
+lost, bad file), it keeps running the old firmware.
+
+From SSH it is the same with:
+```sh
+python3 /data/shared_drivers/esp32_ota.py /tmp/esp32_hydro_tank.ino.bin
+```
+`ota off` in the Serial Monitor switches updates over the air off again
+(back to the `OTA_KEY` from the sketch). With an OTA key the sender accepts
+Bluetooth connections; without one it only broadcasts, as before.
 
 ### Venus OS firmware updates
 Nothing to do: everything lives in `/data`, and `/data/rc.local` restores

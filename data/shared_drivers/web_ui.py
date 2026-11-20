@@ -38,6 +38,7 @@ from gi.repository import GLib  # noqa: E402
 import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
 import devices  # noqa: E402
+import esp32_ota  # noqa: E402
 import rawlog  # noqa: E402
 import netmon  # noqa: E402
 import notifier  # noqa: E402
@@ -51,6 +52,7 @@ OUR_PROCESSES = ('mopeka_venus.py', 'esp32_hydro_tank.py', 'fridge_venus.py')
 BUS_ITEM = 'com.victronenergy.BusItem'
 LAN_RANGES = ('192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '100.64.0.0/10')   # incl. Tailscale
 MAX_BODY = 1024 * 1024
+MAX_FIRMWARE_BODY = esp32_ota.MAX_SIZE + 1024     # POST /api/esp32_ota carries a firmware file
 CSRF_HEADER = 'x-requested-with'
 CSRF_VALUE = 'venussettings'
 TAI64_OFFSET = 4611686018427387914          # 2**62 + 10, what tai64nlocal subtracts
@@ -219,7 +221,8 @@ class Request(object):
     def __init__(self, method, path, query, headers, body, peer):
         self.method, self.path, self.query, self.headers, self.body, self.peer = \
             method, path, query, headers, body, peer
-        self.form = parse_form(body) if method == 'POST' else {}
+        binary = 'octet-stream' in headers.get('content-type', '')
+        self.form = parse_form(body) if method == 'POST' and not binary else {}
 
 
 class App(object):
@@ -357,6 +360,8 @@ class App(object):
             'GET /api/update_check': self.api_update_check,
             'POST /api/update_run': self.api_update_run,
             'GET /api/update_log': self.api_update_log,
+            'POST /api/esp32_ota': self.api_esp32_ota,
+            'GET /api/esp32_ota_log': self.api_esp32_ota_log,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
@@ -1208,6 +1213,66 @@ class App(object):
             text = ''
         return jsonr({'ok': True, 'text': text, 'running': self.update_running()})
 
+    # -------------------------------------------- ESP32 firmware over the air
+    OTA_IMAGE = '/tmp/venusosmods-esp32.bin'
+    OTA_LOG = '/tmp/venusosmods-esp32-ota.log'
+
+    def ota_running(self):
+        proc = getattr(self, 'ota_proc', None)
+        return proc is not None and proc.poll() is None
+
+    def esp32_section(self):
+        try:
+            sections = ct.parse_ini(self.read_text(self.driver_config) or '')
+        except Exception:
+            return None, {}
+        for name, values in sections.items():
+            if ct.kind_of(name, values) == 'esp32':
+                return name, values
+        return None, {}
+
+    def api_esp32_ota(self, req):
+        """Body: the .ino.bin file. Checks it and starts esp32_ota.py in the background."""
+        if self.ota_running():
+            return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
+        section, values = self.esp32_section()
+        if not section:
+            return jsonr({'ok': False, 'error': 'no water tank sender is set up'}, 400)
+        if not values.get('ota_key', '').strip():
+            return jsonr({'ok': False, 'error': 'no OTA key: enter the OTA_KEY of the sender under Settings first'}, 400)
+        try:
+            info = esp32_ota.inspect_image(req.body)
+        except esp32_ota.OtaError as e:
+            return jsonr({'ok': False, 'error': str(e)}, 400)
+        want = values.get('device_id', '1').strip() or '1'
+        if str(info['device_id']) != want:
+            return jsonr({'ok': False, 'error': 'this firmware has DEVICE_ID %d, the sender here is set up as %s: '
+                          'change DEVICE_ID in the sketch' % (info['device_id'], want)}, 400)
+        try:
+            with open(self.OTA_IMAGE, 'wb') as f:
+                f.write(req.body)
+            log_file = open(self.OTA_LOG, 'w')
+            self.ota_proc = subprocess.Popen(
+                [sys.executable, os.path.join(HERE, 'esp32_ota.py'), '--config', self.driver_config,
+                 '--section', section, self.OTA_IMAGE],
+                stdout=log_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+            log_file.close()
+        except OSError as e:
+            return jsonr({'ok': False, 'error': 'could not start the update: %s' % e}, 500)
+        return jsonr({'ok': True, 'version': info['version'], 'size': info['size'],
+                      'message': 'Firmware %s accepted, sending it to the sender.' % info['version']})
+
+    def api_esp32_ota_log(self, req):
+        try:
+            with open(self.OTA_LOG) as f:
+                text = f.read()[-6000:]
+        except OSError:
+            text = ''
+        proc = getattr(self, 'ota_proc', None)
+        running = self.ota_running()
+        return jsonr({'ok': True, 'text': text, 'running': running,
+                      'success': None if running or proc is None else proc.returncode == 0})
+
     def venus_version(self):
         try:
             with open('/opt/victronenergy/version') as f:
@@ -1617,7 +1682,8 @@ class Client(object):
             length = int(headers.get('content-length', '0') or 0)
         except ValueError:
             return Response(400, b'bad request', 'text/plain')
-        if length > MAX_BODY:
+        limit = MAX_FIRMWARE_BODY if target.split('?')[0] == '/api/esp32_ota' else MAX_BODY
+        if length > limit:
             return Response(413, b'', 'text/plain')
         body = self.buf[end + 4:]
         if len(body) < length:

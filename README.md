@@ -40,6 +40,7 @@ data/                              -> copied to /data on the Pi
     mopeka_venus.py                driver: Mopeka  -> tank
     esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature)
     fridge_venus.py                driver: fridge  -> temperature per zone
+    esp32_ota.py                   firmware update over the air (Bluetooth) for the ESP32 sender
     web_ui.py + web/index.html     settings page on port 8088: setup guide, calibration popups, drivers, dbus-serialbattery
     devices.py                     recognises Mopeka / fridge / ESP32 water senders in a Bluetooth scan
     rawlog.py                      rolling log of the raw sensor bytes (shown on the Debug tab)
@@ -85,6 +86,7 @@ small driver; everything else is shared.
 | Shutdown | SIGTERM (`svc -d`) is handled: the fridge connection is closed cleanly. |
 | Persistence | Services in `/data/etc/init.d`, linked into `/service` and re-linked at boot by `/data/rc.local`. |
 | Config format | INI rather than JSON: it can have comments and is easier to edit with `nano` over SSH. Checked by the diagnostics (MAC format, unique services, value types). |
+| ESP32 firmware updates | Over Bluetooth from the settings page (`esp32_ota.py`): a small GATT service on the sender, only when an OTA key is set. HMAC-SHA256 challenge with a one-time nonce, chunks with offsets, MD5 checked by the sender before it boots the new image; a failed update keeps the old one. |
 | Non-square tank | Height→litres table measured by filling in steps (serial commands, stored in ESP32 flash) or calculated from dimensions with `tools/tank_table.py`. |
 
 ## Tests

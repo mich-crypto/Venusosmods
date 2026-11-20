@@ -678,7 +678,7 @@ async function gasHistoryCard() {
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
-  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['temperature_service'] },
+  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['temperature_service', 'ota_key'] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
 
@@ -720,7 +720,9 @@ function deviceHeader(kind, section) {
         metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L of ' + (v['/Capacity'] == null ? '–' : (v['/Capacity'] * 1000).toFixed(0)) + ' L'),
         metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sender\'s own table'),
         metric('Water temperature', v['/Temperature'] == null ? '–' : v['/Temperature'].toFixed(1), '°C', '')));
-    actions.append(primary('Calibrate', () => flowWaterCalibrate(), !canEdit()), plain('Change the sender', open(flowWater)));
+    const fw = plain('Update firmware', () => flowWaterFirmware(section));
+    fw.disabled = !canEdit();
+    actions.append(primary('Calibrate', () => flowWaterCalibrate(), !canEdit()), plain('Change the sender', open(flowWater)), fw);
   } else {
     const zones = (st.devices || []).filter(d => d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values).sort((a, b) => a.service < b.service ? -1 : 1);
     card.append(h('h3', {}, 'Fridge ', zones[0] ? statusChip(zones[0]) : h('span', { class: 'chip' }, 'no data yet')),
@@ -1028,6 +1030,57 @@ async function flowWater(w) {
 }
 
 // Quick (empty + full) or step by step (pour in known amounts). Buttons only.
+// Firmware update over Bluetooth: upload the .ino.bin, the Pi checks it and sends it to the sender
+function flowWaterFirmware(section) {
+  const w = wizOpen('Update the sender firmware');
+  const keySet = !!(section.secret_set || {}).ota_key;
+  const file = h('input', { type: 'file', accept: '.bin,application/octet-stream' });
+  const err = h('div', { class: 'banner bad', hidden: true });
+  const watch = () => {
+    const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:40vh' }, 'starting…');
+    const status = h('div', { class: 'muted' }, 'Keep this window open. It takes about one to three minutes; the water level keeps updating meanwhile.');
+    w.show(h('h4', {}, 'Sending the firmware'), status, pre);
+    let over = false;
+    w.every(1500, async () => {
+      if (over) return;
+      const x = await api('/api/esp32_ota_log');
+      if (!x.ok || over) return;
+      pre.textContent = x.data.text || '(no output yet)';
+      if (x.data.running) return;
+      over = true;
+      if (x.data.success) { clear(status).append(h('div', { class: 'banner ok' }, 'Done. The sender restarted with the new firmware.')); toast('Firmware updated'); }
+      else clear(status).append(h('div', { class: 'banner bad' }, 'Not updated. The sender keeps its old firmware; see the log below.'));
+    });
+  };
+  const send = async () => {
+    err.hidden = true;
+    const f = file.files[0];
+    if (!f) { err.textContent = 'Pick the .ino.bin file first.'; err.hidden = false; return; }
+    let r, data = {};
+    try {
+      r = await fetch('/api/esp32_ota', { method: 'POST', headers: { 'X-Requested-With': 'venussettings', 'Content-Type': 'application/octet-stream' }, body: f });
+      data = await r.json();
+    } catch (e) { data = { error: 'No connection to the Pi' }; }
+    if (!r || !r.ok || data.ok === false) { err.textContent = data.error || ('Upload failed (' + (r ? r.status : 'no connection') + ')'); err.hidden = false; return; }
+    toast(data.message);
+    watch();
+  };
+  w.show(
+    h('div', { class: 'muted' }, 'Sends a new firmware to the water sender over Bluetooth, no cable needed. The sender checks it before it starts it; if anything goes wrong it keeps running the old one.'),
+    h('h4', {}, 'Before the first time'),
+    h('ol', { class: 'muted' },
+      h('li', {}, 'In the sketch, set OTA_KEY to a secret of your own (12+ characters, no spaces) and flash it once by USB. Or type "ota key <secret>" in the Serial Monitor.'),
+      h('li', {}, 'Enter the same key under Settings on this tab ("Firmware update key") and save.' + (keySet ? ' (A key is saved.)' : ''))),
+    h('h4', {}, 'Each update'),
+    h('ol', { class: 'muted' },
+      h('li', {}, 'Arduino IDE: Sketch → Export Compiled Binary (board "ESP32S3 Dev Module", same partition scheme as before).'),
+      h('li', {}, 'Pick the file ending in .ino.bin (not .merged.bin or .bootloader.bin) and press Send.')),
+    keySet ? null : h('div', { class: 'banner warn' }, 'No firmware update key is saved yet: enter it under Settings first.'),
+    h('div', { class: 'row', style: 'margin:12px 0' }, file), err,
+    nav(primary('Send to the sender', send, !keySet)));
+  api('/api/esp32_ota_log').then(x => { if (x.ok && x.data.running) watch(); });
+}
+
 async function flowWaterCalibrate(w) {
   w = w || wizOpen('Calibrate the water tank');
   w.title('Calibrate the water tank');

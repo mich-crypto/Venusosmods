@@ -565,6 +565,8 @@ class VenusPythonTests(unittest.TestCase):
         'socket',
         # in the standard library; netmon.py imports it guarded and the diagnostics WARN when it is missing
         'json',
+        # esp32_ota.py imports them guarded, with md5sum and its own SHA-256 as the fallback
+        'hashlib', 'hmac',
     }
 
     def test_only_available_modules(self):

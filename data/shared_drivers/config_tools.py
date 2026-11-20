@@ -202,6 +202,8 @@ SCHEMA = {
             F('device_id', 'int', 'Sender ID', 'Must match DEVICE_ID in the ESP32 firmware.',
               min=0, max=255),
             F('mac', 'mac', 'Sender address', 'Optional; the ID is enough.'),
+            F('ota_key', 'secret', 'Firmware update key', 'The OTA_KEY of the sender (no spaces). Needed for '
+              'updating its firmware over Bluetooth; empty = updates off.'),
             F('temperature_service', 'bool', 'Publish water temperature',
               'As its own temperature sensor (needs the DS18B20 probe).', options=YES_NO, default='no'),
             F('temperature_name', 'text', 'Temperature name', '', default='Water temperature'),

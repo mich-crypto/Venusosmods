@@ -28,11 +28,16 @@ class GattClient(object):
 
     def __init__(self, bus, mac, write_uuid, notify_uuid, on_notify,
                  adapter='hci0', timeout_s=45, keep_connected=False,
-                 scanner=None, connect_attempts=3):
+                 scanner=None, connect_attempts=3, extra_uuids=()):
         self._bus = bus
         self.mac = mac.upper()
         self._write_uuid = write_uuid.lower()
         self._notify_uuid = notify_uuid.lower()
+        self._extra_uuids = [u.lower() for u in extra_uuids]   # more characteristics to write to
+        self.char_paths = {}
+        self.on_written = None       # on_written(uuid or None) after each acknowledged write
+        self._target = None
+        self._writing = False
         self._on_notify = on_notify
         self._timeout_s = timeout_s
         self.keep_connected = keep_connected
@@ -118,6 +123,26 @@ class GattClient(object):
             return
         self._fail('connect failed after %d attempt(s): %s' % (self._attempt, text))
 
+    def send(self, frames, uuid=None):
+        """
+        Queue more writes during an exchange, e.g. after a notification answered.
+        uuid = one of extra_uuids (default: the write characteristic).
+        """
+        if not self.busy:
+            return
+        self._pending.extend(frames if uuid is None else [(uuid.lower(), f) for f in frames])
+        if self._ready and not self._writing:
+            self._write_next()
+
+    def mtu(self, uuid=None):
+        """ATT MTU of the connection as BlueZ reports it (BlueZ 5.62+), or None."""
+        path = self.char_paths.get((uuid or self._write_uuid).lower())
+        try:
+            props = dbus.Interface(self._bus.get_object(BLUEZ, path), PROPS_IFACE)
+            return int(props.Get(CHAR_IFACE, 'MTU'))
+        except Exception:
+            return None
+
     def finish(self):
         """Caller has what it needs: end the exchange successfully."""
         if self.busy:
@@ -161,17 +186,21 @@ class GattClient(object):
         self._setting_up = True
         om = dbus.Interface(self._bus.get_object(BLUEZ, '/'), OM_IFACE)
         self._write_path = self._notify_path = None
+        self.char_paths = {}
         for path, ifaces in om.GetManagedObjects().items():
             if not str(path).startswith(self.dev_path + '/') or CHAR_IFACE not in ifaces:
                 continue
             uuid = str(ifaces[CHAR_IFACE]['UUID']).lower()
+            self.char_paths[uuid] = str(path)
             if uuid == self._write_uuid:
                 self._write_path = str(path)
             elif uuid == self._notify_uuid:
                 self._notify_path = str(path)
-        if not (self._write_path and self._notify_path):
+        missing = [u for u in self._extra_uuids if u not in self.char_paths]
+        if not (self._write_path and self._notify_path) or missing:
             self._fail('GATT characteristics %s / %s not found - different fridge protocol?'
-                       % (self._write_uuid[4:8], self._notify_uuid[4:8]))
+                       % (self._write_uuid[4:8], self._notify_uuid[4:8]) if not missing else
+                       'GATT characteristic %s not found' % missing[0])
             return
         self._receivers.append(self._bus.add_signal_receiver(
             self._on_char_props, dbus_interface=PROPS_IFACE,
@@ -187,16 +216,30 @@ class GattClient(object):
         self._write_next()
 
     def _write_next(self):
+        self._writing = False
         if not self.busy:
             return
         if not self._pending:
             return   # all written, waiting for notifications / finish()
         chunk = self._pending.pop(0)
-        char = dbus.Interface(self._bus.get_object(BLUEZ, self._write_path), CHAR_IFACE)
+        path, self._target = self._write_path, None
+        if isinstance(chunk, tuple):
+            self._target, chunk = chunk
+            path = self.char_paths[self._target]
+        self._writing = True
+        char = dbus.Interface(self._bus.get_object(BLUEZ, path), CHAR_IFACE)
         char.WriteValue(dbus.Array(bytearray(chunk), signature='y'),
                         dbus.Dictionary({'type': dbus.String('request')}, signature='sv'),
-                        reply_handler=self._write_next,
+                        reply_handler=self._written,
                         error_handler=lambda e: self._fail('write failed: %s' % e))
+
+    def _written(self, *args):
+        if self.on_written is not None and self.busy:
+            try:
+                self.on_written(self._target)
+            except Exception:
+                log.exception('write handler failed')
+        self._write_next()
 
     def _on_char_props(self, interface, changed, invalidated):
         if 'Value' in changed:
@@ -218,6 +261,8 @@ class GattClient(object):
 
     def _end(self, ok, error):
         self.busy = False
+        self._writing = False
+        self._pending = []
         if self._timer is not None:
             GLib.source_remove(self._timer)
             self._timer = None
