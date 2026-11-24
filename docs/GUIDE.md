@@ -658,7 +658,7 @@ if you forget it. Open the address in Safari and add it to the home screen.
   then the card shows how, with the download links.
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
-  services). The page checks for a new version by itself every few hours, also
+  services; the page then reloads itself with the new version). The page checks for a new version by itself every few hours, also
   for new water sender firmware; when there is one, a banner on every tab says
   so (*Show update* / *Later*) and the Update tab gets a dot. The Update tab
   also has the sender card.
