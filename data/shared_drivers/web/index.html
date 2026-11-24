@@ -517,6 +517,14 @@ function confirmThen(text, fn) { if (window.confirm(text)) return fn(); }
 const senderBusy = () => !!(S.state && S.state.sender_update);
 function renderBusyBanner() {
   const box = clear($('#busybanner'));
+  const bt = S.state && S.state.bluetooth;
+  if (bt === 'off' || bt === 'missing') {
+    box.append(h('div', { class: 'banner bad upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
+      h('b', {}, bt === 'off' ? 'The Pi\'s Bluetooth is switched off' : 'The Pi has no Bluetooth adapter'),
+      h('div', { class: 'muted' }, bt === 'off'
+        ? 'No sensor can be heard (water, gas, fridge). Switch it on in Venus OS: Settings → Bluetooth → Enabled.'
+        : 'No Bluetooth adapter found: check Venus OS Settings → Bluetooth, or plug in the USB Bluetooth adapter.'))));
+  }
   if (!senderBusy()) return;
   box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
     h('b', {}, 'Water level sensor firmware update running'),

@@ -130,7 +130,8 @@ class BlueZScanner(object):
             obj = self._bus.get_object(BLUEZ, self._adapter_path)
             props = dbus.Interface(obj, PROPS_IFACE)
             if not props.Get(ADAPTER_IFACE, 'Powered'):
-                log.warning('Bluetooth adapter %s is not powered', self._adapter_name)
+                log.warning('Bluetooth adapter %s is not powered (Venus OS: Settings > Bluetooth > Enabled)',
+                            self._adapter_name)
                 return
             # Advertisement signals are broadcast to every D-Bus client, so as
             # long as anyone keeps the adapter scanning we receive them. Only
