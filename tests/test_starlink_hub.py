@@ -311,3 +311,23 @@ def sl_frame(message):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RunAsyncTests(unittest.TestCase):
+    def test_a_missing_command_still_answers(self):
+        """The error text must outlive the except block (Python deletes `e` there)."""
+        calls, got = [], []
+        saved = getattr(starlink_hub.GLib, 'idle_add', None)
+        starlink_hub.GLib.idle_add = lambda f, *a: calls.append(f) or 1
+        try:
+            starlink_hub.run_async(['definitely-not-a-command-xyz'], lambda rc, out: got.append((rc, out)))
+            for f in calls:
+                f()
+        finally:
+            if saved is None:
+                del starlink_hub.GLib.idle_add
+            else:
+                starlink_hub.GLib.idle_add = saved
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][0], 127)
+        self.assertIn(b'definitely-not-a-command-xyz', got[0][1])

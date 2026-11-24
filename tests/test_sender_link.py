@@ -85,6 +85,24 @@ class DriverLinkTests(unittest.TestCase):
         d._link_tick()
         self.assertIn('no broadcast', d.tank.service['/Hydro/LinkStatus'])
 
+    def test_old_firmware_is_tried_only_once_an_hour(self):
+        d = Esp32HydroDriver('s', section(''))
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        sent = []
+
+        class Client(object):
+            busy = False
+
+            def exchange(inner, frames, done):
+                sent.append(frames)
+                done(False, 'GATT characteristics 0002 / 0003 not found')
+        d._client = lambda: Client()
+        d.gatt = Client()
+        d._link_tick()
+        d._link_tick()                                          # 5 minutes later: not again
+        self.assertEqual(len(sent), 1)
+        self.assertIn('older than 2.7', d.tank.service['/Hydro/LinkStatus'])
+
     def test_the_sender_address_is_learned_from_its_broadcast(self):
         d = Esp32HydroDriver('s', section(''))
         d.handle_advertisement('AA:BB:CC:DD:EE:01', {0xFFFF: proto.build(1, 50, 37, 75, 200, sequence=1)}, -60)
