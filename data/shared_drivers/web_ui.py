@@ -233,6 +233,7 @@ class App(object):
         self.password = opts.get('password', '')
         self.html = opts.get('html', os.path.join(HERE, 'web', 'index.html'))
         self.failures = {}                  # ip -> [count, first time]
+        self.bad_headers = {}               # ip -> wrong Authorization headers seen in the current minute
         self._bus = None
         self.recorder = battery_debug.Recorder(interval=opts.get('sample_s', 10))
         self.state_dir = opts.get('state_dir') or os.path.join(HERE, 'state')
@@ -278,11 +279,28 @@ class App(object):
             return False
         return count >= 8
 
-    def note_failure(self, ip):
+    def note_failure(self, ip, header=''):
         count, first = self.failures.get(ip, (0, time.time()))
         if time.time() - first > 60:
             count, first = 0, time.time()
+            self.bad_headers.pop(ip, None)
+        seen = self.bad_headers.setdefault(ip, set())
+        if header in seen:
+            return              # the same wrong password again (a browser resending it) is not a new guess
+        if len(seen) < 32:
+            seen.add(header)
         self.failures[ip] = (count + 1, first)
+
+    def check_password(self, req, ip):
+        """A request with a password: throttled after too many wrong ones, wrong ones counted. None = go on."""
+        header = req.headers.get('authorization')
+        if not header or not self.password:
+            return None
+        if self.throttled(ip):
+            return 'throttled'
+        if not self.authed(req):
+            self.note_failure(ip, header)
+        return None
 
     def handle(self, req):
         try:
@@ -293,15 +311,17 @@ class App(object):
 
     def _route(self, req):
         ip = req.peer[0] if req.peer else ''
+        # every request can carry the password (the page's own login sends it as a header), so
+        # wrong ones are counted here, for all routes alike
+        if self.check_password(req, ip) == 'throttled':
+            if req.path.startswith('/api/'):
+                return jsonr({'ok': False, 'error': 'too many wrong passwords, wait a minute'}, 429)
+            return Response(429, 'Too many wrong passwords, wait a minute.', 'text/plain')
         if req.method == 'GET' and req.path == '/':
             return self.page()
         if req.method == 'GET' and req.path == '/unlock':
-            if self.throttled(ip):
-                return Response(429, 'Too many wrong passwords, wait a minute.', 'text/plain')
             if self.authed(req):
                 return Response(302, b'', 'text/plain', {'Location': '/'})
-            if self.password and req.headers.get('authorization'):
-                self.note_failure(ip)
             return Response(401, 'Password needed' if self.password else
                             'No password set in config.ini ([web] password): read-only',
                             'text/plain', {'WWW-Authenticate': 'Basic realm="Venus settings"'})
@@ -315,16 +335,12 @@ class App(object):
         writes = req.method == 'POST'
         authed = self.authed(req)
         if writes:
-            if self.throttled(ip):
-                return jsonr({'ok': False, 'error': 'too many attempts, wait a minute'}, 429)
             if not self.password:
                 return jsonr({'ok': False, 'error': 'read-only: set a password in config.ini '
                               '([web] password) to enable changes'}, 403)
             if req.headers.get(CSRF_HEADER) != CSRF_VALUE:
                 return jsonr({'ok': False, 'error': 'missing request header'}, 403)
             if not authed:
-                if req.headers.get('authorization'):
-                    self.note_failure(ip)
                 return jsonr({'ok': False, 'error': 'locked', 'locked': True}, 401)
         elif self.password and not authed:
             return jsonr({'ok': False, 'error': 'locked', 'locked': True}, 401)
