@@ -37,6 +37,7 @@ h2:first-child { margin-top:0; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:12px 14px; margin-bottom:10px; }
 .grid .card { margin:0; }
+h4.group { font-size:.68rem; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); font-weight:600; margin:16px 0 6px; padding-top:10px; border-top:1px solid var(--line-soft); }
 .card h3, .chart h3 { font-size:.7rem; margin:0 0 6px; display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:.16em;
   text-transform:uppercase; color:var(--muted); }
 .big { font-size:1.9rem; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
@@ -74,6 +75,9 @@ input.bad, select.bad { border-color:var(--bad); }
 textarea { max-width:100%; box-sizing:border-box; min-height:300px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85rem; }
 details.adv { margin:6px 0 0; } details.adv > summary { cursor:pointer; color:var(--muted); padding:6px 0; }
 .switch { display:inline-flex; align-items:center; gap:10px; cursor:pointer; }
+.lockwrap { position:relative; display:inline-block; }
+.chipbtn { cursor:pointer; background:transparent; font-family:inherit; }
+.lockmenu { position:absolute; right:0; top:calc(100% + 6px); background:var(--card); border:1px solid var(--line); border-radius:4px; padding:6px; z-index:20; min-width:140px; }
 .switch input { width:46px; height:26px; appearance:none; -webkit-appearance:none; background:#262626; border:1px solid var(--line);
   border-radius:99px; position:relative; transition:.15s; margin:0; cursor:pointer; flex:none; }
 .switch input::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#888; transition:.15s; }
@@ -125,7 +129,7 @@ dialog pre { background:var(--code); border:1px solid var(--line-soft); border-r
 .hero .metric { padding:14px 14px; border-right:1px solid var(--line); min-width:0; }
 .hero .metric:last-child { border-right:0; }
 .metric .label, .tile .k, .stat .k { color:var(--muted); font-size:.64rem; letter-spacing:.18em; text-transform:uppercase; font-weight:600; }
-.metric .num { font-size:clamp(40px,7vw,76px); font-weight:600; line-height:1.05; font-variant-numeric:tabular-nums; letter-spacing:-.02em; margin:6px 0 2px; }
+.metric .num { font-size:clamp(26px,5vw,44px); font-weight:600; line-height:1.05; font-variant-numeric:tabular-nums; letter-spacing:-.02em; margin:6px 0 2px; }
 .metric .num small { font-size:.28em; font-weight:400; color:var(--muted); letter-spacing:.1em; margin-left:6px; text-transform:uppercase; }
 .metric .sub { color:var(--muted); font-size:.8rem; }
 .tiles, .stats { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); border-top:1px solid var(--line); border-left:1px solid var(--line);
@@ -215,7 +219,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
 .fmap .note { position:absolute; left:6px; bottom:4px; font-size:.7rem; color:#ccc; background:rgba(0,0,0,.6); padding:1px 5px; border-radius:2px; max-width:80%; }
 .fenceline { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-bottom:12px; }
 @media (max-width:700px) {
-  .hero { grid-template-columns:1fr !important; } .hero .metric { padding:14px 16px; border-right:0; border-bottom:1px solid var(--line); } .hero .metric:last-child { border-bottom:0; }
+  .hero { grid-template-columns:repeat(2,1fr) !important; } .hero .metric { padding:10px 12px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); } .hero .metric:nth-child(2n) { border-right:0; }
   .ctl .sp { grid-template-columns:42px minmax(80px,1fr) 42px 4.6ch; gap:8px; } .ctl .sp .val { font-size:1.5rem; }
   .tile .v, .stat .v { font-size:1.3rem; } .two { grid-template-columns:1fr; } .big { font-size:1.8rem; } main { padding:12px; }
 }
@@ -360,7 +364,7 @@ function ago(sec) {
 function renderTabs() {
   const nav = clear($('#tabs'));
   for (const [id, label] of TABS) {
-    const dot = id === 'update' && (S.upd && S.upd.available && S.upd.installed || senderUpdate());
+    const dot = id === 'update' ? !!(S.upd && S.upd.available && S.upd.installed) : id === 'water' && senderUpdate();
     nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label, dot ? h('span', { class: 'upd-dot', title: 'update available' }) : null));
   }
 }
@@ -371,12 +375,19 @@ function renderLock() {
   if (!st.password_set) {
     box.append(h('span', { class: 'chip warn', title: 'Set a password in config.ini ([web] password) to be able to change settings' }, 'Read-only'));
   } else if (st.authed) {
-    box.append(h('button', { type: 'button', class: 'btn small', style: 'margin-right:10px', onclick: () => openSetup() }, 'Setup guide'), h('span', { class: 'chip ok' }, 'Unlocked'),
-      ...(S.auth ? [h('button', { type: 'button', class: 'btn small', style: 'margin-left:10px', onclick: lock }, 'Lock')] : []));
+    // "Unlocked" opens a small menu with Lock, so the bar keeps two buttons
+    const menu = h('div', { class: 'lockmenu', hidden: true },
+      S.auth ? h('button', { type: 'button', class: 'btn small', onclick: () => { menu.hidden = true; lock(); } }, 'Lock')
+             : h('div', { class: 'muted', style: 'padding:4px 6px' }, 'Unlocked by the browser\'s login: close the browser to lock.'));
+    const chip = h('button', { type: 'button', class: 'chip ok chipbtn', 'aria-haspopup': 'true', onclick: ev => { ev.stopPropagation(); menu.hidden = !menu.hidden;
+      if (!menu.hidden) document.addEventListener('click', () => { menu.hidden = true; }, { once: true }); } }, 'Unlocked ▾');
+    box.append(h('button', { type: 'button', class: 'btn small', style: 'margin-right:10px', onclick: () => openSetup() }, 'Setup guide'),
+      h('span', { class: 'lockwrap' }, chip, menu));
   } else {
     box.append(h('button', { type: 'button', class: 'btn primary small', onclick: unlock }, 'Unlock to edit'));
   }
-  $('#hostline').textContent = [st.host, st.venus && 'Venus OS ' + st.venus].filter(Boolean).join(' · ');
+  $('#hostline').textContent = st.version ? 'v' + st.version : '';
+  $('#hostline').style.textTransform = 'none';
 }
 
 async function selectTab(id) {
@@ -473,7 +484,7 @@ async function tabOverview(main) {
       : s.enabled ? h('span', { class: 'chip bad' }, 'stopped') : h('span', { class: 'chip' }, 'off');
     const held = senderBusy() && s.name === 'esp32_hydro';    // stopped on purpose during the sender update
     return h('tr', {},
-      h('td', {}, s.name), h('td', {}, held ? h('span', { class: 'chip warn' }, 'paused: sender update') : chip),
+      h('td', {}, s.name), h('td', {}, held ? h('span', { class: 'chip warn' }, 'paused: sensor update') : chip),
       h('td', {}, h('div', { class: 'row' },
         h('button', { class: 'btn small', onclick: () => showLog(s.name) }, 'Log'),
         s.enabled ? h('button', { class: 'btn small', disabled: !canEdit() || held, onclick: () => svcRestart(s.name) }, 'Restart') : null,
@@ -508,7 +519,7 @@ function renderBusyBanner() {
   const box = clear($('#busybanner'));
   if (!senderBusy()) return;
   box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
-    h('b', {}, 'Water sender firmware update running'),
+    h('b', {}, 'Water level sensor firmware update running'),
     h('div', { class: 'muted' }, 'Don\'t restart the water driver, reboot the Pi or update the software until it has finished (a few minutes). The page blocks it meanwhile.'))));
 }
 
@@ -765,7 +776,9 @@ async function gasHistoryCard() {
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
-  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['wifi_mode', 'wifi_ssid', 'wifi_password', 'sender_password', 'temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name'] },
+  esp32: { title: 'Water tank', what: 'water level sensor', add: flowWater, simple: [],
+    groups: [['Connection', ['wifi_mode', 'wifi_ssid', 'wifi_password', 'sender_password']],
+             ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']]] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
 
@@ -805,9 +818,7 @@ function tankSvg(hmm, litres, cap, id) {
     s += '<line x1="-18" x2="0" y1="' + (H - t) + '" y2="' + (H - t) + '" style="stroke:var(--tank-line);stroke-width:3"/>' +
       '<text x="-28" y="' + (H - t + 14) + '" text-anchor="end" style="fill:var(--tank-text)">' + t + '</text>';
   }
-  s += '<path d="' + shape + '" style="fill:none;stroke:var(--tank-line);stroke-width:6;stroke-linejoin:round"/>' +
-    '<circle cx="60" cy="' + (H - 20) + '" r="16" style="fill:var(--tank-line)"><title>sensor</title></circle>' +
-    '<text x="' + (XC + 60) + '" y="' + (H - 40) + '" style="fill:var(--tank-text);font-size:40px">wheel arch</text>';
+  s += '<path d="' + shape + '" style="fill:none;stroke:var(--tank-line);stroke-width:6;stroke-linejoin:round"/>';
   if (h != null) {
     const y = H - h, ly = Math.max(40, Math.min(y - 16, H - 20));
     s += '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" clip-path="url(#' + id + ')" style="stroke:var(--tank-line);stroke-width:3;stroke-dasharray:14 10"/>' +
@@ -836,13 +847,12 @@ function deviceHeader(kind, section) {
     card.append(h('h3', {}, 'Water tank ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
       h('div', { class: 'hero', style: 'grid-template-columns:repeat(2,1fr);margin:8px 0 0' },
         metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L of ' + (v['/Capacity'] == null ? '–' : (v['/Capacity'] * 1000).toFixed(0)) + ' L'),
-        metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sender\'s own table'),
-        v['/Temperature'] == null ? null : metric(section.values.temperature_name || 'Temperature 1', v['/Temperature'].toFixed(1), '°C', 'probe 1'),
-        v['/Hydro/Temperature2'] == null ? null : metric(section.values.temperature2_name || 'Temperature 2', v['/Hydro/Temperature2'].toFixed(1), '°C', 'probe 2')));
-    const pic = h('div', { style: 'margin:12px 0 0' });
+        metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sensor\'s own table'),
+        v['/Temperature'] == null ? null : metric(section.values.temperature_name || 'Temperature 1', v['/Temperature'].toFixed(1), '°C', ''),
+        v['/Hydro/Temperature2'] == null ? null : metric(section.values.temperature2_name || 'Temperature 2', v['/Hydro/Temperature2'].toFixed(1), '°C', '')));
+    const pic = h('div', { style: 'margin:10px auto 0;max-width:330px' });
     pic.innerHTML = tankSvg(v['/Hydro/HeightMm'], v['/Remaining'] == null ? null : v['/Remaining'] * 1000, v['/Capacity'] == null ? null : v['/Capacity'] * 1000, 'pi-tank');
-    card.append(pic);
-    actions.append(primary('Calibrate', () => flowWaterCalibrate(), !canEdit()), plain('Change the sender', open(flowWater)));
+    card.append(pic);   // Calibrate and Change the sensor are in Settings below
   } else {
     const zones = (st.devices || []).filter(d => d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values).sort((a, b) => a.service < b.service ? -1 : 1);
     card.append(h('h3', {}, 'Fridge ', zones[0] ? statusChip(zones[0]) : h('span', { class: 'chip' }, 'no data yet')),
@@ -852,7 +862,7 @@ function deviceHeader(kind, section) {
         h('div', { class: 'muted' }, 'No reading yet. The first one can take a minute. If it never comes, close the phone app and press "Change the fridge" to scan again.'));
     actions.append(plain('Change the fridge', open(flowFridge)));
   }
-  if (!dev && kind !== 'fridge') card.append(h('div', { class: 'muted', style: 'margin-top:8px' }, 'Waiting for the first reading. If nothing arrives within a minute, press "Change the ' + (kind === 'mopeka' ? 'sensor' : 'sender') + '" to scan again.'));
+  if (!dev && kind !== 'fridge') card.append(h('div', { class: 'muted', style: 'margin-top:8px' }, 'Waiting for the first reading. If nothing arrives within a minute, press "Change the ' + (kind === 'mopeka' ? 'sensor' : 'sensor') + '" to scan again.'));
   card.append(actions);
   return card;
 }
@@ -887,7 +897,23 @@ async function tabDevice(kind) {
   const forget = kind === 'mopeka' ? h('div', { class: 'row' }, h('button', { class: 'btn small', disabled: !canEdit(), onclick: () =>
     confirmThen('Forget the paired sensor? Then press the sync button on the sensor you want to use.', () => post('/api/pair_reset', { section: section.section })) }, 'Forget the paired sensor')) : null;
   // Everything else (names, VRM instance, Bluetooth adapter, timeouts) is set in Venus OS or in config.ini under Files & logs
-  if (simple.length || forget) main.append(h('div', { class: 'card' }, h('h3', {}, 'Settings'), simple.map(row), forget));
+  if (spec.groups) {
+    const card = h('div', { class: 'card' }, h('h3', {}, 'Settings'));
+    for (const [title, keys] of spec.groups) {
+      card.append(h('h4', { class: 'group' }, title), ...keys.map(k => byKey[k]).filter(Boolean).map(row));
+    }
+    if (kind === 'esp32') {
+      card.append(h('h4', { class: 'group' }, 'Calibration'), h('div', { class: 'row' },
+        primary('Calibrate', () => flowWaterCalibrate(), !canEdit()),
+        plain('Change the water level sensor', () => { const w = wizOpen(spec.title); flowWater(w); w.back = () => openSetup(); })));
+      // the van Wi-Fi name and password only matter for "Join the van Wi-Fi"
+      const mode = form.fields.wifi_mode && form.fields.wifi_mode.input;
+      const van = ['wifi_ssid', 'wifi_password'].map(k => form.fields[k] && form.fields[k].input.closest('.field')).filter(Boolean);
+      const show = () => van.forEach(el => { el.style.display = mode && mode.value === 'van' ? '' : 'none'; });
+      if (mode) { mode.addEventListener('change', show); show(); }
+    }
+    main.append(card);
+  } else if (simple.length || forget) main.append(h('div', { class: 'card' }, h('h3', {}, 'Settings'), simple.map(row), forget));
 }
 
 // inverse of the "fraction:percent" bottle curve (no curve = straight line): how far up the bottle a level is
@@ -1001,7 +1027,7 @@ async function openSetup() {
       h('div', { class: 'choices' },
         choice('Gas bottle level', 'Mopeka Check sensor under the bottle', () => flowGas(w), state('gas')),
         choice('Fridge', 'Hyckes / Alpicool Bluetooth fridge', () => flowFridge(w), state('fridge')),
-        choice('Water tank', 'Self-built ESP32 water sender', () => flowWater(w), state('water')),
+        choice('Water tank', 'Self-built ESP32 water level sensor', () => flowWater(w), state('water')),
         choice('Starlink', 'Connection quality and speed', () => flowStarlink(w), d.starlink.reachable ? ['dish found', 'ok'] : ['not reached', '']),
         choice('Battery (JK BMS)', 'Needs the dbus-serialbattery driver', () => flowBattery(w), d.battery.found ? ['found', 'ok'] : (d.battery.installed ? ['installed', 'warn'] : ['not installed', ''])),
         choice('Where do I see it in Venus OS?', 'A short tour of the Remote Console', () => flowWhere(w))),
@@ -1143,14 +1169,14 @@ async function flowFridge(w) {
 async function flowWater(w) {
   w.title('Water tank');
   const pick = { mac: null, id: '1', name: 'Fresh water' };
-  const stepScan = () => w.show(h('ol', { class: 'steps' }, h('li', {}, 'Power up the ESP32 water sender (USB or 5 V).'), h('li', {}, 'It sends every couple of seconds; the Pi will see it here.')),
-    scanPanel(w, { kinds: ['water'], what: 'the water sender', onPick: d => { pick.mac = d.mac; pick.id = String(d.device_id); stepName(); },
-      tips: ['Check the sender has power and its blue LED blinks.', 'Move the Pi closer for the first try.', 'The firmware has to be uploaded first (Part 3 of the guide).'] }), backNav(w));
+  const stepScan = () => w.show(h('ol', { class: 'steps' }, h('li', {}, 'Power up the ESP32 water level sensor (USB or 5 V).'), h('li', {}, 'It sends every couple of seconds; the Pi will see it here.')),
+    scanPanel(w, { kinds: ['water'], what: 'the water level sensor', onPick: d => { pick.mac = d.mac; pick.id = String(d.device_id); stepName(); },
+      tips: ['Check the sensor has power and its blue LED blinks.', 'Move the Pi closer for the first try.', 'The firmware has to be uploaded first (Part 3 of the guide).'] }), backNav(w));
   const stepName = () => {
     const name = h('input', { type: 'text', value: pick.name, style: 'max-width:320px' });
     w.show(h('h4', {}, 'What should the tank be called in Venus OS?'), name, nav(plain('Back', stepScan), primary('Add the tank', async () => {
       pick.name = name.value.trim() || 'Fresh water';
-      await addDevice(w, 'water', { mac: pick.mac, device_id: pick.id, name: pick.name }, () => doneScreen(w, 'water', 'The water tank is added. It uses the sender\'s own calibration until you calibrate it here.',
+      await addDevice(w, 'water', { mac: pick.mac, device_id: pick.id, name: pick.name }, () => doneScreen(w, 'water', 'The water tank is added. It uses the sensor\'s own calibration until you calibrate it here.',
         primary('Calibrate it now', () => flowWaterCalibrate(w))));
     })));
   };
@@ -1169,7 +1195,7 @@ async function flowWaterCalibrate(w) {
   const refresh = async () => {
     const dev = deviceOf(await freshState(), 'water'), v = dev ? dev.values : {};
     height = v['/Hydro/HeightMm'] == null ? null : v['/Hydro/HeightMm'];
-    clear(live).append(h('div', { class: 'bigval' }, height == null ? '–' : height + ' mm'), h('div', { class: 'muted' }, 'water height at the sender · shown as ' + (v['/Level'] == null ? '–' : Math.round(v['/Level']) + ' %')));
+    clear(live).append(h('div', { class: 'bigval' }, height == null ? '–' : height + ' mm'), h('div', { class: 'muted' }, 'water height at the sensor · shown as ' + (v['/Level'] == null ? '–' : Math.round(v['/Level']) + ' %')));
     return height;
   };
   w.every(2000, async () => { if ($('#wiz .livebox')) await refresh(); });
@@ -1185,7 +1211,7 @@ async function flowWaterCalibrate(w) {
     w.show(live, h('div', { class: 'choices' },
       choice('Quick: empty and full', 'Pick the tank size, then press when empty and when full. Good for a straight-sided tank.', quick),
       choice('Accurate: fill it in steps', 'Pour in known amounts and press each time. Best for tanks with an odd shape, like a wheel-arch tank.', stepwise),
-      choice('Use the sender\'s own table again', 'Removes the calibration made here', async () => { if (await api('/api/driver_config', { section: section.section, restart: '1', 'f.level_table': '', 'f.capacity_l': '' }).then(r => r.ok)) done('Back to the sender\'s own calibration.'); })),
+      choice('Use the sensor\'s own table again', 'Removes the calibration made here', async () => { if (await api('/api/driver_config', { section: section.section, restart: '1', 'f.level_table': '', 'f.capacity_l': '' }).then(r => r.ok)) done('Back to the sensor\'s own calibration.'); })),
     nav(plain('Close', w.close)));
   };
   const quick = () => {
@@ -1196,8 +1222,8 @@ async function flowWaterCalibrate(w) {
     draw();
     w.show(h('h4', {}, 'How big is the tank?'), chips, size.node, h('h4', { style: 'margin-top:18px' }, 'Record the two ends'), live, status,
       h('div', { class: 'row', style: 'margin-top:8px' },
-        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sender', true); pts.empty = x; draw(); } }, 'The tank is empty now'),
-        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sender', true); pts.full = x; draw(); } }, 'The tank is full now')),
+        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sensor', true); pts.empty = x; draw(); } }, 'The tank is empty now'),
+        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sensor', true); pts.full = x; draw(); } }, 'The tank is full now')),
       nav(plain('Back', home), primary('Save', async () => {
         if (pts.empty == null || pts.full == null || !(pts.full > pts.empty)) return toast('Record empty first, then full (the full height must be higher).', true);
         if (await save([[pts.empty, 0], [pts.full, size.get()]], size.get())) done('Saved: ' + size.get() + ' L between ' + pts.empty + ' and ' + pts.full + ' mm.');
@@ -1213,12 +1239,12 @@ async function flowWaterCalibrate(w) {
     };
     const start = () => w.show(h('h4', {}, 'Step 1: empty tank'), h('div', { class: 'muted' }, 'Drain the tank as far as it goes, then press the button.'), live,
       nav(plain('Back', home), primary('The tank is empty: start', async () => {
-        const x = await refresh(); if (x == null) return toast('No reading from the sender', true);
+        const x = await refresh(); if (x == null) return toast('No reading from the sensor', true);
         points.length = 0; points.push([x, 0]); total = 0; ready = true; fill();
       })));
     const add = n => { total += n; draw(); };
     const record = async () => {
-      const x = await refresh(); if (x == null) return toast('No reading from the sender', true);
+      const x = await refresh(); if (x == null) return toast('No reading from the sensor', true);
       const last = points[points.length - 1];
       if (total === last[1]) return toast('Add some water first.', true);
       if (x <= last[0]) return toast('The height did not rise yet. Wait for the water to settle and try again.', true);
@@ -2356,25 +2382,23 @@ function senderCard() {
   const mode = sec ? (sec.values.wifi_mode || 'auto') : null;
   const svc = (S.state.services || []).find(x => x.name === 'esp32_hydro');
   const noData = !dev || (link || '').indexOf('no broadcast') === 0;
-  const card = h('div', { class: 'card' }, h('h3', {}, 'Sender ', newer ? h('span', { class: 'chip warn' }, 'firmware update available') : null),
+  const card = h('div', { class: 'card' }, h('h3', {}, 'Water level sensor ', newer ? h('span', { class: 'chip warn' }, 'firmware update available') : null),
     h('div', { class: 'stats' },
       stat('Firmware', inst || '–', latest ? 'latest ' + latest : '', true),
       stat('Wi-Fi', v['/Hydro/WifiMode'] ? (modes[v['/Hydro/WifiMode']] || v['/Hydro/WifiMode']) : '–',
         v['/Hydro/WifiMode'] == null ? '' : (v['/Hydro/AccessPoint'] ? 'own Wi-Fi on' : 'own Wi-Fi off') + (v['/Hydro/WifiIp'] ? ' · ' + v['/Hydro/WifiIp'] : ''), true),
       stat('Bluetooth link', !dev ? 'no data' : link || 'not checked yet', when ? ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago' : '', true)),
-    v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sender page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
+    v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sensor page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
     noData ? noDataHelp(svc) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
       h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(),
-        onclick: () => confirmThen('Update the sender firmware' + (latest ? ' to ' + latest : '') + '? Over Bluetooth this takes a few minutes; the water level pauses meanwhile. If it fails, the sender keeps its old firmware.', async () => {
+        onclick: () => confirmThen('Update the sensor firmware' + (latest ? ' to ' + latest : '') + '? Over Bluetooth this takes a few minutes; the water level pauses meanwhile. If it fails, the sensor keeps its old firmware.', async () => {
           const x = await api('/api/sender_update', {});
           toast(x.ok ? x.data.message : x.data.error, !x.ok);
           if (x.ok) watchSenderUpdate(body);
-        }) }, newer || !inst ? 'Update sender firmware' : 'Reinstall sender firmware'),
+        }) }, newer || !inst ? 'Update sensor firmware' : 'Reinstall sensor firmware'),
       h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
-      mode ? h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || senderBusy(), onclick: () => setSenderWifi(sec, mode === 'off' ? 'auto' : 'off') },
-        mode === 'off' ? 'Turn sender Wi-Fi on' : 'Turn sender Wi-Fi off') : null,
-      h('span', { class: 'muted' }, 'Wi-Fi settings and the sender password are in Settings below.')),
+      h('span', { class: 'muted' }, 'Wi-Fi of the sensor: Settings → Connection below.')),
     body);
   return card;
 }
@@ -2382,7 +2406,7 @@ function senderCard() {
 // Wi-Fi switch: off = only the BOOT button on the ESP32 switches it on; on = Bluetooth with Wi-Fi as fallback
 async function setSenderWifi(sec, mode) {
   const x = await api('/api/driver_config', { section: sec.section, 'f.wifi_mode': mode, restart: '1' });
-  toast(x.ok ? (mode === 'off' ? 'Sender Wi-Fi off' : 'Sender Wi-Fi on (as fallback)') + ': the sender switches at its next Bluetooth check-in, within a minute.'
+  toast(x.ok ? (mode === 'off' ? 'Sensor Wi-Fi off' : 'Sensor Wi-Fi on (as fallback)') + ': the sensor switches at its next Bluetooth check-in, within a minute.'
     : (x.data.error || 'Not saved'), !x.ok);
   if (x.ok) { await loadDriver(); await renderTab(); }
 }
@@ -2391,13 +2415,13 @@ async function setSenderWifi(sec, mode) {
 function noDataHelp(svc) {
   const running = svc && svc.state === 'up';
   return h('div', { class: 'banner bad', style: 'margin-top:10px' },
-    h('b', {}, !svc || !svc.enabled ? 'The water driver is switched off.' : !running ? 'The water driver is not running.' : 'The Pi receives nothing from the sender.'),
+    h('b', {}, !svc || !svc.enabled ? 'The water driver is switched off.' : !running ? 'The water driver is not running.' : 'The Pi receives nothing from the sensor.'),
     h('div', { class: 'muted', style: 'margin-top:4px' }, running
-      ? 'No Bluetooth broadcast from the sender has arrived since the driver started. Check:' : 'Start it on the Overview tab, then check:'),
+      ? 'No Bluetooth broadcast from the sensor has arrived since the driver started. Check:' : 'Start it on the Overview tab, then check:'),
     h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
-      h('li', {}, 'Does the sender broadcast? Its page (press BOOT, join Watertank-1, http://192.168.4.1) shows "Bluetooth: broadcasting"; or scan with the nRF Connect app for "VHT".'),
-      h('li', {}, 'Is the Pi\'s Bluetooth on (Venus OS: Settings → Bluetooth) and the sender in range (no metal box around it)?'),
-      h('li', {}, 'Does the sender ID match? DEVICE_ID in the firmware (default 1) and "Sender ID" here.'),
+      h('li', {}, 'Does the sensor broadcast? Its page (press BOOT, join Watertank-1, http://192.168.4.1) shows "Bluetooth: broadcasting"; or scan with the nRF Connect app for "VHT".'),
+      h('li', {}, 'Is the Pi\'s Bluetooth on (Venus OS: Settings → Bluetooth) and the sensor in range (no metal box around it)?'),
+      h('li', {}, 'Does the sensor ID match? DEVICE_ID in the firmware (default 1) and "Sensor ID" here.'),
       h('li', {}, 'Debug → Raw data → Water lists every packet the Pi receives; the driver log is on the Overview tab (Log).')));
 }
 
@@ -2406,12 +2430,12 @@ function firstInstallHelp(link) {
   const raw = 'https://github.com/mich-crypto/Venusosmods/raw/refs/heads/master/firmware/bin/';
   const old = link && link.indexOf('older than 2.7') >= 0;
   return h('div', { class: 'banner warn', style: 'margin-top:10px' },
-    h('b', {}, old ? 'The sender runs firmware older than 2.7.' : 'The Pi has not reached the sender over Bluetooth yet.'),
+    h('b', {}, old ? 'The sensor runs firmware older than 2.7.' : 'The Pi has not reached the sensor over Bluetooth yet.'),
     h('div', { class: 'muted', style: 'margin-top:4px' }, old
       ? 'Older firmware can\'t be updated from here. Install 2.7 or newer once, then updates come from this page:'
-      : 'It checks every 5 minutes. If it never shows a version, the sender probably runs firmware older than 2.7: install the new one once, then updates come from this page:'),
+      : 'It checks every 5 minutes. If it never shows a version, the sensor probably runs firmware older than 2.7: install the new one once, then updates come from this page:'),
     h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
-      h('li', {}, 'On the sender\'s own page: join the Wi-Fi Watertank-1 (press BOOT on the ESP32 if it is off), open http://192.168.4.1, Firmware update, upload ',
+      h('li', {}, 'On the sensor\'s own page: join the Wi-Fi Watertank-1 (press BOOT on the ESP32 if it is off), open http://192.168.4.1, Firmware update, upload ',
         h('a', { href: raw + 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin' }, 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'), '.'),
       h('li', {}, 'Or over USB with the browser flasher (Chrome/Edge on a computer): Erase Flash, then ',
         h('a', { href: raw + 'FLASH-AT-0x0_esp32_hydro_tank_full.bin' }, 'FLASH-AT-0x0_esp32_hydro_tank_full.bin'), ' at address 0x0.')));
@@ -2423,11 +2447,14 @@ function liveCard() {
   const on = !!v['/Hydro/Live'];
   const vals = h('div', { class: 'stats' });
   const note = h('div', { class: 'muted', style: 'margin-top:6px' });
-  const btn = h('button', { type: 'button', class: 'btn small' + (on ? '' : ' primary'), disabled: !canEdit() || !dev, onclick: async () => {
-    const x = await api('/api/sender_live', { on: on ? '0' : '1' });
-    toast(x.ok ? x.data.message : x.data.error, !x.ok);
-    if (x.ok) { await refreshState(); await renderTab(); }
-  } }, on ? 'Stop live reading' : 'Live reading (15 min)');
+  // a switch: on keeps a Bluetooth connection open, which costs the sensor some power, so it ends after 15 min
+  const box = h('input', { type: 'checkbox', checked: on, disabled: !canEdit() || !dev });
+  box.addEventListener('change', async () => {
+    const x = await api('/api/sender_live', { on: box.checked ? '1' : '0' });
+    if (!x.ok) { toast(x.data.error, true); box.checked = on; return; }
+    await refreshState(); await renderTab();
+  });
+  const btn = h('label', { class: 'switch' }, box, h('span', {}, 'Live reading'));
   // the last reading stays on screen between updates; the note says how old it is
   const draw = (val, now) => {
     const age = val['/Hydro/LiveTime'] ? (now || Date.now() / 1000) - val['/Hydro/LiveTime'] : null;
@@ -2438,10 +2465,10 @@ function liveCard() {
       stat('Height', have ? n(val['/Hydro/RawHeightMm'], 1) + ' mm' : '–', 'from this reading'),
       stat('Litres', have ? n(val['/Hydro/LiveLitres'], 1) + ' L' : '–', have ? 'height ' + n(val['/Hydro/LiveHeightMm'], 1) + ' mm' : ''));
     note.textContent = !val['/Hydro/Live'] ? (have ? 'Last live reading ' + ago(Math.round(age)) + ' ago. ' : '')
-        + 'Shows the real sensor voltage without smoothing, twice a second, for 15 minutes (over Bluetooth, sender firmware 2.8+). Handy with a potentiometer on GPIO4.'
-      : !have ? 'Connecting to the sender over Bluetooth… (a few seconds)'
+        + 'Switch on for the real sensor voltage without smoothing, twice a second. It keeps a Bluetooth connection open, which uses some power, so it switches off by itself after 15 minutes.'
+      : !have ? 'Connecting to the sensor over Bluetooth… (a few seconds)'
       : age < 3 ? 'Live: updated ' + Math.max(0, age).toFixed(1) + ' s ago. Stops by itself after 15 minutes.'
-      : 'Live: waiting for the sender (last reading ' + age.toFixed(0) + ' s ago)…';
+      : 'Live: waiting for the sensor (last reading ' + age.toFixed(0) + ' s ago)…';
   };
   draw(v);
   if (on) {
@@ -2454,8 +2481,8 @@ function liveCard() {
     };
     setTimeout(tick, 300);
   }
-  return h('div', { class: 'card' }, h('h3', {}, 'Live reading ', on ? h('span', { class: 'chip warn' }, 'live') : null), vals, note,
-    h('div', { class: 'row', style: 'margin-top:8px' }, btn));
+  return h('div', { class: 'card' }, h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 6px' },
+    h('h3', { style: 'margin:0' }, 'Live reading ', on ? h('span', { class: 'chip warn' }, 'live') : null), btn), vals, note);
 }
 
 // Ask GitHub now (otherwise every 6 h) and say what it found
@@ -2470,9 +2497,9 @@ async function checkSenderFw(btn) {
   const inst = senderInstalled(), latest = r.ok && r.data.latest;
   if (!r.ok || r.data.error) toast((r.data && r.data.error) || 'Could not check', true);
   else if (!latest) toast('No answer from GitHub yet, try again in a moment.', true);
-  else if (!inst) toast('Newest sender firmware: ' + latest + ' (the installed version is not known yet).');
-  else if (cmpVersion(latest, inst) > 0) toast('New sender firmware ' + latest + ' is available (installed ' + inst + ').');
-  else toast('The sender is up to date (' + inst + ').');
+  else if (!inst) toast('Newest sensor firmware: ' + latest + ' (the installed version is not known yet).');
+  else if (cmpVersion(latest, inst) > 0) toast('New sensor firmware ' + latest + ' is available (installed ' + inst + ').');
+  else toast('The sensor is up to date (' + inst + ').');
   renderTabs(); renderUpdateBanner();
   await renderTab();
 }
@@ -2486,17 +2513,17 @@ async function watchSenderUpdate(body) {
     if (!x.ok) continue;
     pre.textContent = x.data.text || '(no output yet)';
     pre.scrollTop = pre.scrollHeight;
-    if (!x.data.running) { toast(x.data.code === 0 ? 'Sender updated. The new version shows after its next check-in.' : 'Sender update failed, see the log.', x.data.code !== 0); return; }
+    if (!x.data.running) { toast(x.data.code === 0 ? 'Water level sensor updated. The new version shows after its next check-in.' : 'Water level sensor update failed, see the log.', x.data.code !== 0); return; }
   }
 }
 
 function renderUpdateBanner() {
   const box = clear($('#updbanner')), d = S.upd || {};
-  const mods = d.available && d.installed, sender = senderUpdate();
+  const mods = d.available && d.installed, sender = false;   // sensor firmware: dot on the Water tab
   const key = (mods ? d.latest : '') + '|' + (sender ? S.senderFw.latest : '');
   if (!(mods || sender) || S.tab === 'update' || S.updHidden === key) return;
-  const title = mods && sender ? 'New versions of Venus OS mods and the water sender firmware are available'
-    : mods ? 'A new version of Venus OS mods is available' : 'New water sender firmware ' + S.senderFw.latest + ' is available (installed ' + senderInstalled() + ')';
+  const title = mods && sender ? 'New versions of Venus OS mods and the water level sensor firmware are available'
+    : mods ? 'A new version of Venus OS mods is available' : 'New water level sensor firmware ' + S.senderFw.latest + ' is available (installed ' + senderInstalled() + ')';
   box.append(h('div', { class: 'banner warn upd-banner' },
     h('div', { style: 'flex:1;min-width:0' }, h('b', {}, title),
       mods && d.message ? h('div', { class: 'muted' }, (d.date ? d.date.slice(0, 10) + ' · ' : '') + d.message) : null),
@@ -2507,7 +2534,7 @@ function renderUpdateBanner() {
 
 async function tabUpdate(main) {
   main.append(await updatePanel());
-  if (deviceOf(S.state, 'water') || (S.state.services || []).some(x => x.name === 'esp32_hydro' && x.enabled)) main.append(senderCard());
+  // the water level sensor's firmware is updated on the Water tab
   main.append(h('div', { class: 'muted' }, 'The page looks for a new version by itself (every few hours) and shows a banner on every tab when there is one. '
     + 'Updating downloads the latest version from GitHub and restarts the services; your settings in config.ini are kept.'));
 }

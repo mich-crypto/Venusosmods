@@ -96,7 +96,7 @@ class Esp32HydroDriver(BleDriver):
     def start(self):
         if self.link:
             if not self.seen_mac:
-                self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sender yet'
+                self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sensor yet'
             GLib.timeout_add_seconds(20, self._first_link)
 
     def _first_link(self):
@@ -122,7 +122,7 @@ class Esp32HydroDriver(BleDriver):
     def _link_tick(self):
         if not self.seen_mac:
             # without a broadcast the Pi doesn't know where to connect: say so on the page
-            self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sender yet'
+            self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sensor yet'
             return True
         if self.gatt is not None and self.gatt.busy:
             return True
@@ -197,19 +197,19 @@ class Esp32HydroDriver(BleDriver):
             elif not ok:
                 self.tank['/Hydro/LinkStatus'] = 'live view: %s' % (error or 'failed')
             if any(r.startswith('denied') for r in replies):
-                self.tank['/Hydro/LinkStatus'] = 'wrong sender password'
+                self.tank['/Hydro/LinkStatus'] = 'wrong sensor password'
                 self.live_until = monotonic_s() - 1
             return
         if not ok and len(replies) < self._expected:
             text = str(error or 'failed')
             if 'not found' in text:
-                text = 'sender firmware without Bluetooth link (older than 2.7)'
+                text = 'sensor firmware without Bluetooth link (older than 2.7)'
             log.info('link: %s', text)
             self.tank['/Hydro/LinkStatus'] = text
             return
         if any(r.startswith('denied') for r in replies):
             log.warning('link: sender refused the password - set sender_password = the sender\'s Wi-Fi password')
-            self.tank['/Hydro/LinkStatus'] = 'wrong sender password'
+            self.tank['/Hydro/LinkStatus'] = 'wrong sensor password'
             return
         self.apply_info(replies[-1] if replies else '')
 
@@ -283,7 +283,7 @@ def wait_for_sender_update(max_s=1800):
     t0, said = time.time(), -60
     while proto.ota_running() and time.time() - t0 < max_s:
         if time.time() - said >= 60:
-            log.warning('sender firmware update running: waiting before starting')
+            log.warning('sensor firmware update running: waiting before starting')
             said = time.time()
         time.sleep(5)
 

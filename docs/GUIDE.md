@@ -172,12 +172,12 @@ or Venus OS doesn't work. To save energy it is **not on all the time**
 * for **30 minutes after pressing the BOOT button** on the ESP32,
 * whenever the **Pi has not checked in over Bluetooth for 15 minutes**
   (the fallback: Venus OS down, Pi off, Bluetooth broken),
-* always, if *Sender Wi-Fi* on the Venus OS page is set to *Own Wi-Fi always on*.
+* always, if *Sensor Wi-Fi* on the Venus OS page is set to *Own Wi-Fi always on*.
 
 It never switches off while a phone is connected to it. The **green breathing
 light** shows when its page is reachable.
 
-**Sender Wi-Fi** (Venus OS page → Water → Settings):
+**Sensor Wi-Fi** (Venus OS page → Water → Settings):
 
 | Setting | What it does | Energy |
 |---|---|---|
@@ -186,12 +186,13 @@ light** shows when its page is reachable.
 | Own Wi-Fi always on | like before 2.7 | highest |
 | Wi-Fi off (firmware 3.4+) | no own Wi-Fi at all, not even after power-on or as fallback; only the **BOOT button** switches it on for 30 minutes | lowest |
 
-The **Turn sender Wi-Fi off / on** button on the Sender card switches between
-*Wi-Fi off* and *Bluetooth only, own Wi-Fi as fallback*. The sender follows at
-its next Bluetooth check-in (within a minute after the button), so the Pi must
-be receiving it.
+Set it under Water → Settings → *Connection*. The sensor follows at its next
+Bluetooth check-in (within a minute after saving), so the Pi must be receiving
+it. A phone that is only joined to the sensor's Wi-Fi doesn't keep it on; the
+sensor's page must have been used in the last 10 minutes (firmware 3.7+). Its
+page footer says why the Wi-Fi is on.
 
-The Pi needs the **Sender password** (the password of the sender's own Wi-Fi,
+The Pi needs the **Sensor password** (the password of the sender's own Wi-Fi,
 default `watertank`) to change settings and update the firmware. If you change
 the Wi-Fi password on the sender's page, enter the same one there.
 
@@ -235,7 +236,7 @@ It switches itself off after 15 minutes and at a restart.
 | off | still starting, or no power |
 
 The Wi-Fi stays on (green) until the Pi has checked in over Bluetooth, which
-needs sender firmware 2.7+ and the current Pi software (Water → Sender shows
+needs sender firmware 2.7+ and the current Pi software (Water → Water level sensor shows
 "Bluetooth link: ok"), and always for the first 10 minutes after power-on. Some boards have the
 LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
 `STATUS_LED_MAX` sets how bright it gets.
@@ -637,14 +638,15 @@ if you forget it. Open the address in Safari and add it to the home screen.
   when the forecast for the camper's position says it will freeze within 24 hours,
   and one when it has been below 0 °C for 2 hours; the temperature comes from a
   sensor set to *outdoor*, the gas sensor by default, else from the forecast
-  service open-meteo.com), and the Starlink
+  service open-meteo.com; each of the two at most once a day, also across
+  restarts of the page), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
 * **Water → Live reading** – the real sensor voltage at GPIO4 and the height
   from it, without smoothing, about twice a second for 15 minutes (*Stop live
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches
   the sender's test mode on meanwhile. Needs sender firmware 2.8+.
-* **Water → Sender** – the sender's firmware (installed and latest), its
+* **Water → Water level sensor** – the sender's firmware (installed and latest), its
   Wi-Fi state and when the Pi last reached it over Bluetooth, **Check for
   update** (asks GitHub right away instead of every 6 hours) and **Update
   sender firmware**: downloads the latest from GitHub and sends it over

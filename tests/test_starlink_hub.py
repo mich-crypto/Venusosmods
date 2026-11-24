@@ -58,6 +58,16 @@ class HubTests(unittest.TestCase):
     def good_status(self, **kw):
         return sl_frame(ts.status_message(**kw))
 
+    def test_message_cooldown_survives_a_restart(self):
+        tg = {'enabled': 'yes', 'token': 'T', 'chat_id': '1'}
+        h = self.hub(tg=tg)
+        self.assertTrue(h.alert('freeze-forecast', 'Frost', cooldown=86400))
+        self.now[0] += 3600
+        h2 = self.hub(tg=tg)                                   # the page restarted: a new hub, same store file
+        self.assertFalse(h2.alert('freeze-forecast', 'Frost', cooldown=86400))
+        self.now[0] += 86400
+        self.assertTrue(h2.alert('freeze-forecast', 'Frost', cooldown=86400))
+
     # ------------------------------------------------------------ the dish
     def test_status_good_then_remembered_route(self):
         h = self.hub()

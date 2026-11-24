@@ -188,7 +188,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          100    // blue flash each time a new reading goes out over Bluetooth (every ADV_UPDATE_MS)
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.6"
+#define FW_VERSION           "3.7"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -624,6 +624,9 @@ static String staSsid, staPass;             // van Wi-Fi
 static bool staDirty = false;               // van Wi-Fi settings changed: reconnect
 static bool apOn = false, staOn = false;
 static uint32_t apOnSince = 0, buttonUntil = 0;
+static uint32_t lastWebUse = 0;             // last request to the page (a phone that is only joined doesn't count)
+static const char *wifiReason = "";         // why the own Wi-Fi is on, for the page
+#define WEB_IDLE_MS (10UL * 60UL * 1000UL)   // a joined phone keeps the Wi-Fi on only while the page was used this recently
 
 static bool piRecent() { return lastPiHeard && millis() - lastPiHeard < PI_SILENT_MS; }
 
@@ -1349,9 +1352,7 @@ function tankSvg(hmm, litres, cap, id) {
     s += '<line x1="-18" x2="0" y1="' + (H - t) + '" y2="' + (H - t) + '" style="stroke:var(--tank-line);stroke-width:3"/>' +
       '<text x="-28" y="' + (H - t + 14) + '" text-anchor="end" style="fill:var(--tank-text)">' + t + '</text>';
   }
-  s += '<path d="' + shape + '" style="fill:none;stroke:var(--tank-line);stroke-width:6;stroke-linejoin:round"/>' +
-    '<circle cx="60" cy="' + (H - 20) + '" r="16" style="fill:var(--tank-line)"><title>sensor</title></circle>' +
-    '<text x="' + (XC + 60) + '" y="' + (H - 40) + '" style="fill:var(--tank-text);font-size:40px">wheel arch</text>';
+  s += '<path d="' + shape + '" style="fill:none;stroke:var(--tank-line);stroke-width:6;stroke-linejoin:round"/>';
   if (h != null) {
     const y = H - h, ly = Math.max(40, Math.min(y - 16, H - 20));
     s += '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" clip-path="url(#' + id + ')" style="stroke:var(--tank-line);stroke-width:3;stroke-dasharray:14 10"/>' +
@@ -1392,7 +1393,7 @@ async function refresh(){
     +(s.ble_conn?' · '+s.ble_conn+' connected':'')+' · Pi '+(s.pi_ago_s<0?'has not checked in yet':'checked in '+Math.round(s.pi_ago_s/60)+' min ago')
     +(s.ble_restarts?' · broadcast restarted '+s.ble_restarts+'×':'');
   const modes={off:'Wi-Fi off (BOOT switches it on for 30 min)',auto:'Bluetooth, own Wi-Fi only as fallback',van:'van Wi-Fi'+(s.sta_ip?' ('+s.sta_ip+')':' (not connected)'),ap:'own Wi-Fi always on'};
-  $('foot').textContent='Wi-Fi mode: '+(modes[s.wifi_mode]||s.wifi_mode)+' (set on the Venus OS page) · Pi '+(s.pi_ago_s<0?'not heard yet':'heard '+Math.round(s.pi_ago_s/60)+' min ago')+' · Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
+  $('foot').textContent='Wi-Fi on because: '+(s.wifi_reason||'–')+' · mode: '+(modes[s.wifi_mode]||s.wifi_mode)+' (set on the Venus OS page) · Pi '+(s.pi_ago_s<0?'not heard yet':'heard '+Math.round(s.pi_ago_s/60)+' min ago')+' · Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
  }catch(e){$('foot').textContent='No connection to the sender…'}
 }
 function tab(p){if(!p||!p.length)return'';let h='<table><tr><th>#</th><th>height mm</th><th>litres</th></tr>';p.forEach((x,i)=>h+='<tr><td>'+i+'</td><td>'+x[0].toFixed(1)+'</td><td>'+x[1].toFixed(1)+'</td></tr>');return h+'</table>'}
@@ -1451,6 +1452,7 @@ static bool customTable() {
 }
 
 static void handleStatus() {
+  lastWebUse = millis();
   float height = isnan(emaHeight) ? NAN : max(0.0f, emaHeight);
   float litres = isnan(height) ? NAN : heightToLitres(height);
   String j = "{";
@@ -1463,6 +1465,7 @@ static void handleStatus() {
   j += "\"ble_adv\":" + String(advertising && advertising->isAdvertising() ? "true" : "false") + ",";
   j += "\"ble_conn\":" + String(linkServer ? linkServer->getConnectedCount() : 0) + ",";
   j += "\"ble_restarts\":" + String(advRestarts) + ",";
+  j += "\"wifi_reason\":\"" + String(wifiReason) + "\",";
   if (simActive()) {
     jsonNum(j, "sim_mm", simHeight);
     j += "\"sim_ms\":" + String(millis() - simSince) + ",\"sim_left_s\":" + String((simUntil - millis()) / 1000) + ",";
@@ -1506,6 +1509,7 @@ static void handleStatus() {
 
 // Run one serial command and send back what it printed
 static void handleCmd() {
+  lastWebUse = millis();
   StringOut reply;
   out = &reply;
   handleCommand(server.arg("c"));
@@ -1549,8 +1553,16 @@ static void updateWifi() {
   // off: only the BOOT button switches the own Wi-Fi on (no start-up window, no fallback)
   bool wantAp = wifiMode == "off" ? button
               : wifiMode == "ap" || now < BOOT_AP_MS || button || (!piRecent() && !staUp);
-  if (apOn && !wantAp && (WiFi.softAPgetStationNum() > 0 || now - apOnSince < AP_MIN_ON_MS))
-    wantAp = true;                         // a phone is on it, or it only just started
+  wifiReason = button ? "BOOT button pressed" : wifiMode == "ap" ? "set to always on"
+             : wifiMode == "off" ? "" : now < BOOT_AP_MS ? "first 10 minutes after power-on"
+             : !piRecent() && !staUp ? "the Pi has not checked in over Bluetooth for 15 minutes (fallback)" : "";
+  // Phones rejoin a known network by themselves: a joined phone keeps the Wi-Fi on only
+  // while the page is in use, else the Wi-Fi would never go off.
+  bool phoneUsing = WiFi.softAPgetStationNum() > 0 && lastWebUse && now - lastWebUse < WEB_IDLE_MS;
+  if (apOn && !wantAp && (phoneUsing || now - apOnSince < AP_MIN_ON_MS)) {
+    wantAp = true;
+    wifiReason = phoneUsing ? "a phone is using the page" : "only just switched on";
+  }
 
   if (wantAp != apOn || wantSta != staOn || staDirty) {
     wifi_mode_t m = wantAp && wantSta ? WIFI_AP_STA : wantAp ? WIFI_AP : wantSta ? WIFI_STA : WIFI_OFF;

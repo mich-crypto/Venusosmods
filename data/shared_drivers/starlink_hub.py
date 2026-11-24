@@ -141,7 +141,8 @@ class Hub(object):
         self.icmp_busy = False
         self.test = {'running': False, 'step': '', 'started': None}
         self.wan = {'ip': None, 'colo': None, 'loc': None, 'time': None, 'error': None}
-        self.alert_state = {}                              # key -> last time sent (cool-down)
+        # key -> last time sent (cool-down), kept in the store so a restart doesn't repeat messages
+        self.alert_state = store.data.setdefault('alerts', {}) if store is not None and hasattr(store, 'data') else {}
         self.queue = []                                    # unsent Telegram messages
         self.known_alerts = None
         self.drop_run = 0
@@ -453,6 +454,9 @@ class Hub(object):
         if cooldown and now - self.alert_state.get(key, 0) < cooldown:
             return False
         self.alert_state[key] = now
+        if self.store is not None and hasattr(self.store, 'save'):
+            self.store.dirty = True
+            self.store.save(force=True)
         if not self.tg['enabled'] or not self.tg['token'] or not self.tg['chat_id']:
             return False
         self.queue.append(text)
