@@ -43,3 +43,4 @@ for svc in /data/etc/init.d/*; do
         svc -t "/service/$name" && echo "Restarted $name"
     fi
 done
+echo "Update finished"

@@ -2566,15 +2566,38 @@ async function updatePanel() {
   return card;
 }
 
+// Follow the update log; at the end the page server restarts with the new version:
+// wait until it answers again, then reload so the new page is shown right away.
 async function watchUpdate(body) {
   const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:30vh;margin-top:8px' }, 'starting…');
   body.append(pre);
-  for (let i = 0; i < 90; i++) {
-    await new Promise(r => setTimeout(r, 2000));
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let gone = false;
+  for (let i = 0; i < 150; i++) {
+    await sleep(2000);
     const x = await api('/api/update_log');
-    if (x.ok) { pre.textContent = x.data.text || '(no output yet)'; if (!x.data.running) { toast('Update finished. Reload the page.'); return; } }
-    else if (x.status === 0) pre.textContent += '\n(the page is restarting…)';
+    if (x.status === 0 || x.status >= 500) {                // the page server is restarting
+      if (!gone) pre.textContent += '\n(the page is restarting with the new version…)';
+      gone = true;
+      continue;
+    }
+    if (!x.ok) continue;
+    pre.textContent = x.data.text || '(no output yet)';
+    pre.scrollTop = pre.scrollHeight;
+    if (!x.data.running) {
+      const failed = !gone && !/Update finished|Restarted /.test(x.data.text || '');
+      if (failed) { toast('The update stopped, see the log.', true); return; }
+      break;
+    }
   }
+  pre.textContent += '\nUpdate finished: loading the new version…';
+  for (let i = 0; i < 30; i++) {                             // wait until the new page server answers
+    const r = await api('/api/state');
+    if (r.ok) break;
+    await sleep(2000);
+  }
+  await sleep(1000);
+  location.reload();
 }
 
 function starlinkCard(sl) {
