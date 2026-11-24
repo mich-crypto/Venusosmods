@@ -19,6 +19,7 @@ import configparser
 import glob
 import logging
 import os
+import time
 import signal
 import sys
 
@@ -57,6 +58,23 @@ DEFAULT_CONFIG = os.path.join(HERE, 'config.ini')
 
 def monotonic_s():
     return GLib.get_monotonic_time() / 1e6
+
+
+def use_venus_timezone(bus, zoneinfo='/usr/share/zoneinfo'):
+    """Log times in the time zone set in Venus OS (Settings > Display & language >
+    Time zone). The system itself runs on UTC, so without this the logs were an hour
+    (or two) behind. Returns the zone, or None when unchanged."""
+    try:
+        tz = str(bus.get_object('com.victronenergy.settings', '/Settings/System/TimeZone', introspect=False)
+                 .GetValue(dbus_interface='com.victronenergy.BusItem', timeout=3))
+    except Exception:
+        return None
+    if not tz or '..' in tz or not os.path.isfile(os.path.join(zoneinfo, tz)):
+        return None
+    if os.environ.get('TZ') != tz:
+        os.environ['TZ'] = tz
+        time.tzset()
+    return tz
 
 
 class VenusDevice(object):
@@ -350,6 +368,7 @@ class BleDriver(object):
         return False
 
     def run(self):
+        use_venus_timezone(self.bus)
         from ble_scanner import BlueZScanner
         if self.USES_SCANNER:
             self.scanner = BlueZScanner(

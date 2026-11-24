@@ -208,8 +208,9 @@ SCHEMA = {
               options=[['auto', 'Bluetooth only, own Wi-Fi as fallback'], ['van', 'Join the van Wi-Fi'],
                        ['ap', 'Own Wi-Fi always on'], ['off', 'Wi-Fi off (only the BOOT button switches it on)']],
               default='auto'),
-            F('wifi_ssid', 'text', 'Van Wi-Fi name', 'Only for "Join the van Wi-Fi".'),
-            F('wifi_password', 'secret', 'Van Wi-Fi password', 'Only for "Join the van Wi-Fi".'),
+            F('wifi_ssid', 'text', 'Wi-Fi network name', 'For "Wi-Fi network", and for firmware updates from '
+              'this page: the sensor joins it for a moment to download the update.'),
+            F('wifi_password', 'secret', 'Wi-Fi network password', 'The password of that network.'),
             F('sender_password', 'secret', 'Sensor password', 'The password of the sensor\'s own Wi-Fi '
               '(default watertank). The Pi needs it to change settings and update the firmware.',
               default='watertank'),

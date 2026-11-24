@@ -28,38 +28,14 @@ payload little-endian, 16 bytes (18 with a second temperature probe):
 
 import struct
 
-# Bluetooth link (firmware 2.7+): short GATT connections for the check-in,
-# Wi-Fi settings and firmware updates. Write: b'C' + command text or b'D' +
-# firmware data. Reply: read, or notified in chunks ended by EOT (0x04).
+# Bluetooth link (firmware 2.7+): short GATT connections for the check-in, the
+# Wi-Fi setting and short commands (the firmware update only sends "fwget <url>":
+# the file itself goes over Wi-Fi, firmware 4.1+). Write: b'C' + command text.
+# Reply: read, or notified in chunks ended by EOT (0x04).
 LINK_SERVICE_UUID = '5f6d0001-8d4b-4bd1-9a1c-7ad0a8e3c101'
 LINK_CMD_UUID = '5f6d0002-8d4b-4bd1-9a1c-7ad0a8e3c101'
 LINK_REPLY_UUID = '5f6d0003-8d4b-4bd1-9a1c-7ad0a8e3c101'
 EOT = b'\x04'
-
-# While esp32_ota.py sends firmware, this file holds its pid. The water driver
-# waits instead of starting, and the settings page refuses restarts, reboots
-# and software updates: a second Bluetooth connection would break the upload.
-OTA_LOCK = '/tmp/venusosmods-sender-ota.lock'
-
-
-def ota_running(path=None):
-    """pid of a running sensor firmware update, else None. A stale lock is ignored: the
-    process must be alive AND be esp32_ota.py (a left-over lock whose number now belongs to
-    another program must not keep the water driver from starting)."""
-    import os
-    path = path or OTA_LOCK
-    try:
-        with open(path) as f:
-            pid = int(f.read().split()[0])
-        os.kill(pid, 0)
-    except (OSError, ValueError, IndexError):
-        return None
-    try:
-        with open('/proc/%d/cmdline' % pid, 'rb') as f:
-            cmd = f.read()
-    except OSError:
-        return pid                               # no /proc to ask: trust the live pid
-    return pid if b'esp32_ota' in cmd else None
 WIFI_MODES = ('auto', 'van', 'ap', 'off')
 
 

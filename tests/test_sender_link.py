@@ -18,7 +18,6 @@ sys.path.insert(0, os.path.join(HERE, '..', 'data', 'shared_drivers'))
 
 import fakes  # noqa: E402,F401
 import esp32_hydro_protocol as proto  # noqa: E402
-import esp32_ota  # noqa: E402
 from esp32_hydro_tank import Esp32HydroDriver  # noqa: E402
 
 ROOT = os.path.join(HERE, '..')
@@ -174,160 +173,56 @@ def fakes_now():
     return venus_service.monotonic_s()
 
 
-class LockTests(unittest.TestCase):
-    def test_lock_only_counts_while_the_updater_lives(self):
-        d = tempfile.mkdtemp()
-        lock = os.path.join(d, 'lock')
-        self.assertIsNone(proto.ota_running(lock))                        # no file
-        import subprocess
-        upd = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)', 'esp32_ota'])
-        self.addCleanup(upd.kill)
-        with open(lock, 'w') as f:
-            f.write('%d esp32_hydro\n' % upd.pid)
-        self.assertEqual(proto.ota_running(lock), upd.pid)
-        with open(lock, 'w') as f:
-            f.write('%d esp32_hydro\n' % os.getpid())                  # alive, but another program
-        self.assertIsNone(proto.ota_running(lock))
-        with open(lock, 'w') as f:
-            f.write('999999\n')                                           # dead pid: stale
-        self.assertIsNone(proto.ota_running(lock))
-        with open(lock, 'w') as f:
-            f.write('garbage')
-        self.assertIsNone(proto.ota_running(lock))
+class CommandTests(unittest.TestCase):
+    """The firmware update: the page asks the driver, the driver sends "fwget" over Bluetooth."""
 
-    def test_the_driver_waits_for_a_running_update(self):
-        import esp32_hydro_tank
-        calls = {'n': 0}
+    class Client(object):
+        busy, keep_connected = False, False
 
-        def running(path=None):
-            calls['n'] += 1
-            return 123 if calls['n'] < 3 else None                      # finishes after two checks
-        orig, proto.ota_running = proto.ota_running, running
-        sleep, esp32_hydro_tank.time.sleep = esp32_hydro_tank.time.sleep, lambda s: None
-        try:
-            esp32_hydro_tank.wait_for_sender_update()
-            self.assertEqual(calls['n'], 3)
-        finally:
-            proto.ota_running, esp32_hydro_tank.time.sleep = orig, sleep
+        def __init__(self):
+            self.sent = []
+
+        def exchange(self, frames, done):
+            self.sent.append(list(frames))
+            self.done = done
+
+        def finish(self):
+            self.done(True, None)
+
+    def driver(self, cfg='wifi_ssid = Camper\nwifi_password = s3cret\n'):
+        d = Esp32HydroDriver('s', section(cfg))
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        d.gatt = self.Client()
+        d._client = lambda: d.gatt
+        return d
+
+    def test_fwget_carries_the_van_wifi_from_the_settings(self):
+        d = self.driver()
+        self.assertTrue(d._on_command_set('/Hydro/Command', 'fwget http://192.168.1.5:8088/fw/abc.bin'))
+        d._send_command()
+        self.assertEqual(d.gatt.sent[-1], [b'Cauth watertank', b'Cfwget http://192.168.1.5:8088/fw/abc.bin\tCamper\ts3cret'])
+        d._on_link_notify(b'ok fwget: joining the Wi-Fi and downloading\x04')
+        self.assertTrue(d.tank.service['/Hydro/CommandResult'].startswith('ok fwget'))
+
+    def test_command_answers_and_refusals(self):
+        d = self.driver()
+        self.assertFalse(Esp32HydroDriver('s', section(''))._on_command_set('/Hydro/Command', 'fwget http://x'))   # no sensor heard yet
+        d._on_command_set('/Hydro/Command', 'fwget http://x/fw/1.bin')
+        d._send_command()
+        d._on_link_notify(b'denied: auth first\x04')
+        self.assertEqual(d.tank.service['/Hydro/CommandResult'], 'wrong sensor password')
+        d._on_command_set('/Hydro/Command', 'fwget http://x/fw/1.bin')
+        d._send_command()
+        d.gatt.done(False, 'device disconnected')
+        self.assertIn('device disconnected', d.tank.service['/Hydro/CommandResult'])
+
+    def test_firmware_error_from_the_check_in(self):
+        d = self.driver()
+        d.apply_info(json.dumps({'fw': '4.1', 'mode': 'auto', 'ap': 0, 'sta': 0, 'ip': '', 'fw_err': "could not join the Wi-Fi 'Camper'"}))
+        self.assertEqual(d.tank.service['/Hydro/FwError'], "could not join the Wi-Fi 'Camper'")
 
 
-class UpdaterTests(unittest.TestCase):
-    def image(self, b27=0x3C):
-        data = bytearray(8192)
-        data[0], data[27] = 0xE9, b27
-        return bytes(data)
-
-    def test_image_check(self):
-        self.assertIsNone(esp32_ota.check_image(self.image()))
-        self.assertIn('FLASH-AT-0x0', esp32_ota.check_image(self.image(0x3F)))     # bootloader first = full image
-        self.assertIn('not an ESP32', esp32_ota.check_image(b'\x00' * 8192))
-        self.assertIn('too small', esp32_ota.check_image(b'\xe9'))
-
-    def test_packet_size(self):
-        self.assertEqual(esp32_ota.packet_size(517), 499)
-        self.assertEqual(esp32_ota.packet_size(185), 181)
-        self.assertEqual(esp32_ota.packet_size(0), 499)             # unknown: BlueZ splits (long write)
-        self.assertEqual(list(esp32_ota.chunks(b'abcdefg', 3)), [b'abc', b'def', b'g'])
-
-    class FakeSender(object):
-        """Behaves like the firmware: v2 chunks with offsets, or v1 (before 3.0)."""
-
-        def __init__(self, v2=True, fail_every=0, drop_at=None):
-            self.v2, self.fail_every, self.drop_at = v2, fail_every, drop_at
-            self.got, self.active, self.authed, self.connected = b'', False, False, False
-            self.writes, self.log, self.reply, self.mtu = 0, [], '', 0
-
-        # BleLink interface
-        def connect(self):
-            self.connected, self.authed = True, False
-            self.log.append('connect')
-
-        def disconnect(self):
-            self.connected = False
-            self.log.append('disconnect')
-
-        def write(self, data):
-            import struct
-            if not self.connected:
-                raise RuntimeError('Not connected')
-            self.writes += 1
-            if data[:1] == b'C':
-                self.reply = self.handle(data[1:].decode())
-                return
-            if self.drop_at is not None and len(self.got) >= self.drop_at:
-                self.drop_at = None
-                self.connected = False
-                raise RuntimeError('org.bluez.Error.Failed: Not connected')
-            if self.v2:
-                off = struct.unpack('<I', data[1:5])[0]
-                part = data[5:]
-                if off + len(part) > len(self.got) and off == len(self.got):
-                    self.got += part
-            else:
-                self.got += data[1:]
-            if self.fail_every and self.writes % self.fail_every == 0:
-                raise RuntimeError('org.bluez.Error.Failed: Operation failed with ATT error: 0x0e')   # kept, but reported
-
-        def read(self):
-            return self.reply
-
-        def command(self, text):
-            self.write(b'C' + text.encode())
-            return self.read()
-
-        def handle(self, cmd):
-            self.log.append(cmd.split(' ')[0] + (' ' + cmd.split(' ')[1] if ' ' in cmd else ''))
-            if cmd.startswith('auth'):
-                self.authed = cmd == 'auth pw'
-                return 'ok auth' if self.authed else 'denied: wrong password'
-            if cmd.startswith('ota begin2'):
-                if not self.v2:
-                    return 'ok auth'                 # old firmware: queued, the reply is still the last one
-                self.active = True
-                return 'ok ota begin v2 mtu=247'
-            if cmd.startswith('ota begin'):
-                self.active = True
-                return 'ok ota begin'
-            if cmd == 'ota status':
-                return 'ota active %d/0' % len(self.got) if self.active else 'ota idle 0/0'
-            return 'ok ota done, restarting'
-
-    def run_update(self, sender, password='pw'):
-        orig, esp32_ota.BleLink = esp32_ota.BleLink, lambda mac, adapter: sender
-        sleep, esp32_ota.time.sleep = esp32_ota.time.sleep, lambda s: None
-        say, esp32_ota.say = esp32_ota.say, lambda text: None
-        try:
-            data = bytes(range(256)) * 200
-            data = self.image()[:28] + data[28:]
-            esp32_ota.ble_update('AA:BB', password, data, 'm' * 32)
-            return data
-        finally:
-            esp32_ota.BleLink, esp32_ota.time.sleep, esp32_ota.say = orig, sleep, say
-
-    def test_update_v2_survives_refused_packets_and_a_dropped_connection(self):
-        sender = self.FakeSender(fail_every=37, drop_at=20000)
-        data = self.run_update(sender)
-        self.assertEqual(sender.got, data)                                  # nothing lost, nothing twice
-        self.assertGreaterEqual(sender.log.count('connect'), 2)             # reconnected once
-        self.assertIn('ota status', sender.log)
-        self.assertEqual(sender.log[-2:], ['ota end', 'disconnect'])
-
-    def test_update_old_firmware_uses_one_frame_packets(self):
-        sender = self.FakeSender(v2=False)
-        data = self.run_update(sender)
-        self.assertEqual(sender.got, data)
-        self.assertIn('ota begin', sender.log)
-        self.assertEqual(esp32_ota.v2_packet_size(247), 239)
-        self.assertEqual(esp32_ota.v2_packet_size(None), 16)
-        self.assertEqual((esp32_ota.parse_status('ota active 5/9'), esp32_ota.parse_status('ota idle 0/0')), (5, None))
-
-    def test_update_wrong_password_stops_at_once(self):
-        sender = self.FakeSender()
-        with self.assertRaises(RuntimeError):
-            self.run_update(sender, password='nope')
-        self.assertEqual(sender.log[-1], 'disconnect')
-        self.assertEqual(sender.got, b'')
-
+class ShippedFilesTests(unittest.TestCase):
     def test_shipped_files_match_the_sketch(self):
         with open(os.path.join(ROOT, 'firmware', 'esp32_hydro_tank', 'esp32_hydro_tank.ino')) as f:
             sketch = f.read()
@@ -336,8 +231,9 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual(f.read().strip(), version)
         with open(os.path.join(ROOT, 'firmware', 'bin', 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'), 'rb') as f:
             app = f.read()
-        self.assertIsNone(esp32_ota.check_image(app))
+        self.assertEqual((app[0], app[27]), (0xE9, 0x3C))                    # an app image, not the full flash
         self.assertIn(version.encode(), app)                                 # the binary is built from this sketch
+        self.assertIn(b'fwget', app)
         for uuid in (proto.LINK_SERVICE_UUID, proto.LINK_CMD_UUID, proto.LINK_REPLY_UUID):
             self.assertIn(uuid, sketch)
 
