@@ -46,13 +46,6 @@
 // ---- Pins (ESP32-S3: use GPIO1..GPIO10 = ADC1; ADC2 shares hardware with the radio)
 #define PIN_PRESSURE         4
 #define PIN_ONEWIRE          5
-
-// ---- Supply voltages on the page (optional, each needs a voltage divider, docs/wiring.md)
-//      Pin -1 = not fitted. RATIO = (R_top + R_bottom) / R_bottom.
-#define PIN_SENSE_5V         6      // 5 V sensor supply: 10k top, 10k bottom
-#define SENSE_5V_RATIO       2.0f
-#define PIN_SENSE_IN         7      // 12 V input: 100k top, 22k bottom
-#define SENSE_IN_RATIO       5.545f
 #define USE_DS18B20          1      // 1 = DS18B20 temperature probes fitted, 0 = none
 #define MAX_TEMPS            2      // probes on the one-wire bus (sent to the Pi: the first two)
 
@@ -169,7 +162,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // one breath in and out
 
-#define FW_VERSION           "2.4"
+#define FW_VERSION           "2.3"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -228,7 +221,6 @@ static float activity = 0.0f;
 static bool sloshing = false;
 static bool fault = false;
 static float lastSignal = 0.0f;
-static float supply5V = NAN, supplyIn = NAN;   // volts; NAN = pin not fitted
 static float lastRawHeight = NAN;   // unfiltered height of the last burst
 static float trend[TREND_SAMPLES];
 static uint8_t trendCount = 0, trendIdx = 0;
@@ -311,19 +303,6 @@ static void sampleLevel() {
 
   float alpha = sloshing ? EMA_ALPHA_SLOSH : EMA_ALPHA_CALM;
   emaHeight += alpha * (h - emaHeight);
-}
-
-// Median of a short burst, like the level, so a spike doesn't show up
-static float readSupply(int pin, float ratio) {
-  if (pin < 0) return NAN;
-  float buf[15];
-  for (int i = 0; i < 15; i++) { buf[i] = (float)analogReadMilliVolts(pin); delayMicroseconds(200); }
-  return medianOf(buf, 15) / 1000.0f * ratio;
-}
-
-static void updateSupplies() {
-  supply5V = readSupply(PIN_SENSE_5V, SENSE_5V_RATIO);
-  supplyIn = readSupply(PIN_SENSE_IN, SENSE_IN_RATIO);
 }
 
 static void updateTrend() {
@@ -664,7 +643,6 @@ static void handleCommand(String line) {
                   "litres=%.1f/%.1f%s%s\n", lastSignal, lastRawHeight, emaHeight, zeroOffsetMm,
                   heightToLitres(max(0.0f, emaHeight)), capacityL(),
                   sloshing ? " SLOSH" : "", fault ? " FAULT" : "");
-    out->printf("supply: input %.2f V, sensor 5V %.2f V (nan = not fitted)\n", supplyIn, supply5V);
     printTable(table, tablePoints);
   } else if (cmd == "zero") {
     float h;
@@ -842,15 +820,6 @@ details summary{cursor:pointer;font-weight:600}
  <div id="chips"></div>
 </div>
 
-<div class="card">
- <h2>Power</h2>
- <div class="grid">
-  <div><span class="mut">Input (12 V)</span><b id="vin">–</b><span class="mut" id="vinn"></span></div>
-  <div><span class="mut">Sensor supply (5 V)</span><b id="v5">–</b><span class="mut" id="v5n"></span></div>
-  <div><span class="mut">Sensor signal</span><b id="sig2">–</b><span class="mut" id="sign"></span></div>
- </div>
-</div>
-
 <div class="card" id="tcard" style="display:none">
  <h2>Temperatures</h2>
  <div id="temps"></div>
@@ -937,7 +906,6 @@ async function refresh(){
   $('tcard').style.display=s.temp_probe?'':'none';
   renderTemps(s.temps||[]);
   $('sig').textContent=s.signal==null?'–':s.signal.toFixed(3)+' '+s.signal_unit;
-  power(s);
   let c='';
   if(s.fault)c+='<span class="chip bad">Sensor fault – check wiring</span>';
   if(s.sloshing)c+='<span class="chip">Water moving</span>';
@@ -957,21 +925,6 @@ async function cmd(c){
  try{const r=await fetch('/api/cmd',{method:'POST',body:new URLSearchParams({c})});$('outp').textContent='> '+c+'\n'+await r.text()}
  catch(e){$('outp').textContent='Failed: '+e}
  document.querySelectorAll('button').forEach(b=>b.disabled=false);busy=false;refresh();
-}
-// Supply voltages with a plain-language hint under each
-function power(s){
- const show=(id,v,fitted,lo,hi,low,high)=>{
-  if(!fitted){$(id).textContent='–';$(id+'n').textContent='not fitted';return}
-  if(v==null){$(id).textContent='–';$(id+'n').textContent='';return}
-  $(id).textContent=v.toFixed(2)+' V';
-  $(id+'n').textContent=v<0.5?'no voltage (or divider not wired)':v<lo?low:v>hi?high:'OK';
-  $(id+'n').style.color=v<lo||v>hi?'var(--bad)':'';
- };
- show('vin',s.vin,s.vin_fitted,11.0,15.5,'low','high');
- show('v5',s.v5,s.v5_fitted,4.5,5.5,'too low for the sensor','too high for the sensor');
- $('sig2').textContent=s.signal==null?'–':s.signal.toFixed(3)+' '+s.signal_unit;
- $('sign').textContent=s.fault?'out of range':(s.signal!=null&&s.signal<0.02?'0 V: empty tank, or no sensor power':'');
- $('sign').style.color=s.fault?'var(--bad)':'';
 }
 let tempsKey='';
 function renderTemps(t){
@@ -1028,10 +981,6 @@ static void handleStatus() {
   jsonNum(j, "height_mm", height);
   jsonNum(j, "raw_height_mm", lastRawHeight);
   jsonNum(j, "zero_mm", zeroOffsetMm);
-  jsonNum(j, "v5", supply5V, 2);
-  jsonNum(j, "vin", supplyIn, 2);
-  j += String("\"v5_fitted\":") + (PIN_SENSE_5V >= 0 ? "true" : "false") + ",";
-  j += String("\"vin_fitted\":") + (PIN_SENSE_IN >= 0 ? "true" : "false") + ",";
   jsonNum(j, "litres", litres);
   jsonNum(j, "capacity", capacityL());
   jsonNum(j, "level", isnan(litres) ? NAN : litres / capacityL() * 100.0f);
@@ -1170,7 +1119,6 @@ void setup() {
   loadCalibration();
   analogReadResolution(12);
   pinMode(PIN_PRESSURE, INPUT);
-  updateSupplies();
 
   for (uint8_t i = 0; i < MAX_TEMPS; i++) tempC[i] = NAN;
   findProbes();
@@ -1191,7 +1139,7 @@ void loop() {
   uint32_t now = millis();
 
   if (now - tSample >= SAMPLE_PERIOD_MS) { tSample = now; sampleLevel(); }
-  if (now - tTrend >= TREND_PERIOD_MS)   { tTrend = now; updateTrend(); updateTemperature(); updateSupplies(); }
+  if (now - tTrend >= TREND_PERIOD_MS)   { tTrend = now; updateTrend(); updateTemperature(); }
   if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
   pollSerial();
 #if USE_WIFI_AP

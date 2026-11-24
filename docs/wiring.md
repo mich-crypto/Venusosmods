@@ -174,42 +174,12 @@ for both.
   (PG9/PG11) in the tank's inspection lid, so no new hole below the water
   line.
 
-## Supply voltages on the page (optional)
-
-The sender's page shows the **12 V input** and the **5 V sensor supply** if you
-add two voltage dividers (1 % resistors). The ESP32 pins take at most ~3.1 V,
-so never connect 5 V or 12 V straight to them.
-
-```
- 5 V sensor supply ──[10 kΩ]──┬── GPIO6        5.0 V → 2.5 V at the pin
-                              │
-                           [10 kΩ]
-                              │
-                             GND
-
- 12 V input (after fuse) ─[100 kΩ]──┬── GPIO7   14.6 V → 2.6 V, up to ~17 V
-                                    │
-                                 [22 kΩ]  (+ 100 nF in parallel, optional)
-                                    │
-                                   GND
-```
-* Measure the 5 V **where the sensor's red wire is connected**, so the page
-  shows what the sensor really gets.
-* Other resistors: change `SENSE_5V_RATIO` / `SENSE_IN_RATIO` in the sketch to
-  (R_top + R_bottom) / R_bottom. Without a divider set the pin to `-1`
-  (`PIN_SENSE_5V`, `PIN_SENSE_IN`); the page then says "not fitted".
-* The page marks the 5 V red below 4.5 V ("too low for the sensor") and the
-  input outside 11–15.5 V. The Serial Monitor shows both with `status`.
-* With nothing wired to GPIO6/7 the page shows 0 V or a random value: ignore it,
-  or set the pins to `-1`.
-
 ## ADC pins
 
 On the ESP32-S3 only GPIO1..GPIO10 are ADC1. ADC2 (GPIO11..20) shares hardware
 with the radio and can return errors while it is active, so keep the sensor
 on ADC1. GPIO4 and GPIO5 are the defaults in the sketch (`PIN_PRESSURE`,
-`PIN_ONEWIRE`); GPIO6 and GPIO7 measure the supplies (`PIN_SENSE_5V`,
-`PIN_SENSE_IN`).
+`PIN_ONEWIRE`).
 
 ## Junction box layout
 
