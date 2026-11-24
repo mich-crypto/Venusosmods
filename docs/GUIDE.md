@@ -77,7 +77,7 @@ Follow [wiring.md](wiring.md). In short:
 3. Connect the pressure sensor (option C: 0–3.3 V like the QDY30A, A: 0.5–4.5 V,
    or B: 4–20 mA) to GPIO4
    through the resistors.
-4. Optional: one or two DS18B20 probes to GPIO5 (in parallel) with one 4.7 kΩ pull-up to 3V3.
+4. Optional: DS18B20 probe 1 to GPIO5, probe 2 to GPIO6, each with a 4.7 kΩ pull-up to 3V3.
 5. Don't put the sensor in the tank yet; it's easier to test on the table.
 
 **Check:** with the 12 V on, the ESP32's power LED is on and the buck

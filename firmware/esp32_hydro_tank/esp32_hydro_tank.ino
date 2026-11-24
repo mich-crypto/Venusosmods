@@ -45,7 +45,8 @@
 
 // ---- Pins (ESP32-S3: use GPIO1..GPIO10 = ADC1; ADC2 shares hardware with the radio)
 #define PIN_PRESSURE         4
-#define PIN_ONEWIRE          5
+#define PIN_ONEWIRE          5      // temperature probe 1 (DS18B20 data)
+#define PIN_ONEWIRE2         6      // temperature probe 2 on its own pin; -1 = both on PIN_ONEWIRE
 #define USE_DS18B20          1      // 1 = DS18B20 temperature probes fitted, 0 = none
 #define MAX_TEMPS            2      // probes on the one-wire bus (sent to the Pi: the first two)
 
@@ -162,7 +163,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // one breath in and out
 
-#define FW_VERSION           "2.4"
+#define FW_VERSION           "2.5"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -182,6 +183,16 @@ static const TankPoint DEFAULT_TABLE[] = {
 #include <DallasTemperature.h>
 static OneWire oneWire(PIN_ONEWIRE);
 static DallasTemperature ds18b20(&oneWire);
+#if PIN_ONEWIRE2 >= 0
+static OneWire oneWire2(PIN_ONEWIRE2);
+static DallasTemperature ds18b20b(&oneWire2);
+static DallasTemperature *buses[] = { &ds18b20, &ds18b20b };
+static const int busPins[] = { PIN_ONEWIRE, PIN_ONEWIRE2 };
+#else
+static DallasTemperature *buses[] = { &ds18b20 };
+static const int busPins[] = { PIN_ONEWIRE };
+#endif
+static const uint8_t BUSES = sizeof(busPins) / sizeof(busPins[0]);
 #endif
 
 // Protocol (keep in sync with esp32_hydro_protocol.py)
@@ -230,7 +241,9 @@ static float tempC[MAX_TEMPS];
 static uint8_t tempAddr[MAX_TEMPS][8];
 static uint8_t tempFails[MAX_TEMPS];
 static String tempName[MAX_TEMPS];
-static uint8_t tempCount = 0;
+static uint8_t tempCount = 0;          // probes found
+static bool tempPresent[MAX_TEMPS];    // slot has a probe
+static uint8_t tempBus[MAX_TEMPS];     // which pin it is on
 #define temperatureC (tempC[0])
 static uint8_t sequence = 0;
 static BLEAdvertising *advertising = nullptr;
@@ -331,7 +344,7 @@ static String nameKey(const uint8_t *a) { return "t" + addrHex(a).substring(2); 
 static void loadTempNames() {
   prefs.begin("temps", true);
   for (uint8_t i = 0; i < MAX_TEMPS; i++)
-    tempName[i] = i < tempCount ? prefs.getString(nameKey(tempAddr[i]).c_str(), "") : String();
+    tempName[i] = tempPresent[i] ? prefs.getString(nameKey(tempAddr[i]).c_str(), "") : String();
   prefs.end();
   for (uint8_t i = 0; i < MAX_TEMPS; i++)
     if (tempName[i].length() == 0) tempName[i] = "Temperature " + String(i + 1);
@@ -339,7 +352,7 @@ static void loadTempNames() {
 
 static bool setTempName(uint8_t i, String name) {
   name.trim();
-  if (i >= tempCount || name.length() == 0 || name.length() > 32) return false;
+  if (i >= MAX_TEMPS || !tempPresent[i] || name.length() == 0 || name.length() > 32) return false;
   for (size_t k = 0; k < name.length(); k++)
     if ((uint8_t)name[k] < 32 || name[k] == '"' || name[k] == '\\') return false;
   prefs.begin("temps", false);
@@ -349,26 +362,51 @@ static bool setTempName(uint8_t i, String name) {
   return true;
 }
 
-// Find the probes on the bus and number them by address (stable order)
+#if USE_DS18B20
+// Addresses of the probes on one pin, sorted (stable order); returns how many
+static uint8_t scanBus(uint8_t bus, uint8_t found[][8], uint8_t maxN) {
+  // The chip's own pull-up (~45 kOhm) helps when the 4.7 kOhm resistor is missing
+  // (short cables). It stays on: OneWire only switches the output driver on and
+  // off. With the external resistor fitted it changes nothing.
+  pinMode(busPins[bus], INPUT_PULLUP);
+  DallasTemperature *d = buses[bus];
+  d->begin();
+  uint8_t n = 0, a[8];
+  for (uint8_t i = 0; i < d->getDeviceCount() && n < maxN; i++)
+    if (d->getAddress(a, i)) memcpy(found[n++], a, 8);
+  for (uint8_t i = 1; i < n; i++)              // insertion sort by address
+    for (uint8_t j = i; j > 0 && memcmp(found[j - 1], found[j], 8) > 0; j--) {
+      uint8_t t[8]; memcpy(t, found[j], 8); memcpy(found[j], found[j - 1], 8); memcpy(found[j - 1], t, 8);
+    }
+  d->setResolution(11);                 // 0.125 C, 375 ms conversion
+  d->setWaitForConversion(false);
+  return n;
+}
+
+static void putProbe(uint8_t slot, const uint8_t *addr, uint8_t bus) {
+  memcpy(tempAddr[slot], addr, 8);
+  tempBus[slot] = bus;
+  tempPresent[slot] = true;
+}
+#endif
+
+// Find the probes. With a second pin: probe 1 = GPIO5, probe 2 = GPIO6 (or a
+// second probe on GPIO5 if GPIO6 has none). With one pin: numbered by address.
 static void findProbes() {
 #if USE_DS18B20
-  // The chip's own pull-up (~45 kOhm) helps when the 4.7 kOhm resistor is missing
-  // (short cables, one or two probes). It stays on: OneWire only switches the
-  // output driver on and off. With the external resistor fitted it changes nothing.
-  pinMode(PIN_ONEWIRE, INPUT_PULLUP);
-  ds18b20.begin();
-  uint8_t n = 0, a[8];
-  for (uint8_t i = 0; i < ds18b20.getDeviceCount() && n < MAX_TEMPS; i++)
-    if (ds18b20.getAddress(a, i)) memcpy(tempAddr[n++], a, 8);
-  for (uint8_t i = 1; i < n; i++)              // insertion sort by address
-    for (uint8_t j = i; j > 0 && memcmp(tempAddr[j - 1], tempAddr[j], 8) > 0; j--) {
-      uint8_t t[8]; memcpy(t, tempAddr[j], 8); memcpy(tempAddr[j], tempAddr[j - 1], 8); memcpy(tempAddr[j - 1], t, 8);
-    }
-  if (n != tempCount) Serial.printf("Temperature probes found: %u\n", n);
+  uint8_t a0[MAX_TEMPS][8], a1[MAX_TEMPS][8];
+  uint8_t n0 = scanBus(0, a0, MAX_TEMPS), n1 = BUSES > 1 ? scanBus(1, a1, MAX_TEMPS) : 0;
+  for (uint8_t i = 0; i < MAX_TEMPS; i++) { tempPresent[i] = false; tempC[i] = NAN; tempFails[i] = 0; }
+  if (n0 > 0) putProbe(0, a0[0], 0);
+  if (MAX_TEMPS > 1) {
+    if (n1 > 0) putProbe(1, a1[0], 1);
+    else if (n0 > 1) putProbe(1, a0[1], 0);
+  }
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < MAX_TEMPS; i++) n += tempPresent[i];
+  if (n != tempCount) Serial.printf("Temperature probes found: %u (GPIO%d: %u, GPIO%d: %u)\n",
+                                    n, busPins[0], n0, busPins[BUSES - 1], n1);
   tempCount = n;
-  for (uint8_t i = 0; i < MAX_TEMPS; i++) { tempC[i] = NAN; tempFails[i] = 0; }
-  ds18b20.setResolution(11);            // 0.125 C, 375 ms conversion
-  ds18b20.setWaitForConversion(false);
   loadTempNames();
 #endif
 }
@@ -379,21 +417,23 @@ static void updateTemperature() {
   static uint32_t lastSearch = 0;
   // A probe plugged in later, or one that went missing: look again every 30 s
   bool missing = tempCount < MAX_TEMPS;
-  for (uint8_t i = 0; i < tempCount; i++) missing |= isnan(tempC[i]) && tempFails[i] >= TEMP_MAX_FAILS;
+  for (uint8_t i = 0; i < MAX_TEMPS; i++) missing |= tempPresent[i] && isnan(tempC[i]) && tempFails[i] >= TEMP_MAX_FAILS;
   if (missing && millis() - lastSearch > 30000) {
     lastSearch = millis();
     float keep[MAX_TEMPS]; memcpy(keep, tempC, sizeof keep);
     uint8_t before[MAX_TEMPS][8]; memcpy(before, tempAddr, sizeof before);
-    uint8_t had = tempCount;
+    bool had[MAX_TEMPS]; memcpy(had, tempPresent, sizeof had);
     findProbes();
-    if (tempCount == had && memcmp(before, tempAddr, sizeof before) == 0) memcpy(tempC, keep, sizeof keep);
+    if (memcmp(had, tempPresent, sizeof had) == 0 && memcmp(before, tempAddr, sizeof before) == 0)
+      memcpy(tempC, keep, sizeof keep);
     pending = false;
   }
   if (pending) {
-    for (uint8_t i = 0; i < tempCount; i++) {
+    for (uint8_t i = 0; i < MAX_TEMPS; i++) {
+      if (!tempPresent[i]) continue;
       // getTempC() checks the scratchpad CRC and returns DEVICE_DISCONNECTED_C
       // for a missing probe or a corrupted read.
-      float t = ds18b20.getTempC(tempAddr[i]);
+      float t = buses[tempBus[i]]->getTempC(tempAddr[i]);
       bool bad = t == DEVICE_DISCONNECTED_C || t < -55.0f || t > 125.0f;
       // 85.0 C is the power-on value of the scratchpad: a conversion that never
       // ran (brown-out, bad contact). Only believe it if we were already close.
@@ -406,7 +446,7 @@ static void updateTemperature() {
       }
     }
   }
-  ds18b20.requestTemperatures();   // non-blocking, read on next call
+  for (uint8_t b = 0; b < BUSES; b++) buses[b]->requestTemperatures();   // non-blocking, read on next call
   pending = true;
 #endif
 }
@@ -711,13 +751,17 @@ static void handleCommand(String line) {
     }
   } else if (cmd == "temps") {
     if (tempCount == 0) out->println("No temperature probes found (wiring, 4.7k pull-up, USE_DS18B20).");
-    for (uint8_t i = 0; i < tempCount; i++)
-      out->printf("  %u  %-24s %6.2f C  address %s\n", i + 1, tempName[i].c_str(), tempC[i], addrHex(tempAddr[i]).c_str());
+    for (uint8_t i = 0; i < MAX_TEMPS; i++)
+      if (tempPresent[i])
+        out->printf("  %u  %-24s %6.2f C  GPIO%d  address %s\n", i + 1, tempName[i].c_str(), tempC[i],
+                    busPins[tempBus[i]], addrHex(tempAddr[i]).c_str());
+      else
+        out->printf("  %u  (no probe found)\n", i + 1);
   } else if (cmd == "name") {
     int sp = rest.indexOf(' ');
     int i = (sp < 0 ? rest : rest.substring(0, sp)).toInt();
     if (sp < 0 || i < 1 || !setTempName(i - 1, rest.substring(sp + 1)))
-      out->printf("Usage: name <1..%u> <text up to 32 characters> (probe must be found)\n", (unsigned)tempCount);
+      out->printf("Usage: name <1..%u> <text up to 32 characters> (probe must be found)\n", (unsigned)MAX_TEMPS);
     else
       out->printf("Probe %d is now '%s'.\n", i, tempName[i - 1].c_str());
   } else if (cmd == "table") {
@@ -932,10 +976,10 @@ async function cmd(c){
 }
 let tempsKey='';
 function renderTemps(t){
- $('tnote').textContent=t.length?'Warm one probe in your hand to see which is which.':'No probe found. Check the wiring (data on GPIO5, 4.7 kΩ to 3V3). The sender looks again every 30 s.';
+ $('tnote').textContent=t.length?'Warm one probe in your hand to see which is which.':'No probe found. Check the wiring (probe 1 data on GPIO5, probe 2 on GPIO6, 4.7 kΩ to 3V3 on each). The sender looks again every 30 s.';
  const key=t.map(x=>x.addr+x.name).join();
  if(key!==tempsKey){tempsKey=key;
-  $('temps').innerHTML=t.map(x=>'<div class="row" style="align-items:center"><div style="flex:1;min-width:0"><span class="mut">'+x.n+' · '+esc(x.name)+'</span><b style="display:block;font-size:22px" id="tv'+x.n+'">–</b></div><button onclick="rename('+x.n+')">Rename</button></div>').join('');}
+  $('temps').innerHTML=t.map(x=>'<div class="row" style="align-items:center"><div style="flex:1;min-width:0"><span class="mut">'+x.n+' · '+esc(x.name)+(x.pin!=null?' · GPIO'+x.pin:'')+'</span><b style="display:block;font-size:22px" id="tv'+x.n+'">–</b></div><button onclick="rename('+x.n+')">Rename</button></div>').join('');}
  t.forEach(x=>{const e=$('tv'+x.n);if(e)e.textContent=x.c==null?'no reading':x.c.toFixed(1)+' °C'});
 }
 function esc(v){return String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c])}
@@ -989,11 +1033,14 @@ static void handleStatus() {
   jsonNum(j, "capacity", capacityL());
   jsonNum(j, "level", isnan(litres) ? NAN : litres / capacityL() * 100.0f);
   j += "\"temps\":[";
-  for (uint8_t i = 0; i < tempCount; i++) {
+  bool first = true;
+  for (uint8_t i = 0; i < MAX_TEMPS; i++) {
+    if (!tempPresent[i]) continue;
     String nm = tempName[i];
     nm.replace("\\", "\\\\"); nm.replace("\"", "\\\"");
-    if (i) j += ',';
-    j += "{\"n\":" + String(i + 1) + ",\"name\":\"" + nm + "\",\"addr\":\"" + addrHex(tempAddr[i]) + "\",\"c\":";
+    if (!first) j += ',';
+    first = false;
+    j += "{\"n\":" + String(i + 1) + ",\"pin\":" + String(busPins[tempBus[i]]) + ",\"name\":\"" + nm + "\",\"addr\":\"" + addrHex(tempAddr[i]) + "\",\"c\":";
     j += isnan(tempC[i]) ? String("null") : String(tempC[i], 2);
     j += '}';
   }

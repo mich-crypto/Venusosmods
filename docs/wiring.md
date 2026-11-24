@@ -11,7 +11,7 @@
 | Hydrostatic level transmitter | 0–3.3 V, 0.5–4.5 V or 4–20 mA output (see below) |
 | Resistors | 0–3.3 V version: 10 kΩ + 1 MΩ; 0.5–4.5 V version: 10 kΩ + 20 kΩ; 4–20 mA version: 120 Ω 0.1 %/1 % |
 | 1 kΩ resistor + 100 nF capacitor | input filter/protection (options A and B) |
-| DS18B20 waterproof probes (up to 2) + one 4.7 kΩ | optional temperatures, each with a name |
+| DS18B20 waterproof probes (up to 2) + 4.7 kΩ per data pin | optional temperatures, each with a name |
 | IP65 junction box, cable glands, ferrules | |
 | Wire | 0.75 mm² for 12 V, any thin wire for signals |
 
@@ -128,33 +128,30 @@ protection diodes if something goes wrong.
 
 ## DS18B20 temperature probes (up to two)
 
-Both probes share the same three wires: connect them **in parallel**
-(red to red, black to black, yellow to yellow). Only **one** 4.7 kΩ pull-up
-for both.
+Default: **each probe on its own pin**, probe 1 on **GPIO5**, probe 2 on
+**GPIO6**. Each data pin gets its own 4.7 kΩ to 3V3.
 
 ```
-                 probe 1          probe 2
- ESP32 3V3 ──┬── red (VDD) ────── red (VDD)
-             │
-          [4.7 kΩ]
-             │
- GPIO5 ──────┴── yellow (DATA) ── yellow (DATA)
-
- GND ─────────── black (GND) ──── black (GND)
+              probe 1                       probe 2
+ 3V3 ──┬────── red              3V3 ──┬────── red
+    [4.7 kΩ]                       [4.7 kΩ]
+       │                              │
+ GPIO5 ┴────── yellow (data)    GPIO6 ┴────── yellow (data)
+ GND ───────── black            GND ───────── black
 ```
+* The pin decides the number: GPIO5 is always probe 1, GPIO6 always probe 2.
+* Both on GPIO5 in parallel (one shared 4.7 kΩ) works too: they are then
+  numbered by their address. Set `PIN_ONEWIRE2 -1` if you don't use GPIO6 at all.
+* Power them from **3V3**, not 5 V: the data line goes straight to the ESP32.
 * **Without the 4.7 kΩ** the firmware switches on the ESP32's own pull-up
   (~45 kΩ). That is often enough for short cables (1–2 m) and two probes, but
   not reliable: fit the resistor for the van. Probes on a small breakout
   board (pins VCC/DAT/GND) usually have it on board already.
-* Each probe has its own built-in address, so the sender tells them apart.
-  It numbers them 1 and 2 by that address; the order stays the same after
-  a restart.
-* **Which is which:** open the sender's page (or type `temps` in the Serial
-  Monitor) and warm one probe in your hand. Then press **Rename** on the
-  page, or type `name 1 Inside`. The name stays with the probe.
-* Power it from **3V3**, not 5 V: the data line goes straight to the ESP32.
-* The 4.7 kΩ pull-up is required. For cables over ~5 m use 2.2 kΩ.
-* Set `USE_DS18B20 0` in the sketch if you don't fit one.
+* **Names:** press **Rename** on the sender's page, or type `name 1 Inside`
+  in the Serial Monitor (`temps` lists them with their pin). The name stays
+  with the probe.
+* For cables over ~5 m use 2.2 kΩ instead of 4.7 kΩ.
+* Set `USE_DS18B20 0` in the sketch if you don't fit any.
 * Drinking water: the common "waterproof stainless" probes are not certified
   for potable water. Either buy one with a documented food-grade sleeve and
   cable, or put the probe in a dry pocket on the **outside** of the tank wall
