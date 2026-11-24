@@ -2341,16 +2341,20 @@ function senderCard() {
   const dev = deviceOf(S.state, 'water'), v = dev ? dev.values : {};
   const inst = v['/FirmwareVersion'], latest = S.senderFw && S.senderFw.latest, newer = senderUpdate();
   const link = v['/Hydro/LinkStatus'], when = v['/Hydro/LinkTime'];
-  const modes = { auto: 'Bluetooth only, own Wi-Fi as fallback', van: 'van Wi-Fi', ap: 'own Wi-Fi always on' };
+  const modes = { auto: 'Bluetooth only, own Wi-Fi as fallback', van: 'van Wi-Fi', ap: 'own Wi-Fi always on', off: 'Wi-Fi off' };
   const body = h('div', {});
+  const sec = S.driver && (S.driver.sections || []).find(x => x.kind === 'esp32');
+  const mode = sec ? (sec.values.wifi_mode || 'auto') : null;
+  const svc = (S.state.services || []).find(x => x.name === 'esp32_hydro');
+  const noData = !dev || (link || '').indexOf('no broadcast') === 0;
   const card = h('div', { class: 'card' }, h('h3', {}, 'Sender ', newer ? h('span', { class: 'chip warn' }, 'firmware update available') : null),
     h('div', { class: 'stats' },
       stat('Firmware', inst || '–', latest ? 'latest ' + latest : '', true),
       stat('Wi-Fi', v['/Hydro/WifiMode'] ? (modes[v['/Hydro/WifiMode']] || v['/Hydro/WifiMode']) : '–',
         v['/Hydro/WifiMode'] == null ? '' : (v['/Hydro/AccessPoint'] ? 'own Wi-Fi on' : 'own Wi-Fi off') + (v['/Hydro/WifiIp'] ? ' · ' + v['/Hydro/WifiIp'] : ''), true),
-      stat('Bluetooth link', link || 'not checked yet', when ? ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago' : '', true)),
+      stat('Bluetooth link', !dev ? 'no data' : link || 'not checked yet', when ? ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago' : '', true)),
     v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sender page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
-    !inst ? firstInstallHelp(link) : null,
+    noData ? noDataHelp(svc) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
       h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(),
         onclick: () => confirmThen('Update the sender firmware' + (latest ? ' to ' + latest : '') + '? Over Bluetooth this takes a few minutes; the water level pauses meanwhile. If it fails, the sender keeps its old firmware.', async () => {
@@ -2359,9 +2363,33 @@ function senderCard() {
           if (x.ok) watchSenderUpdate(body);
         }) }, newer || !inst ? 'Update sender firmware' : 'Reinstall sender firmware'),
       h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
+      mode ? h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || senderBusy(), onclick: () => setSenderWifi(sec, mode === 'off' ? 'auto' : 'off') },
+        mode === 'off' ? 'Turn sender Wi-Fi on' : 'Turn sender Wi-Fi off') : null,
       h('span', { class: 'muted' }, 'Wi-Fi settings and the sender password are in Settings below.')),
     body);
   return card;
+}
+
+// Wi-Fi switch: off = only the BOOT button on the ESP32 switches it on; on = Bluetooth with Wi-Fi as fallback
+async function setSenderWifi(sec, mode) {
+  const x = await api('/api/driver_config', { section: sec.section, 'f.wifi_mode': mode, restart: '1' });
+  toast(x.ok ? (mode === 'off' ? 'Sender Wi-Fi off' : 'Sender Wi-Fi on (as fallback)') + ': the sender switches at its next Bluetooth check-in, within a minute.'
+    : (x.data.error || 'Not saved'), !x.ok);
+  if (x.ok) { await loadDriver(); await renderTab(); }
+}
+
+// Nothing arrives from the sender at all: say what to check, before anything about firmware
+function noDataHelp(svc) {
+  const running = svc && svc.state === 'up';
+  return h('div', { class: 'banner bad', style: 'margin-top:10px' },
+    h('b', {}, !svc || !svc.enabled ? 'The water driver is switched off.' : !running ? 'The water driver is not running.' : 'The Pi receives nothing from the sender.'),
+    h('div', { class: 'muted', style: 'margin-top:4px' }, running
+      ? 'No Bluetooth broadcast from the sender has arrived since the driver started. Check:' : 'Start it on the Overview tab, then check:'),
+    h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
+      h('li', {}, 'Does the sender broadcast? Its page (press BOOT, join Watertank-1, http://192.168.4.1) shows "Bluetooth: broadcasting"; or scan with the nRF Connect app for "VHT".'),
+      h('li', {}, 'Is the Pi\'s Bluetooth on (Venus OS: Settings → Bluetooth) and the sender in range (no metal box around it)?'),
+      h('li', {}, 'Does the sender ID match? DEVICE_ID in the firmware (default 1) and "Sender ID" here.'),
+      h('li', {}, 'Debug → Raw data → Water lists every packet the Pi receives; the driver log is on the Overview tab (Log).')));
 }
 
 // The Pi can only update a sender that already runs 2.7+ (its Bluetooth update service)

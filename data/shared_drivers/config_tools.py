@@ -206,7 +206,8 @@ SCHEMA = {
               'Wi-Fi then starts by itself when the Pi has not been heard for 15 minutes (or after pressing '
               'its BOOT button). Needs sender firmware 2.7 or newer.',
               options=[['auto', 'Bluetooth only, own Wi-Fi as fallback'], ['van', 'Join the van Wi-Fi'],
-                       ['ap', 'Own Wi-Fi always on']], default='auto'),
+                       ['ap', 'Own Wi-Fi always on'], ['off', 'Wi-Fi off (only the BOOT button switches it on)']],
+              default='auto'),
             F('wifi_ssid', 'text', 'Van Wi-Fi name', 'Only for "Join the van Wi-Fi".'),
             F('wifi_password', 'secret', 'Van Wi-Fi password', 'Only for "Join the van Wi-Fi".'),
             F('sender_password', 'secret', 'Sender password', 'The password of the sender\'s own Wi-Fi '

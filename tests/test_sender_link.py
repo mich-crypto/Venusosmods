@@ -39,6 +39,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(proto.link_commands('pw', 'nonsense'), [b'Cauth pw', b'Chb', b'Cinfo'])
         self.assertEqual(proto.link_commands('pw', 'van')[3], b'Cwifi ssid -')      # empty name clears it
 
+    def test_wifi_off_is_sent(self):
+        self.assertEqual(proto.link_commands('pw', 'off'), [b'Cauth pw', b'Chb', b'Cwifi mode off', b'Cinfo'])
+
     def test_replies_are_joined_across_chunks(self):
         c = proto.ReplyCollector()
         self.assertEqual(c.feed(b'ok\x04{"fw":"2'), ['ok'])
@@ -73,6 +76,14 @@ class DriverLinkTests(unittest.TestCase):
         d._collector.feed(b'ok\x04ok wifi mode auto\n\x04' + json.dumps(self.INFO).encode() + b'\x04')
         d._on_link_done(True, None)
         self.assertEqual((s['/Hydro/LinkStatus'], s['/FirmwareVersion']), ('ok', '2.7'))
+
+    def test_status_says_when_nothing_was_received(self):
+        d = Esp32HydroDriver('s', section(''))
+        d.start = Esp32HydroDriver.start.__get__(d)
+        d.start()
+        self.assertIn('no broadcast', d.tank.service['/Hydro/LinkStatus'])
+        d._link_tick()
+        self.assertIn('no broadcast', d.tank.service['/Hydro/LinkStatus'])
 
     def test_the_sender_address_is_learned_from_its_broadcast(self):
         d = Esp32HydroDriver('s', section(''))

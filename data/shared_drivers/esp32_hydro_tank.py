@@ -95,6 +95,8 @@ class Esp32HydroDriver(BleDriver):
 
     def start(self):
         if self.link:
+            if not self.seen_mac:
+                self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sender yet'
             GLib.timeout_add_seconds(20, self._first_link)
 
     def _first_link(self):
@@ -118,7 +120,11 @@ class Esp32HydroDriver(BleDriver):
         self._client().exchange(frames, self._on_link_done)
 
     def _link_tick(self):
-        if not self.seen_mac or (self.gatt is not None and self.gatt.busy):
+        if not self.seen_mac:
+            # without a broadcast the Pi doesn't know where to connect: say so on the page
+            self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sender yet'
+            return True
+        if self.gatt is not None and self.gatt.busy:
             return True
         self._send('checkin', proto.link_commands(self.sender_password, self.wifi_mode,
                                                   self.wifi_ssid, self.wifi_password))
