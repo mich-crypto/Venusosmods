@@ -179,6 +179,12 @@ commands do: *Tank is empty: set zero*, measuring the tank in portions
 command, the Wi-Fi password and **firmware updates** (upload
 `esp32_hydro_tank.ino.bin`; the calibration is kept).
 
+**Status light:** the board's RGB LED **breathes blue** once the Wi-Fi
+network and the page are up. It stays off while starting, and also if the
+Wi-Fi could not start (the Serial Monitor then says why). Some boards have the
+LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
+`STATUS_LED_MAX` sets how bright it gets.
+
 **Change the Wi-Fi password** on the page the first time. Name and password
 defaults are in the sketch (`AP_SSID_PREFIX`, `AP_PASSWORD_DEFAULT`); set
 `USE_WIFI_AP 0` to switch the Wi-Fi off (saves about 0.5–1 W).

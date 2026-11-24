@@ -155,7 +155,13 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define AP_PASSWORD_DEFAULT  "watertank"    // 8..63 chars; change it on the page
 #define AP_CHANNEL           6
 
-#define FW_VERSION           "2.1"
+// ---- Status LED: the board's RGB LED (WS2812) breathes blue while the
+//      Wi-Fi page is up. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
+#define STATUS_LED_PIN       48     // -1 = no LED
+#define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
+#define BREATH_PERIOD_MS     3000   // one breath in and out
+
+#define FW_VERSION           "2.2"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -553,7 +559,7 @@ static bool measureSteadyHeight(float &result, uint32_t ms = 5000) {
     n++;
     lo = min(lo, lastRawHeight);
     hi = max(hi, lastRawHeight);
-    delay(SAMPLE_PERIOD_MS);
+    for (uint32_t t1 = millis(); millis() - t1 < SAMPLE_PERIOD_MS; ) { updateLed(); delay(5); }  // keep breathing
   }
   result = (float)(sum / n);
   out->printf("  measured %.1f mm (spread %.1f mm over %u bursts)\n", result, hi - lo, (unsigned)n);
@@ -732,6 +738,36 @@ static void pollSerial() {
       buf += c;
     }
   }
+}
+
+// -------------------------------------------------------------- status LED
+
+static bool webUp = false;   // set once the Wi-Fi network and the web server run
+
+static void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
+#if STATUS_LED_PIN >= 0
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  rgbLedWrite(STATUS_LED_PIN, r, g, b);
+#else
+  neopixelWrite(STATUS_LED_PIN, r, g, b);
+#endif
+#endif
+}
+
+// Blue breathing while the page is reachable, off otherwise. Squaring the
+// cosine wave makes the fade look even to the eye.
+static void updateLed() {
+  static uint32_t last = 0;
+  static int lastLevel = -1;
+  uint32_t now = millis();
+  if (now - last < 20) return;              // 50 updates a second is smooth enough
+  last = now;
+  int level = 0;
+  if (webUp) {
+    float x = (1.0f - cosf(2.0f * PI * (now % BREATH_PERIOD_MS) / BREATH_PERIOD_MS)) / 2.0f;
+    level = lroundf(x * x * STATUS_LED_MAX);
+  }
+  if (level != lastLevel) { ledWrite(0, 0, level); lastLevel = level; }
 }
 
 // ------------------------------------------------------- own Wi-Fi + web page
@@ -985,6 +1021,7 @@ static void startAp() {
   WiFi.mode(WIFI_AP);
   // Modem sleep must stay on while Bluetooth runs too (the default).
   bool ok = WiFi.softAP(ssid.c_str(), apPassword.c_str(), AP_CHANNEL);
+  webUp = ok;
   Serial.printf("Wi-Fi %s '%s', page http://%s\n", ok ? "network" : "FAILED to start",
                 ssid.c_str(), WiFi.softAPIP().toString().c_str());
 }
@@ -1001,6 +1038,7 @@ static void handlePassword() {
   server.send(200, "text/plain", "Saved. The Wi-Fi restarts now: join it again with the new password.");
   delay(500);
   apPassword = p;
+  webUp = false;
   WiFi.softAPdisconnect(true);
   startAp();
 }
@@ -1040,6 +1078,7 @@ static void webStart() {
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   server.onNotFound([]() { server.sendHeader("Location", "/"); server.send(302); });
   server.begin();
+  if (!webUp) Serial.println("Web page not reachable: the Wi-Fi network did not start (LED stays off).");
 }
 
 #endif  // USE_WIFI_AP
@@ -1048,6 +1087,7 @@ static void webStart() {
 
 void setup() {
   Serial.begin(115200);
+  ledWrite(0, 0, 0);                    // off until the web page runs
   delay(500);
   loadCalibration();
   analogReadResolution(12);
@@ -1078,6 +1118,7 @@ void loop() {
 #if USE_WIFI_AP
   server.handleClient();
 #endif
+  updateLed();
 
   delay(5);
 }
