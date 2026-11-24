@@ -142,6 +142,10 @@ for both.
 
  GND ─────────── black (GND) ──── black (GND)
 ```
+* **Without the 4.7 kΩ** the firmware switches on the ESP32's own pull-up
+  (~45 kΩ). That is often enough for short cables (1–2 m) and two probes, but
+  not reliable: fit the resistor for the van. Probes on a small breakout
+  board (pins VCC/DAT/GND) usually have it on board already.
 * Each probe has its own built-in address, so the sender tells them apart.
   It numbers them 1 and 2 by that address; the order stays the same after
   a restart.

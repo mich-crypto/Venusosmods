@@ -162,7 +162,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // one breath in and out
 
-#define FW_VERSION           "2.3"
+#define FW_VERSION           "2.4"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -352,6 +352,10 @@ static bool setTempName(uint8_t i, String name) {
 // Find the probes on the bus and number them by address (stable order)
 static void findProbes() {
 #if USE_DS18B20
+  // The chip's own pull-up (~45 kOhm) helps when the 4.7 kOhm resistor is missing
+  // (short cables, one or two probes). It stays on: OneWire only switches the
+  // output driver on and off. With the external resistor fitted it changes nothing.
+  pinMode(PIN_ONEWIRE, INPUT_PULLUP);
   ds18b20.begin();
   uint8_t n = 0, a[8];
   for (uint8_t i = 0; i < ds18b20.getDeviceCount() && n < MAX_TEMPS; i++)
