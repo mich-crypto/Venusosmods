@@ -178,13 +178,16 @@ static const TankPoint DEFAULT_TABLE[] = {
 // ---- Energy: 80 MHz is plenty for this job and saves ~10-15 mA against 240 MHz
 #define CPU_MHZ              80
 
-// ---- Status LED: the board's RGB LED (WS2812) breathes blue while the
-//      Wi-Fi page is up. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
+// ---- Status LED: the board's RGB LED (WS2812) breathes green while Wi-Fi is
+//      on (the page is reachable) and blinks blue briefly every 3 s when the
+//      sender runs on Bluetooth only. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
 #define STATUS_LED_PIN       48     // -1 = no LED
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
-#define BREATH_PERIOD_MS     3000   // one breath in and out
+#define BREATH_PERIOD_MS     3000   // Wi-Fi on: green breathing, one breath in and out
+#define BLINK_PERIOD_MS      3000   // Bluetooth only: one short blue blink this often
+#define BLINK_ON_MS          60     // ... this long (saves energy: the LED is off 98 % of the time)
 
-#define FW_VERSION           "2.8"
+#define FW_VERSION           "2.9"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -1118,20 +1121,22 @@ static void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
 #endif
 }
 
-// Blue breathing while the page is reachable, off otherwise. Squaring the
-// cosine wave makes the fade look even to the eye.
+// Green breathing while the page is reachable, a short blue blink every 3 s on
+// Bluetooth only. Squaring the cosine wave makes the fade look even to the eye.
 static void updateLed() {
   static uint32_t last = 0;
-  static int lastLevel = -1;
+  static int lastG = -1, lastB = -1;
   uint32_t now = millis();
   if (now - last < 20) return;              // 50 updates a second is smooth enough
   last = now;
-  int level = 0;
-  if (webUp) {
+  int g = 0, b = 0;
+  if (webUp) {                              // Wi-Fi on: green breathing
     float x = (1.0f - cosf(2.0f * PI * (now % BREATH_PERIOD_MS) / BREATH_PERIOD_MS)) / 2.0f;
-    level = lroundf(x * x * STATUS_LED_MAX);
+    g = lroundf(x * x * STATUS_LED_MAX);
+  } else if (now % BLINK_PERIOD_MS < BLINK_ON_MS) {
+    b = STATUS_LED_MAX;                     // Bluetooth only: short blue blink
   }
-  if (level != lastLevel) { ledWrite(0, 0, level); lastLevel = level; }
+  if (g != lastG || b != lastB) { ledWrite(0, g, b); lastG = g; lastB = b; }
 }
 
 // ------------------------------------------------------- own Wi-Fi + web page
