@@ -163,7 +163,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // one breath in and out
 
-#define FW_VERSION           "2.5"
+#define FW_VERSION           "2.6"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -215,6 +215,12 @@ static size_t tablePoints = 0;
 static float zeroOffsetMm = ZERO_OFFSET_MM;
 static Preferences prefs;
 static bool serialLog = SERIAL_LOG;
+
+// Test mode: no smoothing, so the level follows the signal at once (bench tests
+// with a potentiometer). Switches itself off after FAST_MODE_MS and at restart.
+#define FAST_MODE_MS (15UL * 60UL * 1000UL)
+static uint32_t fastUntil = 0;
+static bool fastMode() { return fastUntil && (int32_t)(fastUntil - millis()) > 0; }
 
 // Where command replies go: the serial port, or a web request's reply text
 static Print *out = &Serial;
@@ -306,6 +312,13 @@ static void sampleLevel() {
   lastRawHeight = h;
   if (isnan(emaHeight)) {   // first sample after boot / fault
     emaHeight = h;
+    return;
+  }
+
+  if (fastMode()) {               // test mode: show every burst as it is
+    emaHeight = h;
+    activity = 0.0f;
+    sloshing = false;
     return;
   }
 
@@ -653,6 +666,7 @@ static void printHelp() {
     "Commands (end with Enter):\n"
     "  status              current reading and active table\n"
     "  log                 toggle the periodic status line\n"
+    "  fast / fast off     test mode: no smoothing for 15 min (bench tests)\n"
     "  zero                tank EMPTY: make the current height read 0 mm\n"
     "  zero <mm>           set the zero offset by hand\n"
     "  cal start           tank EMPTY: start a new table with 0 L at the current height\n"
@@ -679,6 +693,15 @@ static void handleCommand(String line) {
 
   if (cmd == "help" || cmd == "?") {
     printHelp();
+  } else if (cmd == "fast") {
+    if (rest == "off") {
+      fastUntil = 0;
+      out->println("Test mode off: normal smoothing again.");
+    } else {
+      fastUntil = millis() + FAST_MODE_MS;
+      if (!fastUntil) fastUntil = 1;
+      out->println("Test mode on for 15 minutes: the level follows the signal at once (no smoothing).");
+    }
   } else if (cmd == "log") {
     serialLog = !serialLog;
     out->printf("Periodic log %s\n", serialLog ? "on" : "off");
@@ -866,6 +889,7 @@ details summary{cursor:pointer;font-weight:600}
   <div><span class="mut">Zero offset</span><b><span id="z">–</span> mm</b></div>
  </div>
  <div id="chips"></div>
+ <div class="row"><button id="fastbtn" onclick="cmd(fastOn?'fast off':'fast')">Test mode: fast reading</button></div>
 </div>
 
 <div class="card" id="tcard" style="display:none">
@@ -960,6 +984,9 @@ async function refresh(){
   if(s.filling)c+='<span class="chip">Filling</span>';
   if(s.draining)c+='<span class="chip">Draining</span>';
   c+='<span class="chip">'+(s.custom_table?'Your calibration':'Built-in table')+'</span>';
+  fastOn=s.fast_s>0;
+  if(fastOn)c+='<span class="chip bad">Test mode: no smoothing, '+Math.ceil(s.fast_s/60)+' min left</span>';
+  $('fastbtn').textContent=fastOn?'Back to normal smoothing':'Test mode: fast reading (15 min)';
   $('chips').innerHTML=c;
   $('tbl').innerHTML=tab(s.table);
   $('calbox').innerHTML=s.cal_active?'<p class="mut">Measured so far ('+s.cal_points.length+' points):</p>'+tab(s.cal_points):'';
@@ -991,7 +1018,10 @@ async function upd(){const f=$('fw').files[0];if(!f)return;const d=new FormData(
  $('outp').textContent='Uploading '+f.name+' …';busy=true;
  try{const r=await fetch('/update',{method:'POST',body:d});$('outp').textContent=await r.text()}catch(e){$('outp').textContent='Failed: '+e}
  busy=false;setTimeout(refresh,8000)}
-refresh();setInterval(refresh,2000);
+let fastOn=false;
+// 4 updates a second in test mode, every 2 s otherwise
+function loop(){refresh().finally(()=>setTimeout(loop,fastOn?250:2000))}
+loop();
 </script></body></html>)HTML";
 
 static void jsonNum(String &j, const char *key, float v, int decimals = 1) {
@@ -1029,6 +1059,7 @@ static void handleStatus() {
   jsonNum(j, "height_mm", height);
   jsonNum(j, "raw_height_mm", lastRawHeight);
   jsonNum(j, "zero_mm", zeroOffsetMm);
+  j += "\"fast_s\":" + String(fastMode() ? (unsigned long)((fastUntil - millis()) / 1000) : 0UL) + ",";
   jsonNum(j, "litres", litres);
   jsonNum(j, "capacity", capacityL());
   jsonNum(j, "level", isnan(litres) ? NAN : litres / capacityL() * 100.0f);

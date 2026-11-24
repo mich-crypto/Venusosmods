@@ -182,6 +182,12 @@ commands do: *Tank is empty: set zero*, measuring the tank in portions
 command, the Wi-Fi password and **firmware updates** (upload
 `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin`; the calibration is kept).
 
+**Test mode:** *Test mode: fast reading* on the page (or `fast` in the Serial
+Monitor) turns the smoothing off for 15 minutes: the level follows the signal
+at once and the page updates 4 times a second. Handy on the bench with a
+potentiometer on GPIO4 (outer legs 3V3 and GND, middle leg GPIO4; never 5 V).
+It switches itself off after 15 minutes and at a restart.
+
 **Status light:** the board's RGB LED **breathes blue** once the Wi-Fi
 network and the page are up. It stays off while starting, and also if the
 Wi-Fi could not start (the Serial Monitor then says why). Some boards have the
