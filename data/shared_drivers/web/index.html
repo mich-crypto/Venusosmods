@@ -512,6 +512,13 @@ function renderBusyBanner() {
     h('div', { class: 'muted' }, 'Don\'t restart the water driver, reboot the Pi or update the software until it has finished (a few minutes). The page blocks it meanwhile.'))));
 }
 
+// Gas / Water / Fridge tab: swap in a fresh top card (level, height, drawing, temperatures)
+function refreshDeviceTop() {
+  const box = $('#devlive'), want = { water: 'esp32', gas: 'mopeka', fridge: 'fridge' }[S.tab];
+  if (!box || !S.devTop || S.devTop.kind !== want || $('#dlg').open) return;
+  box.replaceChildren(deviceHeader(S.devTop.kind, S.devTop.section));
+}
+
 async function svcRestart(name) { await post('/api/restart', { target: name }); await refreshState(); }
 async function svcToggle(s) {
   if (s.enabled && !window.confirm('Turn off ' + s.name + '? Its device disappears from Venus OS.')) return;
@@ -864,7 +871,9 @@ async function tabDevice(kind) {
   const section = S.driver.sections.find(s => s.kind === kind);
   if (!section) { if (!canEdit()) main.append(lockedNotice()); main.append(emptyDevice(spec)); return; }
   if (!canEdit()) main.append(lockedNotice());
-  main.append(deviceHeader(kind, section));
+  // the top card follows the sensor (refreshed with the state every 5 s); the form below is left alone
+  S.devTop = { kind, section };
+  main.append(h('div', { id: 'devlive' }, deviceHeader(kind, section)));
   if (kind === 'fridge') main.append(fridgeControls());
   if (kind === 'esp32') main.append(liveCard(), senderCard());
   if (kind === 'mopeka') { const g = await gasHistoryCard(); if (g) main.append(g); const b = await mopekaBatteryCard(); if (b) main.append(b); }
@@ -2896,6 +2905,7 @@ async function boot() {
   setInterval(async () => {
     if (document.hidden) return;
     await refreshState();
+    refreshDeviceTop();
     if (S.tab === 'overview' && !$('#dlg').open) {         // build off-screen and swap, so the page never goes blank
       const next = h('div');
       await tabOverview(next);
