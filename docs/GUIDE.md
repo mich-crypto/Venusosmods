@@ -661,8 +661,10 @@ if you forget it. Open the address in Safari and add it to the home screen.
   sensor a short command, and the sensor joins the Wi-Fi network from *Settings →
   Connection*, downloads the file in seconds, installs it and restarts. If
   anything fails it keeps its old firmware. Needs the Wi-Fi network name and
-  password in the settings once. The first update to 4.1 goes over the sensor's
-  own page (Firmware update).
+  password in the settings once: *Use the Pi's Wi-Fi* takes the network the Pi
+  is on, password included (read on the Pi, never shown in the browser), or pick
+  a nearby network from the list and type its password. The first update to 4.1
+  goes over the sensor's own page (Firmware update).
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
   services; the page then reloads itself with the new version). The page checks for a new version by itself every few hours, also
