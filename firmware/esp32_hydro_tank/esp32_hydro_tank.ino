@@ -42,7 +42,7 @@
 // ---- Pins (ESP32-S3: use GPIO1..GPIO10 = ADC1; ADC2 shares hardware with the radio)
 #define PIN_PRESSURE         4
 #define PIN_ONEWIRE          5
-#define USE_DS18B20          1
+#define USE_DS18B20          0      // 1 = DS18B20 water temperature probe fitted
 
 // ---- Input stage. Pick ONE:
 //  INPUT_CURRENT_LOOP 1: 4-20 mA transmitter, shunt resistor from pin to GND.
@@ -658,13 +658,12 @@ static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Water tank</title>
 <style>
-:root{--bg:#fff;--fg:#111;--mut:#666;--line:#ddd;--card:#f6f6f6;--acc:#111;--accfg:#fff;--bad:#c62828;--ok:#2e7d32}
-@media(prefers-color-scheme:dark){:root{--bg:#000;--fg:#eee;--mut:#999;--line:#333;--card:#111;--acc:#eee;--accfg:#000;--bad:#ef5350;--ok:#66bb6a}}
+:root{--bg:#fff;--fg:#111;--mut:#666;--line:#ddd;--card:#f6f6f6;--acc:#111;--accfg:#fff;--bad:#c62828;--ok:#2e7d32;--water:#3b82d6;--tank-empty:#fff;--tank-line:#222;--tank-text:#444}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--fg:#eee;--mut:#999;--line:#333;--card:#111;--acc:#eee;--accfg:#000;--bad:#ef5350;--ok:#66bb6a;--water:#3b82d6;--tank-empty:#000;--tank-line:#ddd;--tank-text:#bbb}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 -apple-system,system-ui,sans-serif}
 main{max-width:560px;margin:0 auto;padding:16px}h1{font-size:20px;margin:4px 0 12px}h2{font-size:16px;margin:0 0 8px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
 .big{font-size:44px;font-weight:700;line-height:1}.mut{color:var(--mut);font-size:14px}
-.bar{height:12px;background:var(--line);border-radius:6px;overflow:hidden;margin:10px 0}.bar i{display:block;height:100%;background:var(--acc)}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}.grid b{display:block;font-size:18px}
 .chip{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:13px;margin:6px 4px 0 0}
 .chip.bad{color:var(--bad);border-color:var(--bad)}
@@ -680,10 +679,10 @@ details summary{cursor:pointer;font-weight:600}
 <div class="card">
  <div class="big"><span id="lit">–</span> L</div>
  <div class="mut">of <span id="cap">–</span> L · <span id="lvl">–</span> %</div>
- <div class="bar"><i id="barf" style="width:0"></i></div>
+ <div id="tank" style="margin:12px 0"></div>
  <div class="grid">
   <div><span class="mut">Water height</span><b><span id="h">–</span> mm</b></div>
-  <div><span class="mut">Water temperature</span><b><span id="t">–</span></b></div>
+  <div id="tbox"><span class="mut">Water temperature</span><b><span id="t">–</span></b></div>
   <div><span class="mut">Sensor signal</span><b id="sig">–</b></div>
   <div><span class="mut">Zero offset</span><b><span id="z">–</span> mm</b></div>
  </div>
@@ -727,6 +726,36 @@ details summary{cursor:pointer;font-weight:600}
 <div class="mut" id="foot"></div>
 </main><script>
 const $=id=>document.getElementById(id);
+// Front view of the wheel-arch tank (docs/tank/tank-drawing.jpg), mm, floor of the leg = 0.
+// Water is drawn to the height the sender measures; the shape clips it.
+function tankSvg(hmm, litres, cap, id) {
+  const W = 1150, H = 695, XC = 590, R = 385, LEG = XC - R, BOX = H - R;
+  const h = hmm == null ? null : Math.max(0, Math.min(H, hmm));
+  const shape = 'M0,' + H + ' L' + LEG + ',' + H + ' A' + R + ',' + R + ' 0 0 1 ' + XC + ',' + BOX +
+    ' L' + W + ',' + BOX + ' L' + W + ',0 L0,0 Z';
+  let s = '<svg viewBox="-110 -70 1290 800" role="img" aria-label="Tank, water ' + (h == null ? 'unknown' : Math.round(h) + ' mm') +
+    '" style="width:100%;height:auto;display:block;font:44px system-ui,sans-serif">' +
+    '<defs><clipPath id="' + id + '"><path d="' + shape + '"/></clipPath></defs>' +
+    '<path d="' + shape + '" style="fill:var(--tank-empty)"/>';
+  if (h != null) {
+    s += '<rect x="0" y="' + (H - h) + '" width="' + W + '" height="' + h + '" clip-path="url(#' + id + ')" style="fill:var(--water)"/>';
+  }
+  for (let t = 0; t <= 600; t += 100) {
+    s += '<line x1="-18" x2="0" y1="' + (H - t) + '" y2="' + (H - t) + '" style="stroke:var(--tank-line);stroke-width:3"/>' +
+      '<text x="-28" y="' + (H - t + 14) + '" text-anchor="end" style="fill:var(--tank-text)">' + t + '</text>';
+  }
+  s += '<path d="' + shape + '" style="fill:none;stroke:var(--tank-line);stroke-width:6;stroke-linejoin:round"/>' +
+    '<circle cx="60" cy="' + (H - 20) + '" r="16" style="fill:var(--tank-line)"><title>sensor</title></circle>' +
+    '<text x="' + (XC + 60) + '" y="' + (H - 40) + '" style="fill:var(--tank-text);font-size:40px">wheel arch</text>';
+  if (h != null) {
+    const y = H - h, ly = Math.max(40, Math.min(y - 16, H - 20));
+    s += '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" clip-path="url(#' + id + ')" style="stroke:var(--tank-line);stroke-width:3;stroke-dasharray:14 10"/>' +
+      '<text x="' + (W - 20) + '" y="' + ly + '" text-anchor="end" style="fill:var(--tank-text);font-weight:700">' +
+      Math.round(h) + ' mm' + (litres == null ? '' : ' · ' + litres.toFixed(1) + ' L' + (cap ? ' of ' + Math.round(cap) + ' L' : '')) + '</text>';
+  }
+  s += '<text x="-28" y="-30" text-anchor="end" style="fill:var(--tank-text);font-size:36px">mm</text></svg>';
+  return s;
+}
 let busy=false;
 function f1(x){return x==null?'–':x.toFixed(1)}
 async function refresh(){
@@ -735,8 +764,9 @@ async function refresh(){
   const s=await (await fetch('/api/status')).json();
   $('ver').textContent='v'+s.version;
   $('lit').textContent=f1(s.litres);$('cap').textContent=f1(s.capacity);$('lvl').textContent=f1(s.level);
-  $('barf').style.width=(s.level||0)+'%';
+  $('tank').innerHTML=tankSvg(s.height_mm,s.litres,s.capacity,'tc');
   $('h').textContent=f1(s.height_mm);$('z').textContent=f1(s.zero_mm);
+  $('tbox').style.display=s.temp_probe?'':'none';
   $('t').textContent=s.temp_c==null?'–':s.temp_c.toFixed(1)+' °C';
   $('sig').textContent=s.signal==null?'–':s.signal.toFixed(3)+' '+s.signal_unit;
   let c='';
@@ -808,6 +838,7 @@ static void handleStatus() {
   jsonNum(j, "capacity", capacityL());
   jsonNum(j, "level", isnan(litres) ? NAN : litres / capacityL() * 100.0f);
   jsonNum(j, "temp_c", temperatureC);
+  j += String("\"temp_probe\":") + (USE_DS18B20 ? "true" : "false") + ",";
   j += String("\"fault\":") + (fault || isnan(emaHeight) ? "true" : "false") + ",";
   j += String("\"sloshing\":") + (sloshing ? "true" : "false") + ",";
   j += String("\"filling\":") + (filling ? "true" : "false") + ",";

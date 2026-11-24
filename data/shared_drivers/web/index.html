@@ -12,6 +12,7 @@
 :root {
   color-scheme:dark;
   --bg:#000; --card:#050505; --ink:#fff; --muted:#a0a0a0; --faint:#6e6e6e; --line:#2b2b2b; --line-soft:#1a1a1a; --soft:#121212;
+  --water:#3b82d6; --tank-empty:#000; --tank-line:#ddd; --tank-text:#bbb;
   --accent:#fff; --accent-ink:#000; --ok:#30d158; --warn:#ffb020; --bad:#ff3b30;
   --ok-bg:rgba(48,209,88,.10); --warn-bg:rgba(255,176,32,.10); --bad-bg:rgba(255,59,48,.12); --code:#0c0c0c;
   --font:"D-DIN","DIN Alternate","Bahnschrift","Helvetica Neue",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -700,6 +701,37 @@ function emptyDevice(spec) {
     h('button', { type: 'button', class: 'btn primary', disabled: !canEdit(), onclick: () => { const w = wizOpen(spec.title); spec.add(w); w.back = () => openSetup(); } }, 'Add the ' + spec.what));
 }
 
+// Front view of the wheel-arch tank (docs/tank/tank-drawing.jpg), mm, floor of the leg = 0.
+// Water is drawn to the height the sender measures; the shape clips it.
+function tankSvg(hmm, litres, cap, id) {
+  const W = 1150, H = 695, XC = 590, R = 385, LEG = XC - R, BOX = H - R;
+  const h = hmm == null ? null : Math.max(0, Math.min(H, hmm));
+  const shape = 'M0,' + H + ' L' + LEG + ',' + H + ' A' + R + ',' + R + ' 0 0 1 ' + XC + ',' + BOX +
+    ' L' + W + ',' + BOX + ' L' + W + ',0 L0,0 Z';
+  let s = '<svg viewBox="-110 -70 1290 800" role="img" aria-label="Tank, water ' + (h == null ? 'unknown' : Math.round(h) + ' mm') +
+    '" style="width:100%;height:auto;display:block;font:44px system-ui,sans-serif">' +
+    '<defs><clipPath id="' + id + '"><path d="' + shape + '"/></clipPath></defs>' +
+    '<path d="' + shape + '" style="fill:var(--tank-empty)"/>';
+  if (h != null) {
+    s += '<rect x="0" y="' + (H - h) + '" width="' + W + '" height="' + h + '" clip-path="url(#' + id + ')" style="fill:var(--water)"/>';
+  }
+  for (let t = 0; t <= 600; t += 100) {
+    s += '<line x1="-18" x2="0" y1="' + (H - t) + '" y2="' + (H - t) + '" style="stroke:var(--tank-line);stroke-width:3"/>' +
+      '<text x="-28" y="' + (H - t + 14) + '" text-anchor="end" style="fill:var(--tank-text)">' + t + '</text>';
+  }
+  s += '<path d="' + shape + '" style="fill:none;stroke:var(--tank-line);stroke-width:6;stroke-linejoin:round"/>' +
+    '<circle cx="60" cy="' + (H - 20) + '" r="16" style="fill:var(--tank-line)"><title>sensor</title></circle>' +
+    '<text x="' + (XC + 60) + '" y="' + (H - 40) + '" style="fill:var(--tank-text);font-size:40px">wheel arch</text>';
+  if (h != null) {
+    const y = H - h, ly = Math.max(40, Math.min(y - 16, H - 20));
+    s += '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" clip-path="url(#' + id + ')" style="stroke:var(--tank-line);stroke-width:3;stroke-dasharray:14 10"/>' +
+      '<text x="' + (W - 20) + '" y="' + ly + '" text-anchor="end" style="fill:var(--tank-text);font-weight:700">' +
+      Math.round(h) + ' mm' + (litres == null ? '' : ' · ' + litres.toFixed(1) + ' L' + (cap ? ' of ' + Math.round(cap) + ' L' : '')) + '</text>';
+  }
+  s += '<text x="-28" y="-30" text-anchor="end" style="fill:var(--tank-text);font-size:36px">mm</text></svg>';
+  return s;
+}
+
 function deviceHeader(kind, section) {
   const st = S.state, spec = DEV[kind];
   const dev = deviceOf(st, { mopeka: 'gas', esp32: 'water', fridge: 'fridge' }[kind]);
@@ -719,7 +751,10 @@ function deviceHeader(kind, section) {
       h('div', { class: 'hero', style: 'grid-template-columns:repeat(3,1fr);margin:8px 0 0' },
         metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L of ' + (v['/Capacity'] == null ? '–' : (v['/Capacity'] * 1000).toFixed(0)) + ' L'),
         metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sender\'s own table'),
-        metric('Water temperature', v['/Temperature'] == null ? '–' : v['/Temperature'].toFixed(1), '°C', '')));
+        v['/Temperature'] == null ? null : metric('Water temperature', v['/Temperature'].toFixed(1), '°C', '')));
+    const pic = h('div', { style: 'margin:12px 0 0' });
+    pic.innerHTML = tankSvg(v['/Hydro/HeightMm'], v['/Remaining'] == null ? null : v['/Remaining'] * 1000, v['/Capacity'] == null ? null : v['/Capacity'] * 1000, 'pi-tank');
+    card.append(pic);
     actions.append(primary('Calibrate', () => flowWaterCalibrate(), !canEdit()), plain('Change the sender', open(flowWater)));
   } else {
     const zones = (st.devices || []).filter(d => d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values).sort((a, b) => a.service < b.service ? -1 : 1);

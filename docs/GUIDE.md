@@ -109,7 +109,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
      for the other options are in [wiring.md](wiring.md).
    * `SENSOR_RANGE_MM`: the sensor's full scale in mm of water. From the
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
-   * `USE_DS18B20`: `1` with the probe, `0` without
+   * `USE_DS18B20`: `0` without the temperature probe (the default), `1` with it
    * `DEVICE_ID`: leave at `1` unless you build a second sender
    * `DEFAULT_TABLE`: leave as it is. You calibrate later over USB, without
      editing code.
@@ -165,8 +165,9 @@ even when the Pi is off or Venus OS doesn't work:
    The phone may say "no internet": stay connected.
 2. Open **http://192.168.4.1**.
 
-The page shows the litres, level, water height, temperature and sensor
-signal (updated every 2 s), and has buttons for everything the serial
+The page shows a drawing of the tank filling up, the litres, level, water
+height and sensor signal (updated every 2 s; the temperature only with a
+DS18B20), and has buttons for everything the serial
 commands do: *Tank is empty: set zero*, measuring the tank in portions
 (*Start*, *Record*, *Save*), the active table, a console for any serial
 command, the Wi-Fi password and **firmware updates** (upload
@@ -189,7 +190,7 @@ Ready-made files are in `firmware/bin/`. On a computer with **Chrome or Edge**
 ESP32-S3, click *Connect*, choose the port, set *Flash Address* **0x0** and
 the file **esp32_hydro_tank.merged.bin**, then *Program*. Tap **RST**
 afterwards. If it won't connect: hold **BOOT**, tap **RST**, release BOOT and
-try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, DS18B20,
+try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, no temperature probe,
 sender id 1).
 
 ---
