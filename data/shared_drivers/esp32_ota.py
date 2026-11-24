@@ -66,7 +66,13 @@ def chunks(data, size):
 
 
 def download(url, path):
-    subprocess.check_call(['curl', '-fsSL', '-m', '120', '-o', path, url])
+    """curl, or wget when curl is missing or fails (the installer uses wget too)."""
+    try:
+        subprocess.check_call(['curl', '-fsSL', '-m', '120', '-o', path, url])
+        return
+    except (OSError, subprocess.CalledProcessError) as e:
+        say('curl did not work (%s), trying wget' % e)
+    subprocess.check_call(['wget', '-q', '-T', '120', '-O', path, url])
 
 
 def http_update(ip, path):

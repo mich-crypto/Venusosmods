@@ -375,7 +375,7 @@ class StarlinkApiTests(AppTestCase):
         super().setUp()
         self.started = []
         self.saved = web_ui.starlink_hub.run_async
-        web_ui.starlink_hub.run_async = lambda argv, cb, input_bytes=None, timeout=10: self.started.append((argv, cb))
+        web_ui.starlink_hub.run_async = lambda argv, cb, input_bytes=None, timeout=10, with_errors=False: self.started.append((argv, cb))
         self.addCleanup(lambda: setattr(web_ui.starlink_hub, 'run_async', self.saved))
 
     def test_views_and_locking(self):
@@ -425,9 +425,20 @@ class StarlinkApiTests(AppTestCase):
         self.assertTrue(d['checking'] and d['latest'] is None)
         argv, cb = self.started[-1]
         self.assertIn('raw.githubusercontent.com/mich-crypto/Venusosmods/master/firmware/bin/VERSION', argv[-1])
+        self.assertEqual(argv[:2], ['sh', '-c'])                           # curl, then wget
+        self.assertIn('wget', argv[2])
         cb(0, b'2.7\n')
         d = body_of(self.get('/api/sender_fw'))
         self.assertEqual((d['latest'], d['checking'], d['running']), ('2.7', False, False))
+
+    def test_a_failed_check_says_why(self):
+        body_of(self.get('/api/sender_fw', query='refresh=1'))
+        self.started[-1][1](1, b'curl: sh: curl: not found\nwget: wget: bad address \'raw.githubusercontent.com\'\n')
+        err = body_of(self.get('/api/sender_fw'))['error']
+        self.assertTrue(err.startswith('could not reach GitHub (') and 'bad address' in err, err)
+        body_of(self.get('/api/update_check', query='refresh=1'))
+        self.started[-1][1](None, b'')
+        self.assertIn('timed out', body_of(self.get('/api/update_check'))['error'])
 
     def test_sender_update_runs_the_updater_with_the_sender_details(self):
         calls = []

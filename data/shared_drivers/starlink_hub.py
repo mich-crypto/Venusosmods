@@ -25,11 +25,13 @@ INFO_ALERTS = starlink.INFO_ALERTS
 TRUE = ('1', 'yes', 'true', 'on')
 
 
-def run_async(argv, callback, input_bytes=None, timeout=10):
-    """Run a command; callback(returncode, stdout) later, from the main loop (returncode None = timed out)."""
+def run_async(argv, callback, input_bytes=None, timeout=10, with_errors=False):
+    """Run a command; callback(returncode, stdout) later, from the main loop (returncode None = timed out).
+    with_errors: stderr goes into the output too (to show why a download failed)."""
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT if with_errors else subprocess.DEVNULL)
         if input_bytes is not None:
             proc.stdin.write(input_bytes)          # small (a request, a curl config): fits the pipe buffer
             proc.stdin.close()

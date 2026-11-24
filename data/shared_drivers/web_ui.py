@@ -1181,17 +1181,18 @@ class App(object):
             self.update_info = info = dict(info, checking=True)
 
             def got(rc, out):
-                text = out.decode('utf-8', 'replace') if rc == 0 else ''
+                raw = out.decode('utf-8', 'replace')
+                text = raw if rc == 0 else ''
                 sha = re.search(r'"sha":\s*"([0-9a-f]{40})"', text)
                 msg = re.search(r'"message":\s*"((?:[^"\\]|\\.)*)"', text)
                 date = re.search(r'"date":\s*"([^"]+)"', text)
                 self.update_info = {'checked': time.time(), 'checking': False,
-                                    'error': None if sha else 'could not reach GitHub',
+                                    'error': None if sha else self.fetch_error(rc, raw),
                                     'latest': sha.group(1) if sha else (info.get('latest')),
                                     'message': (msg.group(1).split('\\n')[0] if msg else info.get('message')),
                                     'date': date.group(1) if date else info.get('date')}
-            starlink_hub.run_async(['curl', '-s', '-m', '10', 'https://api.github.com/repos/%s/commits/master' % self.UPDATE_REPO],
-                                   got, timeout=14)
+            starlink_hub.run_async(self.fetch_argv('https://api.github.com/repos/%s/commits/master' % self.UPDATE_REPO),
+                                   got, timeout=25, with_errors=True)
         installed = self.installed_version()
         info = self.update_info or {}
         return jsonr({'ok': True, 'installed': installed, 'latest': info.get('latest'), 'message': info.get('message'),
@@ -1200,6 +1201,26 @@ class App(object):
                       'running': self.update_running()})
 
     UPDATE_LOG = '/tmp/venusosmods-update.log'
+
+    @staticmethod
+    def fetch_argv(url, timeout=10):
+        """Download url to stdout with curl, or wget when curl is missing or fails (the
+        installer uses wget too). On failure the output ends with the reason."""
+        # errors are kept back and only shown when both fail, so a good answer stays clean
+        script = ('f=/tmp/venusosmods-fetch.$$; '
+                  'e1=$(curl -fsSL -m %d -o "$f" "$1" 2>&1) && { cat "$f"; rm -f "$f" 2>/dev/null; exit 0; }; '
+                  'e2=$(wget -q -T %d -O "$f" "$1" 2>&1) && { cat "$f"; rm -f "$f" 2>/dev/null; exit 0; }; '
+                  'rm -f "$f" 2>/dev/null; echo "curl: ${e1:-failed}" >&2; echo "wget: ${e2:-failed}" >&2; exit 1') % (timeout, timeout)
+        return ['sh', '-c', script, 'fetch', url]
+
+    @staticmethod
+    def fetch_error(rc, text):
+        """Short reason for a failed download, for the page."""
+        if rc is None:
+            return 'could not reach GitHub (timed out: is the Pi online?)'
+        lines = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith('<')]
+        reason = '; '.join(l for l in lines[-4:] if l.startswith(('curl', 'wget', 'sh:')))
+        return 'could not reach GitHub' + (' (%s)' % reason[:200] if reason else '')
     SENDER_LOG = '/tmp/venusosmods-sender-update.log'
 
     # ------------------------------------------------ ESP32 water sender firmware
@@ -1212,13 +1233,14 @@ class App(object):
             self.sender_fw_info = info = dict(info, checking=True)
 
             def got(rc, out):
-                text = out.decode('utf-8', 'replace').strip() if rc == 0 else ''
+                raw = out.decode('utf-8', 'replace')
+                text = raw.strip() if rc == 0 else ''
                 ok = bool(re.match(r'^\d+(\.\d+)+$', text))
                 self.sender_fw_info = {'checked': time.time(), 'checking': False,
                                        'latest': text if ok else info.get('latest'),
-                                       'error': None if ok else 'could not reach GitHub'}
-            starlink_hub.run_async(['curl', '-fs', '-m', '10', 'https://raw.githubusercontent.com/%s/master/firmware/bin/VERSION'
-                                    % self.UPDATE_REPO], got, timeout=14)
+                                       'error': None if ok else self.fetch_error(rc, raw)}
+            starlink_hub.run_async(self.fetch_argv('https://raw.githubusercontent.com/%s/master/firmware/bin/VERSION'
+                                                   % self.UPDATE_REPO), got, timeout=25, with_errors=True)
         info = getattr(self, 'sender_fw_info', None) or {}
         return jsonr({'ok': True, 'latest': info.get('latest'), 'error': info.get('error'),
                       'checking': bool(info.get('checking')), 'running': self.sender_update_running()})
