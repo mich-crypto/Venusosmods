@@ -179,16 +179,17 @@ static const TankPoint DEFAULT_TABLE[] = {
 // ---- Energy: 80 MHz is plenty for this job and saves ~10-15 mA against 240 MHz
 #define CPU_MHZ              80
 
-// ---- Status LED: the board's RGB LED (WS2812) breathes green while Wi-Fi is
-//      on (the page is reachable) and flashes blue each time a reading goes
-//      out over Bluetooth (every 2 s), with or without Wi-Fi. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
+// ---- Status LED: the board's RGB LED (WS2812) gives one short dim flash every
+//      2 s: blue = Bluetooth sends, green = Wi-Fi on (page reachable), both =
+//      blue and green take turns. Bright green/red = firmware update. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
 #define STATUS_LED_PIN       48     // -1 = no LED
-#define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
-#define BREATH_PERIOD_MS     3000   // Wi-Fi on: green breathing, one breath in and out
-#define BLINK_ON_MS          100    // blue flash each time a new reading goes out over Bluetooth (every ADV_UPDATE_MS)
+#define STATUS_LED_MAX       40     // brightness during a firmware update (0..255, these LEDs are bright)
+#define STATUS_LED_DIM       6      // brightness of the normal status flash (dim, saves energy)
+#define BLINK_PERIOD_MS      2000   // one short flash this often
+#define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.8"
+#define FW_VERSION           "3.9"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -1216,9 +1217,8 @@ static void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
 #endif
 }
 
-// Green breathing while the page is reachable, a short blue flash with every
-// reading sent over Bluetooth (on top of the green), green/red during a firmware
-// update. Squaring the cosine wave makes the fade look even to the eye.
+// A short dim flash every 2 s: blue while Bluetooth sends, green while Wi-Fi is on,
+// taking turns when both are on; bright green/red during a firmware update.
 static void updateLed() {
   static uint32_t last = 0;
   static int lastR = -1, lastG = -1, lastB = -1;
@@ -1226,13 +1226,17 @@ static void updateLed() {
   if (now - last < 20) return;              // 50 updates a second is smooth enough
   last = now;
   int r = 0, g = 0, b = 0;
-  if (otaBusy()) {                          // firmware arriving: green and red alternate
+  // One short, dim flash every 2 s. Blue = Bluetooth sends, green = Wi-Fi on; with both,
+  // the flashes take turns (blue, green, blue, ...).
+  bool bt = advertising && advertising->isAdvertising();
+  uint32_t n = now / BLINK_PERIOD_MS;
+  bool flash = now % BLINK_PERIOD_MS < BLINK_ON_MS;
+  if (otaBusy()) {                          // firmware arriving: green and red alternate, bright
     if ((now / OTA_BLINK_MS) % 2) g = STATUS_LED_MAX; else r = STATUS_LED_MAX;
-  } else if (lastAdvSent && now - lastAdvSent < BLINK_ON_MS) {
-    b = STATUS_LED_MAX;                     // a reading just went out over Bluetooth: blue flash
-  } else if (webUp) {                       // Wi-Fi on: green breathing
-    float x = (1.0f - cosf(2.0f * PI * (now % BREATH_PERIOD_MS) / BREATH_PERIOD_MS)) / 2.0f;
-    g = lroundf(x * x * STATUS_LED_MAX);
+  } else if (flash) {
+    bool blue = bt && (!webUp || n % 2 == 0);
+    if (blue) b = STATUS_LED_DIM;
+    else if (webUp) g = STATUS_LED_DIM;
   }
   if (r != lastR || g != lastG || b != lastB) { ledWrite(r, g, b); lastR = r; lastG = g; lastB = b; }
 }
