@@ -188,7 +188,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          100    // blue flash each time a new reading goes out over Bluetooth (every ADV_UPDATE_MS)
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.5"
+#define FW_VERSION           "3.6"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -247,6 +247,18 @@ static bool serialLog = SERIAL_LOG;
 static uint32_t fastUntil = 0;
 static bool fastMode() { return fastUntil && (int32_t)(fastUntil - millis()) > 0; }
 
+// Simulation: broadcast a chosen water height instead of the sensor, to see how
+// long Venus OS takes to show a change ("sim 50%", "sim 300", "sim off").
+// Switches itself off after SIM_MS and at a restart.
+#define SIM_MS (15UL * 60UL * 1000UL)
+static float simHeight = NAN;          // mm; NAN = off
+static uint32_t simSince = 0, simUntil = 0;
+static bool advNow = false;            // send the next broadcast right away
+static bool simActive() {
+  if (!isnan(simHeight) && (int32_t)(simUntil - millis()) <= 0) simHeight = NAN;
+  return !isnan(simHeight);
+}
+
 // Where command replies go: the serial port, or a web request's reply text
 static Print *out = &Serial;
 class StringOut : public Print {
@@ -292,6 +304,19 @@ static float medianOf(float *v, size_t n) {
   return v[n / 2];
 }
 
+// litres -> height, the table read the other way round (for "sim <percent>%")
+static float litresToHeight(float l) {
+  if (l <= table[0].litres) return table[0].mm;
+  for (size_t i = 1; i < tablePoints; i++) {
+    if (l <= table[i].litres) {
+      const TankPoint &a = table[i - 1], &b = table[i];
+      if (b.litres <= a.litres) return b.mm;
+      return a.mm + (b.mm - a.mm) * (l - a.litres) / (b.litres - a.litres);
+    }
+  }
+  return table[tablePoints - 1].mm;
+}
+
 static float heightToLitres(float mm) {
   if (mm <= table[0].mm) return table[0].litres;
   for (size_t i = 1; i < tablePoints; i++) {
@@ -329,6 +354,12 @@ static float readBurstMedianMv() {
 }
 
 static void sampleLevel() {
+  if (simActive()) {                    // the simulated height goes out as it is, no filter
+    emaHeight = lastRawHeight = simHeight;
+    fault = sloshing = false;
+    activity = 0.0f;
+    return;
+  }
   lastSignal = mvToSignal(readBurstMedianMv());
   fault = lastSignal < SIGNAL_FAULT_LOW || lastSignal > SIGNAL_FAULT_HIGH;
   if (fault) return;  // keep the last good EMA, flag the fault
@@ -958,6 +989,8 @@ static void printHelp() {
     "  wifi pass <text>    van Wi-Fi password\n"
     "  info                state as JSON (used by the Pi)\n"
     "  live                raw reading as JSON (the Pi's live view)\n"
+    "  sim <mm> | <n>%     broadcast this level instead of the sensor (15 min)\n"
+    "  sim off             back to the sensor\n"
     "  zero                tank EMPTY: make the current height read 0 mm\n"
     "  zero <mm>           set the zero offset by hand\n"
     "  cal start           tank EMPTY: start a new table with 0 L at the current height\n"
@@ -990,6 +1023,24 @@ static void handleCommand(String line) {
     out->print("ok");
   } else if (cmd == "info") {
     out->print(infoJson());
+  } else if (cmd == "sim") {
+    if (rest == "off" || rest.length() == 0) {
+      bool was = simActive();
+      simHeight = NAN;
+      emaHeight = NAN;                    // the filter starts again from the real sensor
+      advNow = true;
+      out->println(was ? "Simulation off: the sensor again." : "No simulation running.");
+      return;
+    }
+    float mm = rest.endsWith("%") ? litresToHeight(constrain(rest.toFloat(), 0.0f, 100.0f) * capacityL() / 100.0f)
+                                  : rest.toFloat();
+    if (mm < 0 || mm > 5000) { out->println("Usage: sim <mm> | sim <percent>% | sim off"); return; }
+    simHeight = mm;
+    simSince = millis();
+    simUntil = simSince + SIM_MS;
+    advNow = true;                        // out at once, so the timer starts with the broadcast
+    out->printf("Simulating %.0f mm = %.1f L (%.0f %%), sent now. Watch Venus OS.\n",
+                mm, heightToLitres(mm), heightToLitres(mm) / capacityL() * 100.0f);
   } else if (cmd == "live") {
     // Unfiltered signal and height, plus what the filter makes of it
     float h = isnan(emaHeight) ? NAN : max(0.0f, emaHeight);
@@ -1236,6 +1287,14 @@ details summary{cursor:pointer;font-weight:600}
 </div>
 
 <div class="card">
+ <h2>Simulate a level (test)</h2>
+ <div class="mut">Sends this level over Bluetooth instead of the sensor, at once. The stopwatch shows how long Venus OS takes to show it. Ends by itself after 15 minutes.</div>
+ <div class="row"><button onclick="cmd('sim 0%')">0 %</button><button onclick="cmd('sim 25%')">25 %</button><button onclick="cmd('sim 50%')">50 %</button><button onclick="cmd('sim 75%')">75 %</button><button onclick="cmd('sim 100%')">100 %</button></div>
+ <div class="row"><input id="simmm" type="number" inputmode="decimal" placeholder="height in mm"><button onclick="const v=$('simmm').value;if(v!=='')cmd('sim '+v)">Simulate</button><button onclick="cmd('sim off')">Stop</button></div>
+ <div id="simbox" class="mut"></div>
+</div>
+
+<div class="card">
  <h2>1. Zero (tank empty)</h2>
  <div class="mut">Park level, empty the tank, wait until the water is calm, then press the button. The height then reads 0 mm.</div>
  <div class="row"><button class="p" onclick="cmd('zero')">Tank is empty: set zero</button></div>
@@ -1321,6 +1380,8 @@ async function refresh(){
   if(s.filling)c+='<span class="chip">Filling</span>';
   if(s.draining)c+='<span class="chip">Draining</span>';
   c+='<span class="chip">'+(s.custom_table?'Your calibration':'Built-in table')+'</span>';
+  simAt=s.sim_mm!=null?Date.now()-s.sim_ms:null;
+  if(s.sim_mm!=null)c+='<span class="chip bad">SIMULATION: '+s.sim_mm.toFixed(0)+' mm, not the sensor</span>';
   fastOn=s.fast_s>0;
   if(fastOn)c+='<span class="chip bad">Test mode: no smoothing, '+Math.ceil(s.fast_s/60)+' min left</span>';
   $('fastbtn').textContent=fastOn?'Back to normal smoothing':'Test mode: fast reading (15 min)';
@@ -1359,7 +1420,9 @@ async function upd(){const f=$('fw').files[0];if(!f)return;const d=new FormData(
  $('outp').textContent='Uploading '+f.name+' …';busy=true;
  try{const r=await fetch('/update',{method:'POST',body:d});$('outp').textContent=await r.text()}catch(e){$('outp').textContent='Failed: '+e}
  busy=false;setTimeout(refresh,8000)}
-let fastOn=false;
+let fastOn=false,simAt=null;
+// stopwatch since the simulated level went out
+setInterval(()=>{const b=$('simbox');if(!b)return;b.innerHTML=simAt==null?'':'<b style="font-size:26px;color:var(--fg)">'+((Date.now()-simAt)/1000).toFixed(1)+' s</b> since the simulated level was sent'},100);
 // 4 updates a second in test mode, every 2 s otherwise
 function loop(){refresh().finally(()=>setTimeout(loop,fastOn?250:2000))}
 loop();
@@ -1400,6 +1463,10 @@ static void handleStatus() {
   j += "\"ble_adv\":" + String(advertising && advertising->isAdvertising() ? "true" : "false") + ",";
   j += "\"ble_conn\":" + String(linkServer ? linkServer->getConnectedCount() : 0) + ",";
   j += "\"ble_restarts\":" + String(advRestarts) + ",";
+  if (simActive()) {
+    jsonNum(j, "sim_mm", simHeight);
+    j += "\"sim_ms\":" + String(millis() - simSince) + ",\"sim_left_s\":" + String((simUntil - millis()) / 1000) + ",";
+  }
   jsonNum(j, "signal", lastSignal, 3);
   j += INPUT_CURRENT_LOOP ? "\"signal_unit\":\"mA\"," : "\"signal_unit\":\"V\",";
   jsonNum(j, "height_mm", height);
@@ -1617,6 +1684,7 @@ void setup() {
 
 void loop() {
   static uint32_t tSample = 0, tTrend = 0, tAdv = 0;
+  if (advNow) { advNow = false; sampleLevel(); tAdv = millis() - ADV_UPDATE_MS; }   // a new simulated level: send now
   uint32_t now = millis();
 
   if (now - tSample >= SAMPLE_PERIOD_MS) { tSample = now; sampleLevel(); }

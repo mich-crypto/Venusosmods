@@ -381,6 +381,7 @@ class App(object):
             'POST /api/sender_update': self.api_sender_update,
             'GET /api/sender_update_log': self.api_sender_update_log,
             'POST /api/sender_live': self.api_sender_live,
+            'GET /api/sender_live': self.api_sender_live_values,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
@@ -444,7 +445,7 @@ class App(object):
                            'seconds': s.get('seconds'), 'pid': s.get('pid')})
         return result
 
-    DUMP_FRESH_S = 8            # a dump this young is used as it is
+    DUMP_FRESH_S = 4            # a dump this young is used as it is (the device tabs refresh every 5 s)
     DUMP_KEEP_S = 90            # a busy service that does not answer keeps its last values this long
 
     @staticmethod
@@ -1340,6 +1341,20 @@ class App(object):
         if rc not in (0, None):
             return jsonr({'ok': False, 'error': 'no reading from the sender yet, so the Pi does not know where to connect'}, 409)
         return jsonr({'ok': True, 'message': 'Live view on for 15 minutes.' if on else 'Live view off.'})
+
+    LIVE_PATHS = ('/Hydro/Live', '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
+                  '/Hydro/LiveHeightMm', '/Hydro/LiveLitres', '/Hydro/LiveTime', '/Hydro/LinkStatus')
+
+    def api_sender_live_values(self, req):
+        """The live view's few values, read fresh (the state uses a dump that can be seconds old)."""
+        sec = self.sender_section()
+        if not sec:
+            return jsonr({'ok': False, 'error': 'no water sender set up'}, 400)
+        try:
+            values = self.dbus_dump('com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro'), max_age=0.3)
+        except dbus.exceptions.DBusException as e:
+            return jsonr({'ok': False, 'error': 'the water driver did not answer: %s' % e}, 502)
+        return jsonr({'ok': True, 'now': time.time(), 'values': dict((p, values.get(p)) for p in self.LIVE_PATHS)})
 
     def api_sender_update_log(self, req):
         try:

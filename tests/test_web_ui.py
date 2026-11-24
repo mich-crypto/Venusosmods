@@ -469,6 +469,18 @@ class StarlinkApiTests(AppTestCase):
         self.assertFalse(body_of(self.get('/api/state'))['sender_update'])
         self.assertEqual(self.post('/api/restart', {'target': 'esp32_hydro'}).status, 400)   # not enabled here, but allowed
 
+    def test_live_values_are_read_fresh(self):
+        asked = []
+
+        def dump(name, max_age=None):
+            asked.append((name, max_age))
+            return {'/Hydro/Live': 1, '/Hydro/Signal': 0.512, '/Hydro/LiveTime': 100.0, '/Level': 50}
+        self.app.dbus_dump = dump
+        d = body_of(self.get('/api/sender_live'))
+        self.assertEqual(asked[-1], ('com.victronenergy.tank.esp32_hydro', 0.3))       # not the seconds-old state dump
+        self.assertEqual((d['values']['/Hydro/Signal'], d['values']['/Hydro/Live']), (0.512, 1))
+        self.assertNotIn('/Level', d['values'])                                           # only the live view's paths
+
     def test_a_failed_check_says_why(self):
         body_of(self.get('/api/sender_fw', query='refresh=1'))
         self.started[-1][1](1, b'curl: sh: curl: not found\nwget: wget: bad address \'raw.githubusercontent.com\'\n')
