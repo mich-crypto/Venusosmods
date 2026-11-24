@@ -174,7 +174,7 @@ or Venus OS doesn't work. To save energy it is **not on all the time**
   (the fallback: Venus OS down, Pi off, Bluetooth broken),
 * always, if *Sender Wi-Fi* on the Venus OS page is set to *Own Wi-Fi always on*.
 
-It never switches off while a phone is connected to it. The **blue breathing
+It never switches off while a phone is connected to it. The **green breathing
 light** shows when its page is reachable.
 
 **Sender Wi-Fi** (Venus OS page → Water → Settings):
@@ -212,10 +212,17 @@ at once and the page updates 4 times a second. Handy on the bench with a
 potentiometer on GPIO4 (outer legs 3V3 and GND, middle leg GPIO4; never 5 V).
 It switches itself off after 15 minutes and at a restart.
 
-**Status light:** the board's RGB LED **breathes blue** while the sender's
-page is reachable (own Wi-Fi on, or connected to the van Wi-Fi). Off = Wi-Fi
-off to save energy (Bluetooth still works), still starting, or the Wi-Fi could
-not start (the Serial Monitor then says why). Press BOOT to switch it on. Some boards have the
+**Status light:**
+
+| Light | Meaning |
+|---|---|
+| **green, breathing** | Wi-Fi on: the sender's page is reachable (own Wi-Fi, or the van Wi-Fi) |
+| **blue, short blink every 3 s** | Bluetooth only (saves energy); press BOOT to switch the own Wi-Fi on |
+| off | still starting, or no power |
+
+The Wi-Fi stays on (green) until the Pi has checked in over Bluetooth, which
+needs sender firmware 2.7+ and the current Pi software (Water → Sender shows
+"Bluetooth link: ok"), and always for the first 10 minutes after power-on. Some boards have the
 LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
 `STATUS_LED_MAX` sets how bright it gets.
 
@@ -247,7 +254,7 @@ On a computer with **Chrome or Edge** (not an iPad/iPhone):
 2. Click **Erase Flash** and wait until it's done.
 3. Flash Address **0x0**, file **FLASH-AT-0x0_esp32_hydro_tank_full.bin**,
    then *Program*.
-4. Tap **RST**. The LED starts breathing blue after a few seconds.
+4. Tap **RST**. The LED starts breathing green after a few seconds.
 
 These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
 sender id 1).
