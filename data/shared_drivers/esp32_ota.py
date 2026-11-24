@@ -12,7 +12,7 @@ Firmware update of the ESP32 water sender from the Pi (firmware 2.7+).
    sends the image in chunks, "ota end". The sender checks the MD5 and restarts.
    If anything fails it keeps its old firmware.
 
-Run by the settings page (Water tab, "Update sender firmware"); prints progress
+Run by the settings page (Water tab, "Update sensor firmware"); prints progress
 lines the page shows. Exit code 0 = updated.
 """
 
@@ -78,14 +78,14 @@ def download(url, path):
 
 
 def http_update(ip, path):
-    """Upload through the sender's own page; True when it says OK."""
+    """Upload through the sensor's own page; True when it says OK."""
     try:
         out = subprocess.run(['curl', '-s', '-m', '180', '-F', 'fw=@%s' % path, 'http://%s/update' % ip],
                              capture_output=True, text=True, timeout=200).stdout
     except (OSError, subprocess.SubprocessError) as e:
         say('Wi-Fi upload failed: %s' % e)
         return False
-    say('Sender says: %s' % out.strip())
+    say('Sensor says: %s' % out.strip())
     return out.startswith('Update OK')
 
 
@@ -129,7 +129,7 @@ class BleLink(object):
             elif uuid == proto.LINK_REPLY_UUID:
                 self.reply = str(path)
         if not (self.cmd and self.reply):
-            raise RuntimeError('the sender has no Bluetooth update service (firmware older than 2.7: '
+            raise RuntimeError('the sensor has no Bluetooth update service (firmware older than 2.7: '
                                'update once over USB or its own page)')
 
     def write(self, data):
@@ -163,7 +163,7 @@ def v2_packet_size(mtu):
 
 
 def parse_status(text):
-    """'ota active 12345/1266000' -> 12345; anything else -> None (the sender dropped the upload)."""
+    """'ota active 12345/1266000' -> 12345; anything else -> None (the sensor dropped the upload)."""
     m = re.match(r'ota active (\d+)/(\d+)', text or '')
     return int(m.group(1)) if m else None
 
@@ -181,11 +181,11 @@ def ble_update(mac, password, data, md5, adapter='hci0', max_errors=40):
     link = BleLink(mac, adapter)
 
     def connect():
-        say('Connecting to the sender over Bluetooth ...')
+        say('Connecting to the sensor over Bluetooth ...')
         link.connect()
         answer = link.command('auth ' + password)
         if not answer.startswith('ok'):
-            raise RuntimeError('the sender refused the password: set "Sender password" to its Wi-Fi password')
+            raise RuntimeError('the sensor refused the password: set "Sensor password" to its Wi-Fi password')
 
     try:
         connect()
@@ -201,7 +201,7 @@ def ble_update(mac, password, data, md5, adapter='hci0', max_errors=40):
             if not answer.startswith('ok'):
                 raise RuntimeError(answer)
             size = packet_size(link.mtu) if link.mtu else 179
-            say('Older sender firmware: one try, %d-byte packets.' % size)
+            say('Older sensor firmware: one try, %d-byte packets.' % size)
             sent, step, started = 0, 0, time.time()
             for part in chunks(data, size):
                 link.write(b'D' + part)
@@ -213,7 +213,7 @@ def ble_update(mac, password, data, md5, adapter='hci0', max_errors=40):
                 break
             time.sleep(0.5)
             answer = link.read()
-        say('Sender says: %s' % answer)
+        say('Sensor says: %s' % answer)
         if not answer.startswith('ok'):
             raise RuntimeError(answer)
     finally:
@@ -237,12 +237,12 @@ def send_v2(link, connect, data, answer, max_errors):
             errors += 1
             if errors > max_errors:
                 raise RuntimeError('too many transfer errors (last: %s)' % e)
-            say('Packet at %d kB not accepted (%s): checking with the sender ...' % (pos // 1024, short(e)))
+            say('Packet at %d kB not accepted (%s): checking with the sensor ...' % (pos // 1024, short(e)))
         pos = resume(link, connect)
 
 
 def resume(link, connect, attempts=5):
-    """Where to carry on: ask the sender, reconnecting if the connection is gone."""
+    """Where to carry on: ask the sensor, reconnecting if the connection is gone."""
     for i in range(attempts):
         time.sleep(1 + i)
         try:
@@ -256,10 +256,10 @@ def resume(link, connect, attempts=5):
                 say('reconnect attempt %d failed: %s' % (i + 1, short(e)))
                 continue
         if got is None:
-            raise RuntimeError('the sender dropped the upload: start the update again')
-        say('Sender has %d kB, carrying on from there.' % (got // 1024))
+            raise RuntimeError('the sensor dropped the upload: start the update again')
+        say('Water level sensor has %d kB, carrying on from there.' % (got // 1024))
         return got
-    raise RuntimeError('lost the connection to the sender')
+    raise RuntimeError('lost the connection to the sensor')
 
 
 def short(e):
@@ -274,20 +274,20 @@ def svc(action, service):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Update the ESP32 water sender')
-    ap.add_argument('--mac', help='the sender\'s Bluetooth address')
-    ap.add_argument('--password', default='watertank', help='the sender\'s Wi-Fi password (also its Bluetooth key)')
+    ap = argparse.ArgumentParser(description='Update the ESP32 water level sensor')
+    ap.add_argument('--mac', help='the sensor\'s Bluetooth address')
+    ap.add_argument('--password', default='watertank', help='the sensor\'s Wi-Fi password (also its Bluetooth key)')
     ap.add_argument('--file', help='app image (WEBPAGE-UPDATE-ONLY_...bin)')
     ap.add_argument('--download', action='store_true', help='get the latest from GitHub')
-    ap.add_argument('--ip', help='the sender\'s address on the van Wi-Fi: upload over HTTP instead')
+    ap.add_argument('--ip', help='the sensor\'s address on the van Wi-Fi: upload over HTTP instead')
     ap.add_argument('--service', default='esp32_hydro', help='daemontools service of the water driver')
     ap.add_argument('--adapter', default='hci0')
     args = ap.parse_args()
 
     path = args.file
     if args.download or not path:
-        path = '/tmp/venusosmods-sender-fw.bin'
-        say('Downloading the latest sender firmware ...')
+        path = '/tmp/venusosmods-sensor-fw.bin'
+        say('Downloading the latest sensor firmware ...')
         download(FW_URL, path)
     with open(path, 'rb') as f:
         data = f.read()
@@ -298,18 +298,18 @@ def main():
     say('Firmware: %d kB' % (len(data) // 1024))
 
     if args.ip:
-        say('The sender is on the van Wi-Fi (%s): uploading over Wi-Fi ...' % args.ip)
+        say('The sensor is on the van Wi-Fi (%s): uploading over Wi-Fi ...' % args.ip)
         if http_update(args.ip, path):
-            say('Done. The sender restarts with the new firmware.')
+            say('Done. The sensor restarts with the new firmware.')
             return 0
         say('Wi-Fi upload did not work, trying Bluetooth.')
     if not args.mac:
-        say('Not updating: the sender\'s Bluetooth address is not known yet (no reading received).')
+        say('Not updating: the sensor\'s Bluetooth address is not known yet (no reading received).')
         return 2
 
     other = proto.ota_running()
     if other and other != os.getpid():
-        say('Not updating: another sender update is running (process %d).' % other)
+        say('Not updating: another sensor update is running (process %d).' % other)
         return 2
     import ble_scanner
     with open(proto.OTA_LOCK, 'w') as f:   # page and driver keep their hands off meanwhile
@@ -319,11 +319,11 @@ def main():
     time.sleep(3)
     try:
         ble_update(args.mac, args.password, data, md5_of(path), args.adapter)
-        say('Done. The sender restarts with the new firmware (about 10 s).')
+        say('Done. The sensor restarts with the new firmware (about 10 s).')
         return 0
     except Exception as e:
         say('Update failed: %s' % e)
-        say('The sender keeps its old firmware. Try again, or update over USB.')
+        say('The sensor keeps its old firmware. Try again, or update over USB.')
         return 1
     finally:
         ble_scanner.clear_global_pause()

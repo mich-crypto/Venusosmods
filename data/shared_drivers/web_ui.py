@@ -47,7 +47,7 @@ import starlink_hub  # noqa: E402
 
 log = logging.getLogger('web_ui')
 
-VERSION = '1.0.0'
+VERSION = '2.0.0'   # Venus OS mods version, shown at the top of the page
 OUR_PROCESSES = ('mopeka_venus.py', 'esp32_hydro_tank.py', 'fridge_venus.py')
 BUS_ITEM = 'com.victronenergy.BusItem'
 LAN_RANGES = ('192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '100.64.0.0/10')   # incl. Tailscale
@@ -1227,12 +1227,12 @@ class App(object):
         lines = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith('<')]
         reason = '; '.join(l for l in lines[-4:] if l.startswith(('curl', 'wget', 'sh:')))
         return 'could not reach GitHub' + (' (%s)' % reason[:200] if reason else '')
-    SENDER_LOG = '/tmp/venusosmods-sender-update.log'
+    SENDER_LOG = '/tmp/venusosmods-sensor-update.log'
 
     # ------------------------------------------------ ESP32 water sender firmware
 
     def api_sender_fw(self, req):
-        """Latest sender firmware on GitHub (firmware/bin/VERSION), checked at most every 6 h."""
+        """Latest sensor firmware on GitHub (firmware/bin/VERSION), checked at most every 6 h."""
         info = getattr(self, 'sender_fw_info', None) or {}
         stale = time.time() - info.get('checked', 0) > 6 * 3600
         if (req.query.get('refresh') == '1' or stale) and not info.get('checking'):
@@ -1252,7 +1252,7 @@ class App(object):
                       'checking': bool(info.get('checking')), 'running': self.sender_update_running()})
 
     def sender_update_running(self):
-        """True while sender firmware is being sent: from this page, or esp32_ota.py over SSH."""
+        """True while sensor firmware is being sent: from this page, or esp32_ota.py over SSH."""
         proc = getattr(self, 'sender_proc', None)
         return (proc is not None and proc.poll() is None) or bool(esp32_proto.ota_running(self.OTA_LOCK))
 
@@ -1265,7 +1265,7 @@ class App(object):
             names.add(sec['service'])
         return names
 
-    BUSY_MSG = ('The water sender\'s firmware is being updated. Wait until it has finished '
+    BUSY_MSG = ('The water level sensor\'s firmware is being updated. Wait until it has finished '
                 '(a few minutes): a restart now would break the upload.')
 
     def blocked_by_sender_update(self, req):
@@ -1304,7 +1304,7 @@ class App(object):
             return jsonr({'ok': False, 'error': 'the Pi software is being updated: try again when it has finished'}, 409)
         sec = self.sender_section()
         if not sec:
-            return jsonr({'ok': False, 'error': 'no water sender set up'}, 400)
+            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
         service = sec.get('service') or 'esp32_hydro'
         values = {}
         for d in self.devices()[0]:
@@ -1324,14 +1324,14 @@ class App(object):
                                                 stdin=subprocess.DEVNULL, start_new_session=True)
         except OSError as e:
             return jsonr({'ok': False, 'error': 'could not start the update: %s' % e}, 500)
-        return jsonr({'ok': True, 'message': 'Sender update started. Over Bluetooth it takes a few minutes.'})
+        return jsonr({'ok': True, 'message': 'Water level sensor update started. Over Bluetooth it takes a few minutes.'})
 
     def api_sender_live(self, req):
         """Live view on/off: the water driver connects and reads the raw signal (15 min)."""
         on = req.form.get('on', '1') == '1'
         sec = self.sender_section()
         if not sec:
-            return jsonr({'ok': False, 'error': 'no water sender set up'}, 400)
+            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
         name = 'com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro')
         try:
             rc = self.bus.call_blocking(name, '/Hydro/Live', BUS_ITEM, 'SetValue', 'v',
@@ -1339,7 +1339,7 @@ class App(object):
         except dbus.exceptions.DBusException as e:
             return jsonr({'ok': False, 'error': 'the water driver did not answer (is it running?): %s' % e}, 502)
         if rc not in (0, None):
-            return jsonr({'ok': False, 'error': 'no reading from the sender yet, so the Pi does not know where to connect'}, 409)
+            return jsonr({'ok': False, 'error': 'no reading from the sensor yet, so the Pi does not know where to connect'}, 409)
         return jsonr({'ok': True, 'message': 'Live view on for 15 minutes.' if on else 'Live view off.'})
 
     LIVE_PATHS = ('/Hydro/Live', '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
@@ -1349,7 +1349,7 @@ class App(object):
         """The live view's few values, read fresh (the state uses a dump that can be seconds old)."""
         sec = self.sender_section()
         if not sec:
-            return jsonr({'ok': False, 'error': 'no water sender set up'}, 400)
+            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
         try:
             values = self.dbus_dump('com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro'), max_age=0.3)
         except dbus.exceptions.DBusException as e:

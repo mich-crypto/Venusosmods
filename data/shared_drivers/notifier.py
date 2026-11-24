@@ -26,6 +26,7 @@ except ImportError:         # not verified on every Venus OS image: then there i
 
 REPEAT_ALARM_S = 3 * 3600           # a battery that stays at "alarm" is repeated this often
 REPEAT_WARN_S = 12 * 3600
+FROST_REPEAT_S = 24 * 3600          # frost / cold messages: at most one a day (also across restarts)
 MOVED_UPDATE_S = 600                # while outside the fence: a new position this often
 COLD_HOURS = 2                      # below freezing this long: a warning
 FREEZE_C = 0.0
@@ -103,7 +104,7 @@ class Notifier(object):
         self.fence = {'state': 'unknown', 'out_seen': 0, 'in_seen': 0, 'last': 0}
         self.orion = {}                          # name -> (state, mode)
         self.cold = {'since': None, 'sent': False}
-        self.freeze_sent = False
+        self.freeze_last = None                  # time of the last frost warning
         self.last = {'battery': None, 'gps': None, 'distance': None, 'orion': None, 'temp': None, 'temp_from': None, 'forecast': None}
 
     def configure(self, cfg):
@@ -249,14 +250,15 @@ class Notifier(object):
     def _freeze(self, forecast):
         if not forecast or forecast.get('min') is None:
             return
-        low = forecast['min']
-        if low <= FREEZE_C and not self.freeze_sent:
-            self.freeze_sent = True
+        # The 24-hour forecast window moves every hour, so its minimum swings around 0 °C:
+        # warn once, then not again for a day (the sender keeps the time across restarts too).
+        low, now = forecast['min'], self.clock()
+        if low <= FREEZE_C and (self.freeze_last is None or now - self.freeze_last >= FROST_REPEAT_S):
+            self.freeze_last = now
             when = str(forecast.get('at') or '')
             when = ' around %s' % when[11:16] if len(when) >= 16 else ''
-            self._say('freeze-forecast', '❄️ Frost is coming: down to %.0f °C%s at the camper within 24 hours. Protect the water.' % (low, when))
-        elif low > FREEZE_C + 1:
-            self.freeze_sent = False                              # it will be announced again next time
+            self._say('freeze-forecast', '❄️ Frost is coming: down to %.0f °C%s at the camper within 24 hours. Protect the water.' % (low, when),
+                      cooldown=FROST_REPEAT_S)
 
     def _cold(self, outdoor, forecast):
         temp, source = outdoor, 'the outdoor sensor'
@@ -271,7 +273,8 @@ class Notifier(object):
                 c['since'] = now
             elif not c['sent'] and now - c['since'] >= COLD_HOURS * 3600:
                 c['sent'] = True
-                self._say('cold-2h', '🥶 It has been below 0 °C at the camper for %d hours (now %.1f °C, from %s).' % (COLD_HOURS, temp, source))
+                self._say('cold-2h', '🥶 It has been below 0 °C at the camper for %d hours (now %.1f °C, from %s).' % (COLD_HOURS, temp, source),
+                          cooldown=FROST_REPEAT_S)
         elif temp >= FREEZE_C + 1:
             c['since'], c['sent'] = None, False
 

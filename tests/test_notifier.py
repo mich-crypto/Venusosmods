@@ -193,7 +193,7 @@ class FrostTests(unittest.TestCase):
     def snap(self, outdoor=None, low=None, now=5.0, at='2026-10-31T04:00'):
         return {'outdoor': outdoor, 'forecast': None if low is None else {'now': now, 'min': low, 'at': at}}
 
-    def test_frost_forecast_once_until_it_clears(self):
+    def test_frost_forecast_at_most_once_a_day(self):
         s = Sink()
         n = s.make()
         n.check(self.snap(low=4))
@@ -201,11 +201,12 @@ class FrostTests(unittest.TestCase):
         n.check(self.snap(low=-3))
         self.assertEqual(len(s.sent), 1)
         self.assertIn('down to -3 °C around 04:00', s.sent[0])
-        n.check(self.snap(low=-4))
-        n.check(self.snap(low=0.5))                              # still close to freezing: not announced again
-        self.assertEqual(len(s.sent), 1)
-        n.check(self.snap(low=6))
-        n.check(self.snap(low=-1))
+        for hour, low in enumerate((-4, 0.5, 6, -1, 2, -2, 3, -1) * 2):    # the forecast minimum swings every hour
+            s.t += 3600
+            n.check(self.snap(low=low))
+        self.assertEqual(len(s.sent), 1)                         # 16 hours of swinging: still one message
+        s.t += 9 * 3600                                          # a day after the first
+        n.check(self.snap(low=-2))
         self.assertEqual(len(s.sent), 2)
 
     def test_below_zero_for_two_hours_with_the_outdoor_sensor(self):

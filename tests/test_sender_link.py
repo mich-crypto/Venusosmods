@@ -68,7 +68,7 @@ class DriverLinkTests(unittest.TestCase):
         d._expected = 3
         d._collector.feed(b'denied: auth first\x04denied: auth first\x04{"fw":"2.7"}\x04')
         d._on_link_done(True, None)
-        self.assertEqual(s['/Hydro/LinkStatus'], 'wrong sender password')
+        self.assertEqual(s['/Hydro/LinkStatus'], 'wrong sensor password')
         d._collector = proto.ReplyCollector()
         d._on_link_done(False, 'GATT characteristics 0002 / 0003 not found - different fridge protocol?')
         self.assertIn('older than 2.7', s['/Hydro/LinkStatus'])

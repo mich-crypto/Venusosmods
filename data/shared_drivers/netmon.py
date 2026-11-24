@@ -86,7 +86,7 @@ class Store(object):
         self.dirty = False
         self.saved_at = 0
         self.data = {'version': 1, 'days': {}, 'tests': [], 'outages': [], 'unreachable': [], 'wan': [],
-                     'dish': {'current': None}, 'first_seen': None, 'series': {}}
+                     'dish': {'current': None}, 'first_seen': None, 'series': {}, 'alerts': {}}
         try:
             if json is None:
                 raise OSError('no json module')
