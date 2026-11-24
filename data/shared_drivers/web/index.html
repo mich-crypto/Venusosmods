@@ -2465,7 +2465,7 @@ async function updatePanel() {
       stat('Latest', d.latest ? d.latest.slice(0, 7) : (d.checking ? 'checking…' : '–'), d.date ? d.date.slice(0, 10) : '', true)));
     if (d.message) body.append(h('div', { class: 'muted' }, 'Latest change: ' + d.message));
     if (d.error) body.append(h('div', { class: 'muted' }, d.error));
-    body.append(h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn small', onclick: () => draw(true) }, 'Check now'),
+    body.append(h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn small', onclick: async () => { await api('/api/sender_fw?refresh=1'); await draw(true); setTimeout(() => checkUpdate(), 4000); } }, 'Check now'),
       h('button', { class: 'btn small' + (d.available ? ' primary' : ''), disabled: d.running || !canEdit(), onclick: () => confirmThen('Download the latest version and restart the services?', async () => {
         const x = await api('/api/update_run', {});
         toast(x.ok ? x.data.message : x.data.error, !x.ok);
