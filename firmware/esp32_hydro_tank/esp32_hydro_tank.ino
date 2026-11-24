@@ -187,7 +187,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_PERIOD_MS      3000   // Bluetooth only: one short blue blink this often
 #define BLINK_ON_MS          60     // ... this long (saves energy: the LED is off 98 % of the time)
 
-#define FW_VERSION           "2.9"
+#define FW_VERSION           "3.0"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -566,6 +566,12 @@ static void updateAdvertisement() {
 // and "info" needs "auth <password>" first (the own Wi-Fi password).
 // "ota begin <size> <md5>", 'D' chunks, "ota end" update the firmware; those
 // are answered at once (read the reply characteristic), the rest in loop().
+// "ota begin2 <size> <md5>" (firmware 3.0+): every chunk is 'D' + its offset
+// (uint32 LE) + data, so the Pi can repeat a chunk after an error, or carry on
+// after a dropped connection: "ota status" says how much has arrived. The
+// update survives a disconnect for OTA_IDLE_MS. The reply to begin2 names the
+// packet size that fits one Bluetooth frame ("ok ota begin v2 mtu=247").
+#define OTA_IDLE_MS          (2UL * 60UL * 1000UL)
 #define LINK_SERVICE_UUID    "5f6d0001-8d4b-4bd1-9a1c-7ad0a8e3c101"
 #define LINK_CMD_UUID        "5f6d0002-8d4b-4bd1-9a1c-7ad0a8e3c101"
 #define LINK_REPLY_UUID      "5f6d0003-8d4b-4bd1-9a1c-7ad0a8e3c101"
@@ -629,7 +635,9 @@ static uint8_t linkQHead = 0, linkQCount = 0;
 
 // OTA over Bluetooth
 static bool otaActive = false;
+static bool otaV2 = false;                 // chunks carry their offset
 static uint32_t otaSize = 0, otaGot = 0;
+static volatile uint32_t otaLastData = 0;
 static bool otaFailed = false;
 static uint32_t otaRestartAt = 0;
 static volatile bool otaEndRequested = false;   // finished in loop(): the check reads the whole image
@@ -664,16 +672,20 @@ static String linkImmediate(const String &cmd) {
     return linkAuthed ? "ok auth" : "denied: wrong password";
   }
   if (!linkAuthed) return "denied: auth first";
-  if (cmd.startsWith("ota begin ")) {
-    String rest = cmd.substring(10);
+  if (cmd.startsWith("ota begin ") || cmd.startsWith("ota begin2 ")) {
+    bool v2 = cmd.startsWith("ota begin2 ");
+    String rest = cmd.substring(v2 ? 11 : 10);
     int sp = rest.indexOf(' ');
     otaSize = (uint32_t)(sp < 0 ? rest : rest.substring(0, sp)).toInt();
     String md5 = sp < 0 ? String() : rest.substring(sp + 1);
     if (otaActive) Update.abort();
-    otaGot = 0; otaFailed = false;
+    otaGot = 0; otaFailed = false; otaV2 = v2; otaLastData = millis();
     otaActive = otaSize > 0 && Update.begin(otaSize);
     if (otaActive && md5.length() == 32) Update.setMD5(md5.c_str());
-    return otaActive ? "ok ota begin" : String("error ota begin: ") + Update.errorString();
+    if (!otaActive) return String("error ota begin: ") + Update.errorString();
+    if (!v2) return "ok ota begin";
+    uint16_t mtu = linkServer ? linkServer->getPeerMTU(linkServer->getConnId()) : 23;
+    return "ok ota begin v2 mtu=" + String(mtu);
   }
   if (cmd == "ota end") {
     if (!otaActive) return "error ota: not started";
@@ -681,15 +693,20 @@ static String linkImmediate(const String &cmd) {
     return "working";
   }
   if (cmd == "ota abort") { if (otaActive) Update.abort(); otaActive = false; return "ok ota aborted"; }
-  if (cmd == "ota status") return "ota " + String(otaActive ? "active" : "idle") + " " + String(otaGot) + "/" + String(otaSize);
+  if (cmd == "ota status") return "ota " + String(otaActive ? (otaFailed ? "failed" : "active") : "idle") + " " + String(otaGot) + "/" + String(otaSize);
   return String();
 }
 
 class LinkServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *s) override { linkConnected = true; linkAuthed = false; }
+  void onConnect(BLEServer *s) override {
+    linkConnected = true; linkAuthed = false;
+    // ask for a short connection interval (7.5-15 ms): firmware uploads go several times faster
+    s->requestConnParams(s->getConnId(), 6, 12, 0, 400);
+  }
   void onDisconnect(BLEServer *s) override {
     linkConnected = false; linkAuthed = false;
-    if (otaActive) { Update.abort(); otaActive = false; }
+    // a running firmware upload waits OTA_IDLE_MS for the Pi to come back (v2), see linkPoll()
+    if (otaActive && !otaV2) { Update.abort(); otaActive = false; }
   }
 };
 
@@ -699,14 +716,22 @@ class LinkCmdCallbacks : public BLECharacteristicCallbacks {
     if (v.length() < 1) return;
     if (v[0] == 'D') {                       // firmware data, in order
       if (!otaActive || !linkAuthed || otaFailed) return;
+      const uint8_t *data = (const uint8_t *)v.c_str() + 1;
       size_t n = v.length() - 1;
-      if (otaGot == 0 && n >= 28 && (uint8_t)v[28] != 0x3C) {   // first chunk: must be an app image
+      if (otaV2) {                           // 'D' + offset + data: repeats are harmless
+        if (n < 4) return;
+        uint32_t off = data[0] | (data[1] << 8) | (data[2] << 16) | ((uint32_t)data[3] << 24);
+        data += 4; n -= 4;
+        if (off + n <= otaGot) return;       // already have it (repeated after an error)
+        if (off != otaGot) return;           // a gap: the Pi asks "ota status" and carries on from otaGot
+      }
+      if (otaGot == 0 && n >= 28 && data[27] != 0x3C) {   // first chunk: must be an app image
         otaFailed = true;
         linkSetReply("error ota: not an app image (FLASH-AT-0x0 file?)");
         return;
       }
-      if (Update.write((uint8_t *)v.c_str() + 1, n) != n) otaFailed = true;
-      else otaGot += n;
+      if (Update.write((uint8_t *)data, n) != n) otaFailed = true;
+      else { otaGot += n; otaLastData = millis(); }
       return;
     }
     if (v[0] != 'C') return;
@@ -724,6 +749,11 @@ static void handleCommand(String line);
 
 // Queued commands run here, in loop(), like serial commands
 static void linkPoll() {
+  if (otaActive && !linkConnected && millis() - otaLastData > OTA_IDLE_MS) {
+    Update.abort();                          // the Pi did not come back: keep the old firmware
+    otaActive = false;
+    Serial.println("Firmware upload abandoned (no data for 2 minutes), keeping the old firmware.");
+  }
   if (otaEndRequested) {
     otaEndRequested = false;
     otaActive = false;

@@ -18,6 +18,8 @@ lines the page shows. Exit code 0 = updated.
 
 import argparse
 import os
+import re
+import struct
 import subprocess
 import sys
 import time
@@ -155,28 +157,56 @@ def md5_of(path):
     return subprocess.check_output(['md5sum', path]).decode().split()[0]
 
 
-def ble_update(mac, password, data, md5, adapter='hci0'):
+def v2_packet_size(mtu):
+    """Firmware bytes per packet that fit one Bluetooth frame: MTU - 3, minus 'D' and the offset."""
+    return max(16, min(500, (mtu or 23) - 3) - 5)
+
+
+def parse_status(text):
+    """'ota active 12345/1266000' -> 12345; anything else -> None (the sender dropped the upload)."""
+    m = re.match(r'ota active (\d+)/(\d+)', text or '')
+    return int(m.group(1)) if m else None
+
+
+def progress(sent, total, started, step):
+    pct = sent * 100 // total
+    if pct >= step:
+        rate = sent / max(0.1, time.time() - started) / 1024
+        say('Sending %3d %%  (%d of %d kB, %.1f kB/s)' % (pct, sent // 1024, total // 1024, rate))
+        return pct + 5
+    return step
+
+
+def ble_update(mac, password, data, md5, adapter='hci0', max_errors=40):
     link = BleLink(mac, adapter)
-    say('Connecting to the sender over Bluetooth ...')
-    link.connect()
-    try:
-        size = packet_size(link.mtu)
-        say('Connected (packet size %d bytes).' % size)
+
+    def connect():
+        say('Connecting to the sender over Bluetooth ...')
+        link.connect()
         answer = link.command('auth ' + password)
         if not answer.startswith('ok'):
             raise RuntimeError('the sender refused the password: set "Sender password" to its Wi-Fi password')
-        answer = link.command('ota begin %d %s' % (len(data), md5))
-        if not answer.startswith('ok'):
-            raise RuntimeError(answer)
-        total, sent, step, started = len(data), 0, 0, time.time()
-        for part in chunks(data, size):
-            link.write(b'D' + part)
-            sent += len(part)
-            pct = sent * 100 // total
-            if pct >= step:
-                rate = sent / max(0.1, time.time() - started) / 1024
-                say('Sending %3d %%  (%d of %d kB, %.1f kB/s)' % (pct, sent // 1024, total // 1024, rate))
-                step = pct + 5
+
+    try:
+        connect()
+        total = len(data)
+        answer = link.command('ota begin2 %d %s' % (total, md5))
+        if answer.startswith('ok ota begin v2'):
+            send_v2(link, connect, data, answer, max_errors)
+        else:
+            # Firmware before 3.0: chunks without offsets, so an error can't be repaired.
+            # Packets that fit one frame avoid the split-up writes that failed before.
+            time.sleep(1.5)                   # it answers "unknown command" to begin2 in the meantime
+            answer = link.command('ota begin %d %s' % (total, md5))
+            if not answer.startswith('ok'):
+                raise RuntimeError(answer)
+            size = packet_size(link.mtu) if link.mtu else 179
+            say('Older sender firmware: one try, %d-byte packets.' % size)
+            sent, step, started = 0, 0, time.time()
+            for part in chunks(data, size):
+                link.write(b'D' + part)
+                sent += len(part)
+                step = progress(sent, total, started, step)
         answer = link.command('ota end')
         for _ in range(60):                   # the sender checks the whole image first
             if answer != 'working':
@@ -188,6 +218,53 @@ def ble_update(mac, password, data, md5, adapter='hci0'):
             raise RuntimeError(answer)
     finally:
         link.disconnect()
+
+
+def send_v2(link, connect, data, answer, max_errors):
+    """Chunks with their offset: after an error ask how much arrived and carry on from there."""
+    m = re.search(r'mtu=(\d+)', answer)
+    size = v2_packet_size(int(m.group(1)) if m else link.mtu)
+    total, pos, errors, step, started = len(data), 0, 0, 0, time.time()
+    say('Sending %d kB in %d-byte packets.' % (total // 1024, size))
+    while pos < total:
+        part = data[pos:pos + size]
+        try:
+            link.write(b'D' + struct.pack('<I', pos) + part)
+            pos += len(part)
+            step = progress(pos, total, started, step)
+            continue
+        except Exception as e:                 # a refused packet, or the connection dropped
+            errors += 1
+            if errors > max_errors:
+                raise RuntimeError('too many transfer errors (last: %s)' % e)
+            say('Packet at %d kB not accepted (%s): checking with the sender ...' % (pos // 1024, short(e)))
+        pos = resume(link, connect)
+
+
+def resume(link, connect, attempts=5):
+    """Where to carry on: ask the sender, reconnecting if the connection is gone."""
+    for i in range(attempts):
+        time.sleep(1 + i)
+        try:
+            got = parse_status(link.command('ota status'))
+        except Exception:
+            try:
+                link.disconnect()
+                connect()
+                got = parse_status(link.command('ota status'))
+            except Exception as e:
+                say('reconnect attempt %d failed: %s' % (i + 1, short(e)))
+                continue
+        if got is None:
+            raise RuntimeError('the sender dropped the upload: start the update again')
+        say('Sender has %d kB, carrying on from there.' % (got // 1024))
+        return got
+    raise RuntimeError('lost the connection to the sender')
+
+
+def short(e):
+    text = getattr(e, 'get_dbus_message', lambda: str(e))() or str(e)
+    return text.strip().splitlines()[0][:120] if text.strip() else type(e).__name__
 
 
 def svc(action, service):

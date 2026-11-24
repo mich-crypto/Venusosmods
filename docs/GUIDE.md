@@ -615,7 +615,9 @@ if you forget it. Open the address in Safari and add it to the home screen.
   sender firmware**: downloads the latest from GitHub and sends it over
   Bluetooth (a few minutes; the level pauses meanwhile) or over the van Wi-Fi
   (seconds). The sender checks the file and keeps its old firmware if anything
-  goes wrong. Needs sender firmware 2.7+ once (USB or its own page): until
+  goes wrong. From sender firmware 3.0 a refused packet or a dropped connection
+  doesn't end the update: the Pi asks how much has arrived and carries on
+  (the sender keeps a started upload for 2 minutes). Needs sender firmware 2.7+ once (USB or its own page): until
   then the card shows how, with the download links.
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
