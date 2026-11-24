@@ -218,6 +218,7 @@ It switches itself off after 15 minutes and at a restart.
 |---|---|
 | **green, breathing** | Wi-Fi on: the sender's page is reachable (own Wi-Fi, or the van Wi-Fi) |
 | **blue, short blink every 3 s** | Bluetooth only (saves energy); press BOOT to switch the own Wi-Fi on |
+| **green and red, alternating fast** | new firmware is arriving from the Venus OS page (firmware 3.3+); don't cut the power |
 | off | still starting, or no power |
 
 The Wi-Fi stays on (green) until the Pi has checked in over Bluetooth, which
