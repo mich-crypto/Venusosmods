@@ -43,16 +43,23 @@ OTA_LOCK = '/tmp/venusosmods-sender-ota.lock'
 
 
 def ota_running(path=None):
-    """pid of a running sender firmware update, else None (a stale lock is ignored)."""
+    """pid of a running sensor firmware update, else None. A stale lock is ignored: the
+    process must be alive AND be esp32_ota.py (a left-over lock whose number now belongs to
+    another program must not keep the water driver from starting)."""
     import os
     path = path or OTA_LOCK
     try:
         with open(path) as f:
             pid = int(f.read().split()[0])
         os.kill(pid, 0)
-        return pid
     except (OSError, ValueError, IndexError):
         return None
+    try:
+        with open('/proc/%d/cmdline' % pid, 'rb') as f:
+            cmd = f.read()
+    except OSError:
+        return pid                               # no /proc to ask: trust the live pid
+    return pid if b'esp32_ota' in cmd else None
 WIFI_MODES = ('auto', 'van', 'ap', 'off')
 
 

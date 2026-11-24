@@ -281,7 +281,7 @@ class Esp32HydroDriver(BleDriver):
             self.temp2.publish(r.temperature2)
 
 
-def wait_for_sender_update(max_s=1800):
+def wait_for_sender_update(max_s=900):
     """Started (by hand, or by a software update) while the sender's firmware is being
     sent: wait, a second Bluetooth connection would break the upload."""
     t0, said = time.time(), -60
