@@ -56,7 +56,8 @@ data/                              -> copied to /data on the Pi
     config.ini.example
     install.sh / uninstall.sh
   etc/init.d/<service>/run         daemontools services (+ log/run)
-firmware/esp32_hydro_tank/         Arduino sketch for the ESP32-S3 (calibration via serial)
+firmware/esp32_hydro_tank/         Arduino sketch for the ESP32-S3 (calibration via serial or its own Wi-Fi page)
+firmware/bin/                      ready-made firmware for the browser flasher and the page's update
 tools/tank_table.py                height->litres table from tank dimensions
 tools/tank_wheelarch.py            filling chart of the wheel-arch tank (docs/tank/tank-drawing.jpg)
 docs/                              guide, wiring, calibration

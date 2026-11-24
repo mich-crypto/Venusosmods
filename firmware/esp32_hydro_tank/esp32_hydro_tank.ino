@@ -21,6 +21,12 @@
  * type "help". The height -> litres table is measured by filling the tank in
  * steps ("cal start", "cal add 10", ..., "cal save") and stored in flash, so
  * no re-flashing is needed. See docs/calibration.md.
+ *
+ * Own Wi-Fi (works without Venus OS): the sender opens a Wi-Fi network
+ * "Watertank-<DEVICE_ID>" (password below, changeable on the page). Join it
+ * with a phone and open http://192.168.4.1 for live values, calibration,
+ * the command console and firmware updates. Needs the partition scheme
+ * "Minimal SPIFFS (1.9MB APP with OTA)" (firmware too big for the default).
  */
 
 #include <Arduino.h>
@@ -138,10 +144,24 @@ static const TankPoint DEFAULT_TABLE[] = {
 
 #define SERIAL_LOG           1      // status line every ADV_UPDATE_MS ("log" toggles it)
 
+// ---- Own Wi-Fi network with a web page (http://192.168.4.1)
+#define USE_WIFI_AP          1
+#define AP_SSID_PREFIX       "Watertank-"   // + DEVICE_ID -> "Watertank-1"
+#define AP_PASSWORD_DEFAULT  "watertank"    // 8..63 chars; change it on the page
+#define AP_CHANNEL           6
+
+#define FW_VERSION           "2.0"
+
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
 
 // ======================================================== END CONFIGURATION
+
+#if USE_WIFI_AP
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Update.h>
+#endif
 
 #if USE_DS18B20
 #include <OneWire.h>
@@ -169,6 +189,14 @@ static size_t tablePoints = 0;
 static float zeroOffsetMm = ZERO_OFFSET_MM;
 static Preferences prefs;
 static bool serialLog = SERIAL_LOG;
+
+// Where command replies go: the serial port, or a web request's reply text
+static Print *out = &Serial;
+class StringOut : public Print {
+ public:
+  String text;
+  size_t write(uint8_t c) override { text += (char)c; return 1; }
+};
 
 static float capacityL() { return table[tablePoints - 1].litres; }
 
@@ -431,9 +459,9 @@ static void saveTable() {
 
 // Average the unfiltered height over a few seconds while the water is calm.
 // Blocks the loop; BLE keeps advertising the last payload meanwhile.
-static bool measureSteadyHeight(float &out, uint32_t ms = 5000) {
+static bool measureSteadyHeight(float &result, uint32_t ms = 5000) {
   if (sloshing) {
-    Serial.println("Water is still moving (SLOSH) - wait until it settles and try again.");
+    out->println("Water is still moving (SLOSH) - wait until it settles and try again.");
     return false;
   }
   double sum = 0;
@@ -441,17 +469,17 @@ static bool measureSteadyHeight(float &out, uint32_t ms = 5000) {
   float lo = 1e9f, hi = -1e9f;
   for (uint32_t t0 = millis(); millis() - t0 < ms; ) {
     sampleLevel();
-    if (fault) { Serial.println("Sensor fault - check wiring."); return false; }
+    if (fault) { out->println("Sensor fault - check wiring."); return false; }
     sum += lastRawHeight;
     n++;
     lo = min(lo, lastRawHeight);
     hi = max(hi, lastRawHeight);
     delay(SAMPLE_PERIOD_MS);
   }
-  out = (float)(sum / n);
-  Serial.printf("  measured %.1f mm (spread %.1f mm over %u bursts)\n", out, hi - lo, (unsigned)n);
+  result = (float)(sum / n);
+  out->printf("  measured %.1f mm (spread %.1f mm over %u bursts)\n", result, hi - lo, (unsigned)n);
   if (hi - lo > 4 * SLOSH_EXIT_MM) {
-    Serial.println("  spread is large - the level was still changing. Wait and repeat.");
+    out->println("  spread is large - the level was still changing. Wait and repeat.");
     return false;
   }
   return true;
@@ -464,32 +492,32 @@ static float calTotal = 0;
 static bool calActive = false;
 
 static void printTable(const TankPoint *t, size_t n) {
-  Serial.println("  #   height mm   litres");
+  out->println("  #   height mm   litres");
   for (size_t i = 0; i < n; i++)
-    Serial.printf("  %-3u %9.1f %8.1f\n", (unsigned)i, t[i].mm, t[i].litres);
+    out->printf("  %-3u %9.1f %8.1f\n", (unsigned)i, t[i].mm, t[i].litres);
 }
 
 static void printAsCode() {
-  Serial.println("// paste into DEFAULT_TABLE in the sketch:");
+  out->println("// paste into DEFAULT_TABLE in the sketch:");
   for (size_t i = 0; i < tablePoints; i++)
-    Serial.printf("  { %6.1ff, %6.1ff },\n", table[i].mm, table[i].litres);
-  Serial.printf("// zero offset: #define ZERO_OFFSET_MM %.1ff\n", zeroOffsetMm);
+    out->printf("  { %6.1ff, %6.1ff },\n", table[i].mm, table[i].litres);
+  out->printf("// zero offset: #define ZERO_OFFSET_MM %.1ff\n", zeroOffsetMm);
 }
 
 static void calAppend(float mm, float litres) {
-  if (calCount >= MAX_POINTS) { Serial.println("Table full."); return; }
+  if (calCount >= MAX_POINTS) { out->println("Table full."); return; }
   if (calCount > 0 && mm <= calPts[calCount - 1].mm) {
-    Serial.printf("Height %.1f mm is not above the previous point (%.1f mm) - not added. "
+    out->printf("Height %.1f mm is not above the previous point (%.1f mm) - not added. "
                   "Add more water per step, or check the sensor.\n", mm, calPts[calCount - 1].mm);
     return;
   }
   calPts[calCount++] = { mm, litres };
   calTotal = litres;
-  Serial.printf("Point %u: %.1f mm = %.1f L\n", (unsigned)(calCount - 1), mm, litres);
+  out->printf("Point %u: %.1f mm = %.1f L\n", (unsigned)(calCount - 1), mm, litres);
 }
 
 static void printHelp() {
-  Serial.println(
+  out->println(
     "Commands (end with Enter):\n"
     "  status              current reading and active table\n"
     "  log                 toggle the periodic status line\n"
@@ -519,9 +547,9 @@ static void handleCommand(String line) {
     printHelp();
   } else if (cmd == "log") {
     serialLog = !serialLog;
-    Serial.printf("Periodic log %s\n", serialLog ? "on" : "off");
+    out->printf("Periodic log %s\n", serialLog ? "on" : "off");
   } else if (cmd == "status") {
-    Serial.printf("signal=%.3f raw height=%.1f mm filtered=%.1f mm zero offset=%.1f mm "
+    out->printf("signal=%.3f raw height=%.1f mm filtered=%.1f mm zero offset=%.1f mm "
                   "litres=%.1f/%.1f%s%s\n", lastSignal, lastRawHeight, emaHeight, zeroOffsetMm,
                   heightToLitres(max(0.0f, emaHeight)), capacityL(),
                   sloshing ? " SLOSH" : "", fault ? " FAULT" : "");
@@ -536,7 +564,7 @@ static void handleCommand(String line) {
     }
     saveZero();
     emaHeight = NAN;                  // restart the filter at the new zero
-    Serial.printf("Zero offset %.1f mm stored.\n", zeroOffsetMm);
+    out->printf("Zero offset %.1f mm stored.\n", zeroOffsetMm);
   } else if (cmd == "cal") {
     int sp2 = rest.indexOf(' ');
     String sub = sp2 < 0 ? rest : rest.substring(0, sp2);
@@ -549,18 +577,18 @@ static void handleCommand(String line) {
       calCount = 0;
       calActive = true;
       calAppend(h, 0.0f);
-      Serial.println("Now pour in a known amount, wait ~30 s, then: cal add <litres>");
+      out->println("Now pour in a known amount, wait ~30 s, then: cal add <litres>");
     } else if (sub == "add" || sub == "point") {
       if (!calActive) { calActive = true; calCount = 0; calTotal = 0; }
       if (sub == "add") {
         float l = arg.toFloat();
-        if (l <= 0) { Serial.println("Usage: cal add <litres poured in this step>"); return; }
+        if (l <= 0) { out->println("Usage: cal add <litres poured in this step>"); return; }
         float h;
         if (!measureSteadyHeight(h)) return;
         calAppend(h, calTotal + l);
       } else {
         int sp3 = arg.indexOf(' ');
-        if (sp3 < 0) { Serial.println("Usage: cal point <mm> <total litres>"); return; }
+        if (sp3 < 0) { out->println("Usage: cal point <mm> <total litres>"); return; }
         calAppend(arg.substring(0, sp3).toFloat(), arg.substring(sp3 + 1).toFloat());
       }
     } else if (sub == "undo") {
@@ -568,24 +596,24 @@ static void handleCommand(String line) {
       printTable(calPts, calCount);
     } else if (sub == "show") {
       printTable(calPts, calCount);
-      Serial.printf("  total so far: %.1f L\n", calTotal);
+      out->printf("  total so far: %.1f L\n", calTotal);
     } else if (sub == "save") {
       if (!tableValid(calPts, calCount)) {
-        Serial.println("Need at least 2 points with rising height and litres.");
+        out->println("Need at least 2 points with rising height and litres.");
         return;
       }
       memcpy(table, calPts, calCount * sizeof(TankPoint));
       tablePoints = calCount;
       saveTable();
       calActive = false;
-      Serial.printf("Saved %u points, capacity %.1f L.\n", (unsigned)tablePoints, capacityL());
+      out->printf("Saved %u points, capacity %.1f L.\n", (unsigned)tablePoints, capacityL());
       printAsCode();
     } else if (sub == "cancel") {
       calActive = false;
       calCount = 0;
-      Serial.println("Calibration discarded.");
+      out->println("Calibration discarded.");
     } else {
-      Serial.println("cal start | add <L> | point <mm> <L> | undo | show | save | cancel");
+      out->println("cal start | add <L> | point <mm> <L> | undo | show | save | cancel");
     }
   } else if (cmd == "table") {
     printAsCode();
@@ -595,9 +623,9 @@ static void handleCommand(String line) {
     prefs.end();
     loadDefaults();
     emaHeight = NAN;
-    Serial.println("Stored calibration erased, using sketch defaults.");
+    out->println("Stored calibration erased, using sketch defaults.");
   } else {
-    Serial.printf("Unknown command '%s' - type help\n", cmd.c_str());
+    out->printf("Unknown command '%s' - type help\n", cmd.c_str());
   }
 }
 
@@ -613,6 +641,261 @@ static void pollSerial() {
     }
   }
 }
+
+// ------------------------------------------------------- own Wi-Fi + web page
+//
+// The sender opens its own Wi-Fi network, so the page works with the Pi off.
+// Calibration on this page changes the sender's own table, the same as the
+// serial commands (the page simply runs those commands and shows the reply).
+
+#if USE_WIFI_AP
+
+static WebServer server(80);
+static String apPassword;
+
+static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Water tank</title>
+<style>
+:root{--bg:#fff;--fg:#111;--mut:#666;--line:#ddd;--card:#f6f6f6;--acc:#111;--accfg:#fff;--bad:#c62828;--ok:#2e7d32}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--fg:#eee;--mut:#999;--line:#333;--card:#111;--acc:#eee;--accfg:#000;--bad:#ef5350;--ok:#66bb6a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 -apple-system,system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}h1{font-size:20px;margin:4px 0 12px}h2{font-size:16px;margin:0 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.big{font-size:44px;font-weight:700;line-height:1}.mut{color:var(--mut);font-size:14px}
+.bar{height:12px;background:var(--line);border-radius:6px;overflow:hidden;margin:10px 0}.bar i{display:block;height:100%;background:var(--acc)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}.grid b{display:block;font-size:18px}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:13px;margin:6px 4px 0 0}
+.chip.bad{color:var(--bad);border-color:var(--bad)}
+button,input{font:inherit;border-radius:8px;border:1px solid var(--line);padding:9px 12px;background:var(--bg);color:var(--fg)}
+button{cursor:pointer}button.p{background:var(--acc);color:var(--accfg);border-color:var(--acc)}button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.row input{flex:1;min-width:0}
+pre{white-space:pre-wrap;font:13px/1.35 ui-monospace,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;max-height:260px;overflow:auto;margin:8px 0 0}
+table{border-collapse:collapse;width:100%;font-size:14px}td,th{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line)}
+details summary{cursor:pointer;font-weight:600}
+</style></head><body><main>
+<h1>Water tank <span class="mut" id="ver"></span></h1>
+
+<div class="card">
+ <div class="big"><span id="lit">–</span> L</div>
+ <div class="mut">of <span id="cap">–</span> L · <span id="lvl">–</span> %</div>
+ <div class="bar"><i id="barf" style="width:0"></i></div>
+ <div class="grid">
+  <div><span class="mut">Water height</span><b><span id="h">–</span> mm</b></div>
+  <div><span class="mut">Water temperature</span><b><span id="t">–</span></b></div>
+  <div><span class="mut">Sensor signal</span><b id="sig">–</b></div>
+  <div><span class="mut">Zero offset</span><b><span id="z">–</span> mm</b></div>
+ </div>
+ <div id="chips"></div>
+</div>
+
+<div class="card">
+ <h2>1. Zero (tank empty)</h2>
+ <div class="mut">Park level, empty the tank, wait until the water is calm, then press the button. The height then reads 0 mm.</div>
+ <div class="row"><button class="p" onclick="cmd('zero')">Tank is empty: set zero</button></div>
+</div>
+
+<div class="card">
+ <h2>2. Measure the tank (optional)</h2>
+ <div class="mut">Only needed if the litres don't match. Start with the tank empty, pour in a known amount, wait ~30 s, type how much you poured in this step and press Record. Repeat until full, then Save.</div>
+ <div class="row"><button onclick="cmd('cal start')">Start (tank empty)</button></div>
+ <div class="row"><input id="add" type="number" inputmode="decimal" placeholder="litres poured in this step"><button class="p" onclick="addPt()">Record</button></div>
+ <div class="row"><button onclick="cmd('cal undo')">Undo last</button><button class="p" onclick="cmd('cal save')">Save table</button><button onclick="cmd('cal cancel')">Cancel</button></div>
+ <div id="calbox"></div>
+</div>
+
+<div class="card">
+ <h2>Reply</h2>
+ <pre id="outp">Measurements take about 5 seconds.</pre>
+</div>
+
+<div class="card"><details><summary>Active tank table</summary><div id="tbl"></div>
+ <div class="row"><button onclick="if(confirm('Forget the stored calibration and use the built-in table?'))cmd('reset')">Back to built-in table</button></div></details></div>
+
+<div class="card"><details><summary>Console (serial commands)</summary>
+ <div class="row"><input id="con" placeholder="e.g. status, help, cal point 300 15"><button onclick="cmd(document.getElementById('con').value)">Send</button></div></details></div>
+
+<div class="card"><details><summary>Wi-Fi password</summary>
+ <div class="mut">8 to 63 characters. You'll have to join the network again with the new password.</div>
+ <div class="row"><input id="pw" type="text" autocomplete="off" placeholder="new password"><button onclick="setPw()">Save</button></div></details></div>
+
+<div class="card"><details><summary>Firmware update</summary>
+ <div class="mut">Choose the <b>esp32_hydro_tank.ino.bin</b> file (not the merged one). Your calibration is kept.</div>
+ <div class="row"><input id="fw" type="file" accept=".bin"><button onclick="upd()">Upload</button></div></details></div>
+
+<div class="mut" id="foot"></div>
+</main><script>
+const $=id=>document.getElementById(id);
+let busy=false;
+function f1(x){return x==null?'–':x.toFixed(1)}
+async function refresh(){
+ if(busy)return;
+ try{
+  const s=await (await fetch('/api/status')).json();
+  $('ver').textContent='v'+s.version;
+  $('lit').textContent=f1(s.litres);$('cap').textContent=f1(s.capacity);$('lvl').textContent=f1(s.level);
+  $('barf').style.width=(s.level||0)+'%';
+  $('h').textContent=f1(s.height_mm);$('z').textContent=f1(s.zero_mm);
+  $('t').textContent=s.temp_c==null?'–':s.temp_c.toFixed(1)+' °C';
+  $('sig').textContent=s.signal==null?'–':s.signal.toFixed(3)+' '+s.signal_unit;
+  let c='';
+  if(s.fault)c+='<span class="chip bad">Sensor fault – check wiring</span>';
+  if(s.sloshing)c+='<span class="chip">Water moving</span>';
+  if(s.filling)c+='<span class="chip">Filling</span>';
+  if(s.draining)c+='<span class="chip">Draining</span>';
+  c+='<span class="chip">'+(s.custom_table?'Your calibration':'Built-in table')+'</span>';
+  $('chips').innerHTML=c;
+  $('tbl').innerHTML=tab(s.table);
+  $('calbox').innerHTML=s.cal_active?'<p class="mut">Measured so far ('+s.cal_points.length+' points):</p>'+tab(s.cal_points):'';
+  $('foot').textContent='Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
+ }catch(e){$('foot').textContent='No connection to the sender…'}
+}
+function tab(p){if(!p||!p.length)return'';let h='<table><tr><th>#</th><th>height mm</th><th>litres</th></tr>';p.forEach((x,i)=>h+='<tr><td>'+i+'</td><td>'+x[0].toFixed(1)+'</td><td>'+x[1].toFixed(1)+'</td></tr>');return h+'</table>'}
+async function cmd(c){
+ if(!c)return;busy=true;$('outp').textContent='> '+c+'\n…';
+ document.querySelectorAll('button').forEach(b=>b.disabled=true);
+ try{const r=await fetch('/api/cmd',{method:'POST',body:new URLSearchParams({c})});$('outp').textContent='> '+c+'\n'+await r.text()}
+ catch(e){$('outp').textContent='Failed: '+e}
+ document.querySelectorAll('button').forEach(b=>b.disabled=false);busy=false;refresh();
+}
+function addPt(){const v=parseFloat($('add').value);if(!(v>0)){alert('Type the litres you poured in this step');return}cmd('cal add '+v);$('add').value=''}
+async function setPw(){const p=$('pw').value;if(p.length<8||p.length>63){alert('8 to 63 characters');return}
+ const r=await fetch('/api/password',{method:'POST',body:new URLSearchParams({p})});alert(await r.text())}
+async function upd(){const f=$('fw').files[0];if(!f)return;const d=new FormData();d.append('fw',f);
+ $('outp').textContent='Uploading '+f.name+' …';busy=true;
+ try{const r=await fetch('/update',{method:'POST',body:d});$('outp').textContent=await r.text()}catch(e){$('outp').textContent='Failed: '+e}
+ busy=false;setTimeout(refresh,8000)}
+refresh();setInterval(refresh,2000);
+</script></body></html>)HTML";
+
+static void jsonNum(String &j, const char *key, float v, int decimals = 1) {
+  j += '"'; j += key; j += "\":";
+  if (isnan(v) || isinf(v)) j += "null"; else j += String(v, decimals);
+  j += ',';
+}
+
+static void jsonPoints(String &j, const char *key, const TankPoint *t, size_t n) {
+  j += '"'; j += key; j += "\":[";
+  for (size_t i = 0; i < n; i++) {
+    if (i) j += ',';
+    j += '['; j += String(t[i].mm, 1); j += ','; j += String(t[i].litres, 1); j += ']';
+  }
+  j += "],";
+}
+
+static bool customTable() {
+  prefs.begin("tank", true);
+  bool c = prefs.getUInt("n", 0) >= 2;
+  prefs.end();
+  return c;
+}
+
+static void handleStatus() {
+  float height = isnan(emaHeight) ? NAN : max(0.0f, emaHeight);
+  float litres = isnan(height) ? NAN : heightToLitres(height);
+  String j = "{";
+  j += "\"version\":\"" FW_VERSION "\",";
+  j += "\"device_id\":" + String(DEVICE_ID) + ",";
+  j += "\"mac\":\"" + String(BLEDevice::getAddress().toString().c_str()) + "\",";
+  j += "\"uptime_s\":" + String(millis() / 1000) + ",";
+  jsonNum(j, "signal", lastSignal, 3);
+  j += INPUT_CURRENT_LOOP ? "\"signal_unit\":\"mA\"," : "\"signal_unit\":\"V\",";
+  jsonNum(j, "height_mm", height);
+  jsonNum(j, "raw_height_mm", lastRawHeight);
+  jsonNum(j, "zero_mm", zeroOffsetMm);
+  jsonNum(j, "litres", litres);
+  jsonNum(j, "capacity", capacityL());
+  jsonNum(j, "level", isnan(litres) ? NAN : litres / capacityL() * 100.0f);
+  jsonNum(j, "temp_c", temperatureC);
+  j += String("\"fault\":") + (fault || isnan(emaHeight) ? "true" : "false") + ",";
+  j += String("\"sloshing\":") + (sloshing ? "true" : "false") + ",";
+  j += String("\"filling\":") + (filling ? "true" : "false") + ",";
+  j += String("\"draining\":") + (draining ? "true" : "false") + ",";
+  j += String("\"custom_table\":") + (customTable() ? "true" : "false") + ",";
+  j += String("\"cal_active\":") + (calActive ? "true" : "false") + ",";
+  jsonPoints(j, "cal_points", calPts, calActive ? calCount : 0);
+  jsonPoints(j, "table", table, tablePoints);
+  j.remove(j.length() - 1);  // trailing comma
+  j += '}';
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", j);
+}
+
+// Run one serial command and send back what it printed
+static void handleCmd() {
+  StringOut reply;
+  out = &reply;
+  handleCommand(server.arg("c"));
+  out = &Serial;
+  if (reply.text.length() == 0) reply.text = "OK";
+  Serial.print(reply.text);   // keep the serial monitor in the picture
+  server.send(200, "text/plain; charset=utf-8", reply.text);
+}
+
+static void startAp() {
+  String ssid = String(AP_SSID_PREFIX) + DEVICE_ID;
+  WiFi.mode(WIFI_AP);
+  // Modem sleep must stay on while Bluetooth runs too (the default).
+  bool ok = WiFi.softAP(ssid.c_str(), apPassword.c_str(), AP_CHANNEL);
+  Serial.printf("Wi-Fi %s '%s', page http://%s\n", ok ? "network" : "FAILED to start",
+                ssid.c_str(), WiFi.softAPIP().toString().c_str());
+}
+
+static void handlePassword() {
+  String p = server.arg("p");
+  if (p.length() < 8 || p.length() > 63) {
+    server.send(400, "text/plain", "The password needs 8 to 63 characters.");
+    return;
+  }
+  prefs.begin("wifi", false);
+  prefs.putString("appass", p);
+  prefs.end();
+  server.send(200, "text/plain", "Saved. The Wi-Fi restarts now: join it again with the new password.");
+  delay(500);
+  apPassword = p;
+  WiFi.softAPdisconnect(true);
+  startAp();
+}
+
+static void handleUpdateDone() {
+  bool ok = !Update.hasError();
+  server.send(200, "text/plain", ok ? "Update OK. The sender restarts; reload the page in ~10 s."
+                                    : String("Update failed: ") + Update.errorString());
+  if (ok) { delay(500); ESP.restart(); }
+}
+
+static void handleUpdateUpload() {
+  HTTPUpload &u = server.upload();
+  if (u.status == UPLOAD_FILE_START) {
+    Serial.printf("Firmware update: %s\n", u.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+  } else if (u.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(u.buf, u.currentSize) != u.currentSize) Update.printError(Serial);
+  } else if (u.status == UPLOAD_FILE_END) {
+    if (!Update.end(true)) Update.printError(Serial);
+  } else if (u.status == UPLOAD_FILE_ABORTED) {
+    Update.abort();
+  }
+}
+
+static void webStart() {
+  prefs.begin("wifi", true);
+  apPassword = prefs.getString("appass", AP_PASSWORD_DEFAULT);
+  prefs.end();
+  if (apPassword.length() < 8) apPassword = AP_PASSWORD_DEFAULT;
+  startAp();
+
+  server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", PAGE); });
+  server.on("/api/status", HTTP_GET, handleStatus);
+  server.on("/api/cmd", HTTP_POST, handleCmd);
+  server.on("/api/password", HTTP_POST, handlePassword);
+  server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
+  server.onNotFound([]() { server.sendHeader("Location", "/"); server.send(302); });
+  server.begin();
+}
+
+#endif  // USE_WIFI_AP
 
 // ------------------------------------------------------------ setup / loop
 
@@ -634,6 +917,9 @@ void setup() {
   updateTemperature();
 
   bleStart();
+#if USE_WIFI_AP
+  webStart();
+#endif
   Serial.println("Type 'help' for calibration commands.");
 }
 
@@ -645,6 +931,9 @@ void loop() {
   if (now - tTrend >= TREND_PERIOD_MS)   { tTrend = now; updateTrend(); updateTemperature(); }
   if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
   pollSerial();
+#if USE_WIFI_AP
+  server.handleClient();
+#endif
 
   delay(5);
 }

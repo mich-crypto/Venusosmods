@@ -95,7 +95,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
    https://espressif.github.io/arduino-esp32/package_esp32_index.json
    ```
 3. *Tools → Board → Boards Manager*: search **esp32**, install
-   **esp32 by Espressif Systems** (3.x; 2.0.17 works too).
+   **esp32 by Espressif Systems** version **3.3.x** (pick it in the version list; 2.0.17 works too, 4.0 does not yet).
 4. *Tools → Manage Libraries*: install **OneWire** (Paul Stoffregen) and
    **DallasTemperature** (Miles Burton). Only needed with the DS18B20.
 
@@ -121,7 +121,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
 | Board | **ESP32S3 Dev Module** |
 | USB CDC On Boot | **Enabled** (otherwise you see no serial output) |
 | Flash Size | match your board (4 MB / 8 MB / 16 MB; 4 MB always works) |
-| Partition Scheme | Default |
+| Partition Scheme | **Minimal SPIFFS (1.9MB APP with OTA)** (the default is too small for Wi-Fi + Bluetooth) |
 | Upload Speed | 921600 (use 115200 if uploads fail) |
 | Port | the new COM / `/dev/ttyACM*` / `/dev/cu.usbmodem*` port |
 
@@ -155,6 +155,42 @@ signal=0.512 height=3.0mm litres=0.4 level=0.5% temp=19.6 activity=0.4
 * `temp=nan` = no DS18B20 found (wiring, pull-up, or `USE_DS18B20 0`).
 
 Note the **MAC** for later (optional in config.ini).
+
+### 3.6 The sender's own Wi-Fi page (works without Venus OS)
+
+The sender opens its own Wi-Fi network, so you can check and calibrate it
+even when the Pi is off or Venus OS doesn't work:
+
+1. On your phone, join the Wi-Fi **Watertank-1** (password **watertank**).
+   The phone may say "no internet": stay connected.
+2. Open **http://192.168.4.1**.
+
+The page shows the litres, level, water height, temperature and sensor
+signal (updated every 2 s), and has buttons for everything the serial
+commands do: *Tank is empty: set zero*, measuring the tank in portions
+(*Start*, *Record*, *Save*), the active table, a console for any serial
+command, the Wi-Fi password and **firmware updates** (upload
+`esp32_hydro_tank.ino.bin`; the calibration is kept).
+
+**Change the Wi-Fi password** on the page the first time. Name and password
+defaults are in the sketch (`AP_SSID_PREFIX`, `AP_PASSWORD_DEFAULT`); set
+`USE_WIFI_AP 0` to switch the Wi-Fi off (saves about 0.5–1 W).
+
+**Two calibrations, which one counts?** The sender page calibrates the sender
+itself (what it broadcasts). The Pi's settings page can store its own table on
+top; once it has one, Venus OS uses the Pi's table and only takes the water
+height from the sender. If you set a new *zero* on the sender later, redo the
+Pi's calibration too, or choose *Use the sender's own table again* in its Calibrate popup.
+
+### 3.7 Flashing from the browser (no Arduino IDE)
+
+Ready-made files are in `firmware/bin/`. On a computer with **Chrome or Edge**
+(not an iPad/iPhone) open https://espressif.github.io/esptool-js/, plug in the
+ESP32-S3, click *Connect*, choose the port, set *Flash Address* **0x0** and
+the file **esp32_hydro_tank.merged.bin**, then *Program*. Tap **RST**
+afterwards. If it won't connect: hold **BOOT**, tap **RST**, release BOOT and
+try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, DS18B20,
+sender id 1).
 
 ---
 
