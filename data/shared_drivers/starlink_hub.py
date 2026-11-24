@@ -36,7 +36,9 @@ def run_async(argv, callback, input_bytes=None, timeout=10, with_errors=False):
             proc.stdin.write(input_bytes)          # small (a request, a curl config): fits the pipe buffer
             proc.stdin.close()
     except (OSError, ValueError) as e:
-        GLib.idle_add(lambda: (callback(127, str(e).encode()), False)[1])
+        # Python forgets `e` when the except block ends: keep the text for the callback later
+        msg = str(e).encode()
+        GLib.idle_add(lambda: (callback(127, msg), False)[1])
         return
     deadline = time.time() + timeout
 

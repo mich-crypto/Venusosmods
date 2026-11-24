@@ -72,6 +72,7 @@ class Esp32HydroDriver(BleDriver):
         self._collector = None
         self._expected = 0
         self._mode = None              # what the running exchange is: checkin | live | stop
+        self._link_quiet_until = 0     # old firmware without the link: try only once an hour
         self.live_until = 0            # monotonic end of the live view (0 = off)
 
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
@@ -126,6 +127,8 @@ class Esp32HydroDriver(BleDriver):
             return True
         if self.gatt is not None and self.gatt.busy:
             return True
+        if monotonic_s() < self._link_quiet_until:
+            return True                        # each try pauses the other drivers' scanning: not every 5 min
         self._send('checkin', proto.link_commands(self.sender_password, self.wifi_mode,
                                                   self.wifi_ssid, self.wifi_password))
         return True
@@ -204,6 +207,7 @@ class Esp32HydroDriver(BleDriver):
             text = str(error or 'failed')
             if 'not found' in text:
                 text = 'sensor firmware without Bluetooth link (older than 2.7)'
+                self._link_quiet_until = monotonic_s() + 3600
             log.info('link: %s', text)
             self.tank['/Hydro/LinkStatus'] = text
             return
@@ -289,6 +293,5 @@ def wait_for_sender_update(max_s=1800):
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    wait_for_sender_update()
+    wait_for_sender_update()               # (its warning goes to stderr; main() sets up logging, --debug included)
     Esp32HydroDriver.main()

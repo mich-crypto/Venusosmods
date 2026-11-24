@@ -188,7 +188,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          100    // blue flash each time a new reading goes out over Bluetooth (every ADV_UPDATE_MS)
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.7"
+#define FW_VERSION           "3.8"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -679,6 +679,7 @@ static volatile uint32_t otaLastData = 0;
 static bool otaFailed = false;
 static uint32_t otaRestartAt = 0;
 static volatile bool otaEndRequested = false;   // finished in loop(): the check reads the whole image
+static volatile bool webOtaActive = false;      // an upload on the sensor's own page uses Update too
 
 static bool otaBusy() { return otaActive || otaEndRequested || otaRestartAt; }
 
@@ -713,6 +714,7 @@ static String linkImmediate(const String &cmd) {
   }
   if (!linkAuthed) return "denied: auth first";
   if (cmd.startsWith("ota begin ") || cmd.startsWith("ota begin2 ")) {
+    if (webOtaActive) return "error ota begin: an upload on the sensor's own page is running";
     bool v2 = cmd.startsWith("ota begin2 ");
     String rest = cmd.substring(v2 ? 11 : 10);
     int sp = rest.indexOf(' ');
@@ -1613,7 +1615,8 @@ static bool wrongImage = false;
 static void handleUpdateDone() {
   bool ok = !Update.hasError() && !wrongImage;
   server.send(200, "text/plain", ok ? "Update OK. The sender restarts; reload the page in ~10 s."
-              : wrongImage ? "Wrong file: this is the FLASH-AT-0x0 file for the USB flasher. Upload WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin here. Nothing was changed."
+              : wrongImage ? (otaActive ? "Refused: an update from the Venus OS page is running. Nothing was changed."
+                                        : "Wrong file: this is the FLASH-AT-0x0 file for the USB flasher. Upload WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin here. Nothing was changed.")
                            : String("Update failed: ") + Update.errorString());
   if (ok) { delay(500); ESP.restart(); }
 }
@@ -1623,19 +1626,24 @@ static void handleUpdateUpload() {
   if (u.status == UPLOAD_FILE_START) {
     Serial.printf("Firmware update: %s\n", u.filename.c_str());
     wrongImage = false;
+    if (otaActive) { wrongImage = true; Serial.println("Refused: an update from the Pi is running."); return; }
+    webOtaActive = true;
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_WRITE) {
+    if (wrongImage) return;                // refused: never touch Update (a Pi update may be using it)
     if (u.totalSize == 0 && u.currentSize >= 28 && u.buf[27] != 0x3C) {   // first chunk: check the image
       wrongImage = true;
       Update.abort();
       Serial.println("Firmware update refused: not an app image (bootloader / full flash file?)");
+      return;
     }
-    if (wrongImage) return;
     if (Update.write(u.buf, u.currentSize) != u.currentSize) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_END) {
     if (!wrongImage && !Update.end(true)) Update.printError(Serial);
+    if (!otaActive || !wrongImage) webOtaActive = false;
   } else if (u.status == UPLOAD_FILE_ABORTED) {
-    Update.abort();
+    if (!wrongImage) Update.abort();
+    webOtaActive = false;
   }
 }
 
