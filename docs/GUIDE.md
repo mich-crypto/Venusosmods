@@ -77,7 +77,7 @@ Follow [wiring.md](wiring.md). In short:
 3. Connect the pressure sensor (option C: 0–3.3 V like the QDY30A, A: 0.5–4.5 V,
    or B: 4–20 mA) to GPIO4
    through the resistors.
-4. Optional: DS18B20 to GPIO5 with the 4.7 kΩ pull-up to 3V3.
+4. Optional: one or two DS18B20 probes to GPIO5 (in parallel) with one 4.7 kΩ pull-up to 3V3.
 5. Don't put the sensor in the tank yet; it's easier to test on the table.
 
 **Check:** with the 12 V on, the ESP32's power LED is on and the buck
@@ -109,7 +109,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
      for the other options are in [wiring.md](wiring.md).
    * `SENSOR_RANGE_MM`: the sensor's full scale in mm of water. From the
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
-   * `USE_DS18B20`: `0` without the temperature probe (the default), `1` with it
+   * `USE_DS18B20`: `1` with temperature probes (the default; up to two), `0` without
    * `DEVICE_ID`: leave at `1` unless you build a second sender
    * `DEFAULT_TABLE`: leave as it is. You calibrate later over USB, without
      editing code.
@@ -152,7 +152,13 @@ signal=0.512 height=3.0mm litres=0.4 level=0.5% temp=19.6 activity=0.4
 * Dip the sensor into a bucket: `height` should rise by roughly the depth.
 * `FAULT` = signal outside the fault limits: check wiring and the
   `SIGNAL_*` settings.
-* `temp=nan` = no DS18B20 found (wiring, pull-up, or `USE_DS18B20 0`).
+* `temp=nan` = no DS18B20 found (wiring, pull-up, or `USE_DS18B20 0`). With two
+  probes the line shows `temp=` and `temp2=`; `temps` lists them with their names.
+
+**Temperatures in Venus OS:** on the Pi's settings page, Water tab →
+*Settings*, switch on *Publish temperature 1* / *2* and type their names. Each
+then shows up as its own temperature sensor in Venus OS and VRM. (The names on
+the sender's page are for that page; Venus OS uses the names set on the Pi.)
 
 Note the **MAC** for later (optional in config.ini).
 
@@ -166,8 +172,8 @@ even when the Pi is off or Venus OS doesn't work:
 2. Open **http://192.168.4.1**.
 
 The page shows a drawing of the tank filling up, the litres, level, water
-height and sensor signal (updated every 2 s; the temperature only with a
-DS18B20), and has buttons for everything the serial
+height and sensor signal, and each temperature probe with its name and a
+*Rename* button (updated every 2 s), and has buttons for everything the serial
 commands do: *Tank is empty: set zero*, measuring the tank in portions
 (*Start*, *Record*, *Save*), the active table, a console for any serial
 command, the Wi-Fi password and **firmware updates** (upload
@@ -190,7 +196,7 @@ Ready-made files are in `firmware/bin/`. On a computer with **Chrome or Edge**
 ESP32-S3, click *Connect*, choose the port, set *Flash Address* **0x0** and
 the file **esp32_hydro_tank.merged.bin**, then *Program*. Tap **RST**
 afterwards. If it won't connect: hold **BOOT**, tap **RST**, release BOOT and
-try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, no temperature probe,
+try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
 sender id 1).
 
 ---

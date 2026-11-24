@@ -4,9 +4,10 @@ Venus OS driver for the ESP32-S3 hydrostatic water tank sender
 (firmware/esp32_hydro_tank). All filtering and volume calculation happens on
 the ESP32; this side only decodes and publishes.
 
-Publishes com.victronenergy.tank.<service> and, if a DS18B20 is fitted and
-temperature_service = yes, com.victronenergy.temperature.<service>_temp
-(the tank's own /Temperature path is only shown by the GUI for Mopeka tanks).
+Publishes com.victronenergy.tank.<service> and, with DS18B20 probes fitted,
+com.victronenergy.temperature.<service>_temp (probe 1, temperature_service = yes)
+and <service>_temp2 (probe 2, temperature2_service = yes), each with its own
+name (the tank's own /Temperature path is only shown by the GUI for Mopeka tanks).
 """
 
 import logging
@@ -42,20 +43,26 @@ class Esp32HydroDriver(BleDriver):
             custom_name=config.get('custom_name', ''),
             timeout_s=timeout,
             extra_paths=('/Hydro/HeightMm', '/Hydro/Filling', '/Hydro/Draining',
-                         '/Hydro/Sloshing', '/Hydro/Fault'))
+                         '/Hydro/Sloshing', '/Hydro/Fault', '/Hydro/Temperature2'))
         self.devices.append(self.tank)
         self.raw = rawlog.RawLog('water')
 
-        self.temp = None
-        if config.getboolean('temperature_service', False):
-            self.temp = TemperatureDevice(
-                self.bus, uid + '_temp', product_name='ESP32 Tank Temperature',
-                connection=connection,
-                temperature_type=TEMPERATURE_TYPES[config.get('temperature_type', 'generic')],
-                default_instance=config.getint('temperature_instance', 20),
-                custom_name=config.get('temperature_name', 'Water temperature'),
-                timeout_s=timeout)
-            self.devices.append(self.temp)
+        self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
+        self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
+
+    def _temperature(self, config, uid, connection, timeout, n, instance, name):
+        """Probe 1 uses temperature_*, probe 2 temperature2_* in config.ini."""
+        if not config.getboolean('temperature%s_service' % n, False):
+            return None
+        dev = TemperatureDevice(
+            self.bus, uid + '_temp' + n, product_name='ESP32 Tank Temperature' + (' ' + n if n else ''),
+            connection=connection,
+            temperature_type=TEMPERATURE_TYPES[config.get('temperature%s_type' % n, 'generic')],
+            default_instance=config.getint('temperature%s_instance' % n, instance),
+            custom_name=config.get('temperature%s_name' % n, name),
+            timeout_s=timeout)
+        self.devices.append(dev)
+        return dev
 
     def handle_advertisement(self, mac, manufacturer_data, rssi):
         r = proto.parse(manufacturer_data.get(proto.COMPANY_ID))
@@ -87,6 +94,7 @@ class Esp32HydroDriver(BleDriver):
                 '/Hydro/Draining': int(r.draining),
                 '/Hydro/Sloshing': int(r.sloshing),
                 '/Hydro/Fault': int(r.fault),
+                '/Hydro/Temperature2': r.temperature2,
             })
 
         # Only refresh the temperature service with a valid reading, so a
@@ -94,6 +102,8 @@ class Esp32HydroDriver(BleDriver):
         # showing a stale value as current.
         if self.temp is not None and r.temperature is not None:
             self.temp.publish(r.temperature)
+        if self.temp2 is not None and r.temperature2 is not None:
+            self.temp2.publish(r.temperature2)
 
 
 if __name__ == '__main__':

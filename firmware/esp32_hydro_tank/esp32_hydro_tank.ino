@@ -10,6 +10,10 @@
  *         the Bluedroid and the NimBLE stack of the built-in BLE library)
  * Libs:   OneWire, DallasTemperature  (only if USE_DS18B20 = 1)
  *
+ * Temperatures: up to MAX_TEMPS DS18B20 probes share the one-wire pin. They
+ * are numbered by their address (so the order is stable) and each gets a
+ * name, set on the web page or with "name <1|2> <text>".
+ *
  * Filter chain, every SAMPLE_PERIOD_MS:
  *   burst of BURST_SAMPLES ADC reads -> median    (kills ADC noise and spikes)
  *   median -> exponential moving average          (kills waves)
@@ -42,7 +46,8 @@
 // ---- Pins (ESP32-S3: use GPIO1..GPIO10 = ADC1; ADC2 shares hardware with the radio)
 #define PIN_PRESSURE         4
 #define PIN_ONEWIRE          5
-#define USE_DS18B20          0      // 1 = DS18B20 water temperature probe fitted
+#define USE_DS18B20          1      // 1 = DS18B20 temperature probes fitted, 0 = none
+#define MAX_TEMPS            2      // probes on the one-wire bus (sent to the Pi: the first two)
 
 // ---- Input stage. Pick ONE:
 //  INPUT_CURRENT_LOOP 1: 4-20 mA transmitter, shunt resistor from pin to GND.
@@ -150,7 +155,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define AP_PASSWORD_DEFAULT  "watertank"    // 8..63 chars; change it on the page
 #define AP_CHANNEL           6
 
-#define FW_VERSION           "2.0"
+#define FW_VERSION           "2.1"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -179,8 +184,9 @@ enum : uint8_t {
   FLAG_DRAINING   = 0x04,
   FLAG_FAULT      = 0x08,
   FLAG_SLOSHING   = 0x10,
+  FLAG_TEMP2_VALID = 0x20,
 };
-static const size_t PAYLOAD_LEN = 16;
+static const size_t PAYLOAD_LEN = 18;   // 16 + second temperature (older Pi versions ignore it)
 
 // Active calibration (sketch defaults or loaded from flash)
 #define MAX_POINTS 40
@@ -210,7 +216,13 @@ static float lastRawHeight = NAN;   // unfiltered height of the last burst
 static float trend[TREND_SAMPLES];
 static uint8_t trendCount = 0, trendIdx = 0;
 static bool filling = false, draining = false;
-static float temperatureC = NAN;
+// Temperature probes, sorted by address. temperatureC = probe 1 (old name kept).
+static float tempC[MAX_TEMPS];
+static uint8_t tempAddr[MAX_TEMPS][8];
+static uint8_t tempFails[MAX_TEMPS];
+static String tempName[MAX_TEMPS];
+static uint8_t tempCount = 0;
+#define temperatureC (tempC[0])
 static uint8_t sequence = 0;
 static BLEAdvertising *advertising = nullptr;
 
@@ -298,23 +310,87 @@ static void updateTrend() {
   draining = !sloshing && rate < -DRAIN_RATE_MM_MIN;
 }
 
+static String addrHex(const uint8_t *a) {
+  char b[24];
+  snprintf(b, sizeof b, "%02X%02X%02X%02X%02X%02X%02X%02X", a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+  return String(b);
+}
+
+// NVS keys are at most 15 characters: "t" + the 7 bytes after the family code
+static String nameKey(const uint8_t *a) { return "t" + addrHex(a).substring(2); }
+
+static void loadTempNames() {
+  prefs.begin("temps", true);
+  for (uint8_t i = 0; i < MAX_TEMPS; i++)
+    tempName[i] = i < tempCount ? prefs.getString(nameKey(tempAddr[i]).c_str(), "") : String();
+  prefs.end();
+  for (uint8_t i = 0; i < MAX_TEMPS; i++)
+    if (tempName[i].length() == 0) tempName[i] = "Temperature " + String(i + 1);
+}
+
+static bool setTempName(uint8_t i, String name) {
+  name.trim();
+  if (i >= tempCount || name.length() == 0 || name.length() > 32) return false;
+  for (size_t k = 0; k < name.length(); k++)
+    if ((uint8_t)name[k] < 32 || name[k] == '"' || name[k] == '\\') return false;
+  prefs.begin("temps", false);
+  prefs.putString(nameKey(tempAddr[i]).c_str(), name);
+  prefs.end();
+  tempName[i] = name;
+  return true;
+}
+
+// Find the probes on the bus and number them by address (stable order)
+static void findProbes() {
+#if USE_DS18B20
+  ds18b20.begin();
+  uint8_t n = 0, a[8];
+  for (uint8_t i = 0; i < ds18b20.getDeviceCount() && n < MAX_TEMPS; i++)
+    if (ds18b20.getAddress(a, i)) memcpy(tempAddr[n++], a, 8);
+  for (uint8_t i = 1; i < n; i++)              // insertion sort by address
+    for (uint8_t j = i; j > 0 && memcmp(tempAddr[j - 1], tempAddr[j], 8) > 0; j--) {
+      uint8_t t[8]; memcpy(t, tempAddr[j], 8); memcpy(tempAddr[j], tempAddr[j - 1], 8); memcpy(tempAddr[j - 1], t, 8);
+    }
+  if (n != tempCount) Serial.printf("Temperature probes found: %u\n", n);
+  tempCount = n;
+  for (uint8_t i = 0; i < MAX_TEMPS; i++) { tempC[i] = NAN; tempFails[i] = 0; }
+  ds18b20.setResolution(11);            // 0.125 C, 375 ms conversion
+  ds18b20.setWaitForConversion(false);
+  loadTempNames();
+#endif
+}
+
 static void updateTemperature() {
 #if USE_DS18B20
   static bool pending = false;
-  static uint8_t fails = 0;
+  static uint32_t lastSearch = 0;
+  // A probe plugged in later, or one that went missing: look again every 30 s
+  bool missing = tempCount < MAX_TEMPS;
+  for (uint8_t i = 0; i < tempCount; i++) missing |= isnan(tempC[i]) && tempFails[i] >= TEMP_MAX_FAILS;
+  if (missing && millis() - lastSearch > 30000) {
+    lastSearch = millis();
+    float keep[MAX_TEMPS]; memcpy(keep, tempC, sizeof keep);
+    uint8_t before[MAX_TEMPS][8]; memcpy(before, tempAddr, sizeof before);
+    uint8_t had = tempCount;
+    findProbes();
+    if (tempCount == had && memcmp(before, tempAddr, sizeof before) == 0) memcpy(tempC, keep, sizeof keep);
+    pending = false;
+  }
   if (pending) {
-    // getTempC() checks the scratchpad CRC and returns DEVICE_DISCONNECTED_C
-    // for a missing probe or a corrupted read.
-    float t = ds18b20.getTempCByIndex(0);
-    bool bad = t == DEVICE_DISCONNECTED_C || t < -55.0f || t > 125.0f;
-    // 85.0 C is the power-on value of the scratchpad: a conversion that never
-    // ran (brown-out, bad contact). Only believe it if we were already close.
-    if (t == 85.0f && (isnan(temperatureC) || fabsf(temperatureC - 85.0f) > 5.0f)) bad = true;
-    if (!bad) {
-      temperatureC = t;
-      fails = 0;
-    } else if (++fails >= TEMP_MAX_FAILS) {
-      temperatureC = NAN;   // stop sending a stale value as if it were current
+    for (uint8_t i = 0; i < tempCount; i++) {
+      // getTempC() checks the scratchpad CRC and returns DEVICE_DISCONNECTED_C
+      // for a missing probe or a corrupted read.
+      float t = ds18b20.getTempC(tempAddr[i]);
+      bool bad = t == DEVICE_DISCONNECTED_C || t < -55.0f || t > 125.0f;
+      // 85.0 C is the power-on value of the scratchpad: a conversion that never
+      // ran (brown-out, bad contact). Only believe it if we were already close.
+      if (t == 85.0f && (isnan(tempC[i]) || fabsf(tempC[i] - 85.0f) > 5.0f)) bad = true;
+      if (!bad) {
+        tempC[i] = t;
+        tempFails[i] = 0;
+      } else if (++tempFails[i] >= TEMP_MAX_FAILS) {
+        tempC[i] = NAN;   // stop sending a stale value as if it were current
+      }
     }
   }
   ds18b20.requestTemperatures();   // non-blocking, read on next call
@@ -338,6 +414,8 @@ static void buildPayload(uint8_t *p) {
   if (draining)  flags |= FLAG_DRAINING;
   if (fault || isnan(emaHeight)) flags |= FLAG_FAULT;
   if (sloshing)  flags |= FLAG_SLOSHING;
+  bool temp2Valid = MAX_TEMPS > 1 && !isnan(tempC[MAX_TEMPS > 1 ? 1 : 0]);
+  if (temp2Valid) flags |= FLAG_TEMP2_VALID;
 
   p[0] = 'V'; p[1] = 'H';
   p[2] = PROTO_VERSION;
@@ -349,11 +427,12 @@ static void buildPayload(uint8_t *p) {
   put16(p + 10, (uint16_t)lroundf(capacityL() * 10.0f));
   put16(p + 12, (uint16_t)lroundf(height));
   put16(p + 14, (uint16_t)(int16_t)(tempValid ? lroundf(temperatureC * 100.0f) : 0));
+  put16(p + 16, (uint16_t)(int16_t)(temp2Valid ? lroundf(tempC[MAX_TEMPS > 1 ? 1 : 0] * 100.0f) : 0));
 
   if (serialLog) {
-    Serial.printf("signal=%.3f height=%.1fmm litres=%.1f level=%.1f%% temp=%.1f "
+    Serial.printf("signal=%.3f height=%.1fmm litres=%.1f level=%.1f%% temp=%.1f temp2=%.1f "
                   "activity=%.1f%s%s%s%s\n",
-                  lastSignal, height, litres, level, temperatureC, activity,
+                  lastSignal, height, litres, level, temperatureC, temp2Valid ? tempC[1] : NAN, activity,
                   sloshing ? " SLOSH" : "", filling ? " FILLING" : "",
                   draining ? " DRAINING" : "", (flags & FLAG_FAULT) ? " FAULT" : "");
   }
@@ -364,7 +443,7 @@ static const uint8_t AD_FLAGS = 0x01, AD_SHORT_NAME = 0x08, AD_MANUFACTURER = 0x
 
 static void updateAdvertisement() {
   // Raw advertising data, 31 bytes max:
-  //   flags (3) + manufacturer data (4 + 16) + short name (2 + 3) = 28
+  //   flags (3) + manufacturer data (4 + 18) + short name (2 + 3) = 30
   uint8_t adv[31];
   size_t n = 0;
   adv[n++] = 2; adv[n++] = AD_FLAGS;
@@ -531,6 +610,8 @@ static void printHelp() {
     "  cal save            use and store the new table (last point = 100 %)\n"
     "  cal cancel          discard the table being measured\n"
     "  table               print the active table as code for the sketch\n"
+    "  temps               list the temperature probes\n"
+    "  name <n> <text>     name temperature probe n (1, 2)\n"
     "  reset               forget stored calibration, use the sketch defaults");
 }
 
@@ -615,6 +696,17 @@ static void handleCommand(String line) {
     } else {
       out->println("cal start | add <L> | point <mm> <L> | undo | show | save | cancel");
     }
+  } else if (cmd == "temps") {
+    if (tempCount == 0) out->println("No temperature probes found (wiring, 4.7k pull-up, USE_DS18B20).");
+    for (uint8_t i = 0; i < tempCount; i++)
+      out->printf("  %u  %-24s %6.2f C  address %s\n", i + 1, tempName[i].c_str(), tempC[i], addrHex(tempAddr[i]).c_str());
+  } else if (cmd == "name") {
+    int sp = rest.indexOf(' ');
+    int i = (sp < 0 ? rest : rest.substring(0, sp)).toInt();
+    if (sp < 0 || i < 1 || !setTempName(i - 1, rest.substring(sp + 1)))
+      out->printf("Usage: name <1..%u> <text up to 32 characters> (probe must be found)\n", (unsigned)tempCount);
+    else
+      out->printf("Probe %d is now '%s'.\n", i, tempName[i - 1].c_str());
   } else if (cmd == "table") {
     printAsCode();
   } else if (cmd == "reset") {
@@ -682,11 +774,16 @@ details summary{cursor:pointer;font-weight:600}
  <div id="tank" style="margin:12px 0"></div>
  <div class="grid">
   <div><span class="mut">Water height</span><b><span id="h">–</span> mm</b></div>
-  <div id="tbox"><span class="mut">Water temperature</span><b><span id="t">–</span></b></div>
   <div><span class="mut">Sensor signal</span><b id="sig">–</b></div>
   <div><span class="mut">Zero offset</span><b><span id="z">–</span> mm</b></div>
  </div>
  <div id="chips"></div>
+</div>
+
+<div class="card" id="tcard" style="display:none">
+ <h2>Temperatures</h2>
+ <div id="temps"></div>
+ <div class="mut" id="tnote"></div>
 </div>
 
 <div class="card">
@@ -766,8 +863,8 @@ async function refresh(){
   $('lit').textContent=f1(s.litres);$('cap').textContent=f1(s.capacity);$('lvl').textContent=f1(s.level);
   $('tank').innerHTML=tankSvg(s.height_mm,s.litres,s.capacity,'tc');
   $('h').textContent=f1(s.height_mm);$('z').textContent=f1(s.zero_mm);
-  $('tbox').style.display=s.temp_probe?'':'none';
-  $('t').textContent=s.temp_c==null?'–':s.temp_c.toFixed(1)+' °C';
+  $('tcard').style.display=s.temp_probe?'':'none';
+  renderTemps(s.temps||[]);
   $('sig').textContent=s.signal==null?'–':s.signal.toFixed(3)+' '+s.signal_unit;
   let c='';
   if(s.fault)c+='<span class="chip bad">Sensor fault – check wiring</span>';
@@ -789,6 +886,16 @@ async function cmd(c){
  catch(e){$('outp').textContent='Failed: '+e}
  document.querySelectorAll('button').forEach(b=>b.disabled=false);busy=false;refresh();
 }
+let tempsKey='';
+function renderTemps(t){
+ $('tnote').textContent=t.length?'Warm one probe in your hand to see which is which.':'No probe found. Check the wiring (data on GPIO5, 4.7 kΩ to 3V3). The sender looks again every 30 s.';
+ const key=t.map(x=>x.addr+x.name).join();
+ if(key!==tempsKey){tempsKey=key;
+  $('temps').innerHTML=t.map(x=>'<div class="row" style="align-items:center"><div style="flex:1;min-width:0"><span class="mut">'+x.n+' · '+esc(x.name)+'</span><b style="display:block;font-size:22px" id="tv'+x.n+'">–</b></div><button onclick="rename('+x.n+')">Rename</button></div>').join('');}
+ t.forEach(x=>{const e=$('tv'+x.n);if(e)e.textContent=x.c==null?'no reading':x.c.toFixed(1)+' °C'});
+}
+function esc(v){return String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c])}
+function rename(n){const v=prompt('Name for temperature '+n+' (up to 32 characters)');if(v&&v.trim())cmd('name '+n+' '+v.trim().replace(/["\\]/g,''))}
 function addPt(){const v=parseFloat($('add').value);if(!(v>0)){alert('Type the litres you poured in this step');return}cmd('cal add '+v);$('add').value=''}
 async function setPw(){const p=$('pw').value;if(p.length<8||p.length>63){alert('8 to 63 characters');return}
  const r=await fetch('/api/password',{method:'POST',body:new URLSearchParams({p})});alert(await r.text())}
@@ -837,7 +944,16 @@ static void handleStatus() {
   jsonNum(j, "litres", litres);
   jsonNum(j, "capacity", capacityL());
   jsonNum(j, "level", isnan(litres) ? NAN : litres / capacityL() * 100.0f);
-  jsonNum(j, "temp_c", temperatureC);
+  j += "\"temps\":[";
+  for (uint8_t i = 0; i < tempCount; i++) {
+    String nm = tempName[i];
+    nm.replace("\\", "\\\\"); nm.replace("\"", "\\\"");
+    if (i) j += ',';
+    j += "{\"n\":" + String(i + 1) + ",\"name\":\"" + nm + "\",\"addr\":\"" + addrHex(tempAddr[i]) + "\",\"c\":";
+    j += isnan(tempC[i]) ? String("null") : String(tempC[i], 2);
+    j += '}';
+  }
+  j += "],";
   j += String("\"temp_probe\":") + (USE_DS18B20 ? "true" : "false") + ",";
   j += String("\"fault\":") + (fault || isnan(emaHeight) ? "true" : "false") + ",";
   j += String("\"sloshing\":") + (sloshing ? "true" : "false") + ",";
@@ -937,11 +1053,8 @@ void setup() {
   analogReadResolution(12);
   pinMode(PIN_PRESSURE, INPUT);
 
-#if USE_DS18B20
-  ds18b20.begin();
-  ds18b20.setResolution(11);            // 0.125 C, 375 ms conversion
-  ds18b20.setWaitForConversion(false);
-#endif
+  for (uint8_t i = 0; i < MAX_TEMPS; i++) tempC[i] = NAN;
+  findProbes();
 
   // Prime the filter so the first advertisement is already meaningful
   for (int i = 0; i < 8; i++) { sampleLevel(); delay(20); }

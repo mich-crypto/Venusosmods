@@ -115,6 +115,20 @@ class HydroProtocolTests(unittest.TestCase):
                          (50.0, 37.5, 75.0, 210, -10.0))
         self.assertTrue(r.filling)
 
+    def test_second_temperature(self):
+        r = proto.parse(proto.build(1, 50, 37, 75, 200, temperature=4.5, temperature2=-7.25))
+        self.assertEqual((r.temperature, r.temperature2), (4.5, -7.25))
+        # 18-byte packet with probe 2 missing, and the old 16-byte packet
+        self.assertIsNone(proto.parse(proto.build(1, 50, 37, 75, 200, temperature=4.5, long=True)).temperature2)
+        self.assertIsNone(proto.parse(proto.build(1, 50, 37, 75, 200, temperature=4.5)).temperature2)
+
+    def test_firmware_byte_layout_two_probes(self):
+        fw = bytes([0x56, 0x48, 1, 1, 0x21, 7, 0x88, 0x13, 0x77, 0x01, 0xEE, 0x02, 0xD2, 0x00,
+                    0x18, 0xFC,     # probe 1: -10.00 C
+                    0xE2, 0x04])    # probe 2: 1250 -> 12.50 C
+        r = proto.parse(fw)
+        self.assertEqual((r.temperature, r.temperature2), (-10.0, 12.5))
+
     def test_rejects_garbage(self):
         self.assertIsNone(proto.parse(b'XX' + bytes(14)))
         self.assertIsNone(proto.parse(b'VH'))
@@ -353,6 +367,20 @@ class DriverTests(unittest.TestCase):
         # and it recovers on the next packet
         d.handle_advertisement('M', {0xFFFF: proto.build(2, 20, 15, 75, 90, sequence=3)}, -60)
         self.assertEqual((s['/Connected'], s['/Level']), (1, 20.0))
+
+    def test_hydro_two_named_temperatures(self):
+        d = Esp32HydroDriver('s', section('temperature_service = yes\ntemperature_name = Inside\n'
+                                          'temperature2_service = yes\ntemperature2_name = Outside\n'))
+        t1, t2 = d.temp.service, d.temp2.service
+        self.assertEqual(t2.name, 'com.victronenergy.temperature.esp32_hydro_temp2')
+        self.assertEqual((t1['/CustomName'], t2['/CustomName']), ('Inside', 'Outside'))
+        d.handle_advertisement('M', {0xFFFF: proto.build(1, 50, 37, 75, 200, temperature=21.0,
+                                                         temperature2=3.5, sequence=1)}, -60)
+        self.assertEqual((t1['/Temperature'], t2['/Temperature']), (21.0, 3.5))
+        self.assertEqual(d.tank.service['/Hydro/Temperature2'], 3.5)
+
+    def test_hydro_second_temperature_off_by_default(self):
+        self.assertIsNone(Esp32HydroDriver('s', section('temperature_service = yes\n')).temp2)
 
     def test_hydro_temperature_service(self):
         d = Esp32HydroDriver('s', section('temperature_service = yes\ntimeout = 60\n'))

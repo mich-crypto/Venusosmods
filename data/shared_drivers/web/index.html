@@ -679,7 +679,7 @@ async function gasHistoryCard() {
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
-  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['temperature_service'] },
+  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name'] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
 
@@ -748,10 +748,11 @@ function deviceHeader(kind, section) {
     actions.append(primary('Calibrate', () => flowGasCalibrate(), !canEdit()), plain('Change the sensor', open(flowGas)));
   } else if (kind === 'esp32') {
     card.append(h('h3', {}, 'Water tank ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
-      h('div', { class: 'hero', style: 'grid-template-columns:repeat(3,1fr);margin:8px 0 0' },
+      h('div', { class: 'hero', style: 'grid-template-columns:repeat(2,1fr);margin:8px 0 0' },
         metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L of ' + (v['/Capacity'] == null ? '–' : (v['/Capacity'] * 1000).toFixed(0)) + ' L'),
         metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sender\'s own table'),
-        v['/Temperature'] == null ? null : metric('Water temperature', v['/Temperature'].toFixed(1), '°C', '')));
+        v['/Temperature'] == null ? null : metric(section.values.temperature_name || 'Temperature 1', v['/Temperature'].toFixed(1), '°C', 'probe 1'),
+        v['/Hydro/Temperature2'] == null ? null : metric(section.values.temperature2_name || 'Temperature 2', v['/Hydro/Temperature2'].toFixed(1), '°C', 'probe 2')));
     const pic = h('div', { style: 'margin:12px 0 0' });
     pic.innerHTML = tankSvg(v['/Hydro/HeightMm'], v['/Remaining'] == null ? null : v['/Remaining'] * 1000, v['/Capacity'] == null ? null : v['/Capacity'] * 1000, 'pi-tank');
     card.append(pic);

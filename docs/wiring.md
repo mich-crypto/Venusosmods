@@ -11,7 +11,7 @@
 | Hydrostatic level transmitter | 0–3.3 V, 0.5–4.5 V or 4–20 mA output (see below) |
 | Resistors | 0–3.3 V version: 10 kΩ + 1 MΩ; 0.5–4.5 V version: 10 kΩ + 20 kΩ; 4–20 mA version: 120 Ω 0.1 %/1 % |
 | 1 kΩ resistor + 100 nF capacitor | input filter/protection (options A and B) |
-| DS18B20 waterproof probe + 4.7 kΩ | optional water temperature |
+| DS18B20 waterproof probes (up to 2) + one 4.7 kΩ | optional temperatures, each with a name |
 | IP65 junction box, cable glands, ferrules | |
 | Wire | 0.75 mm² for 12 V, any thin wire for signals |
 
@@ -126,17 +126,28 @@ This type copes best with long cables and electrical noise in a vehicle.
 The 1 kΩ + 100 nF form an RC filter and limit current into the pin's
 protection diodes if something goes wrong.
 
-## DS18B20 temperature probe (optional)
+## DS18B20 temperature probes (up to two)
+
+Both probes share the same three wires: connect them **in parallel**
+(red to red, black to black, yellow to yellow). Only **one** 4.7 kΩ pull-up
+for both.
 
 ```
- probe red    (VDD)  ── ESP32 3V3
- probe black  (GND)  ── GND
- probe yellow (DATA) ──┬── GPIO5
-                       │
-                   [4.7 kΩ]
-                       │
-                      3V3
+                 probe 1          probe 2
+ ESP32 3V3 ──┬── red (VDD) ────── red (VDD)
+             │
+          [4.7 kΩ]
+             │
+ GPIO5 ──────┴── yellow (DATA) ── yellow (DATA)
+
+ GND ─────────── black (GND) ──── black (GND)
 ```
+* Each probe has its own built-in address, so the sender tells them apart.
+  It numbers them 1 and 2 by that address; the order stays the same after
+  a restart.
+* **Which is which:** open the sender's page (or type `temps` in the Serial
+  Monitor) and warm one probe in your hand. Then press **Rename** on the
+  page, or type `name 1 Inside`. The name stays with the probe.
 * Power it from **3V3**, not 5 V: the data line goes straight to the ESP32.
 * The 4.7 kΩ pull-up is required. For cables over ~5 m use 2.2 kΩ.
 * Set `USE_DS18B20 0` in the sketch if you don't fit one.
