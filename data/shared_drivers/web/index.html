@@ -12,6 +12,7 @@
 :root {
   color-scheme:dark;
   --bg:#000; --card:#050505; --ink:#fff; --muted:#a0a0a0; --faint:#6e6e6e; --line:#2b2b2b; --line-soft:#1a1a1a; --soft:#121212;
+  --water:#3b82d6; --tank-empty:#000; --tank-line:#ddd; --tank-text:#bbb;
   --accent:#fff; --accent-ink:#000; --ok:#30d158; --warn:#ffb020; --bad:#ff3b30;
   --ok-bg:rgba(48,209,88,.10); --warn-bg:rgba(255,176,32,.10); --bad-bg:rgba(255,59,48,.12); --code:#0c0c0c;
   --font:"D-DIN","DIN Alternate","Bahnschrift","Helvetica Neue",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -101,6 +102,9 @@ details.group > .body { padding:0 16px 8px; }
   border-top:1px solid var(--line); padding:10px 16px; z-index:6; }
 .savebar .in { max-width:1100px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .banner { border:1px solid var(--line); border-left:3px solid var(--muted); border-radius:3px; padding:12px 14px; margin:0 0 14px; background:var(--card); }
+.upd-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--warn); margin-left:6px; vertical-align:middle; }
+#updbanner { padding:0 16px; }
+#updbanner .upd-banner { display:flex; gap:10px; align-items:center; flex-wrap:wrap; max-width:1068px; margin:14px auto 0; }
 .banner.warn { border-left-color:var(--warn); } .banner.ok { border-left-color:var(--ok); } .banner.bad { border-left-color:var(--bad); }
 #toast { position:fixed; left:50%; bottom:80px; transform:translateX(-50%); z-index:20; max-width:90vw; background:var(--ink); color:#000;
   padding:10px 16px; border-radius:3px; opacity:0; pointer-events:none; transition:opacity .2s; font-size:.92rem; }
@@ -227,6 +231,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
   </div>
   <nav id="tabs" role="tablist"></nav>
 </header>
+<div id="updbanner"></div>
 <main id="main"></main>
 <div class="savebar" id="savebar" hidden><div class="in" id="saveinner"></div></div>
 <div id="toast"></div>
@@ -238,7 +243,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
 // ---------------------------------------------------------------- helpers
 const S = { tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
 const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
-              ['battery', 'Battery'], ['starlink', 'Starlink'], ['geofence', 'Geofence'], ['notify', 'Notifications'], ['debug', 'Debug']];
+              ['battery', 'Battery'], ['starlink', 'Starlink'], ['geofence', 'Geofence'], ['notify', 'Notifications'], ['debug', 'Debug'], ['update', 'Update']];
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -295,7 +300,8 @@ function ago(sec) {
 function renderTabs() {
   const nav = clear($('#tabs'));
   for (const [id, label] of TABS) {
-    nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label));
+    const dot = id === 'update' && S.upd && S.upd.available && S.upd.installed;
+    nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label, dot ? h('span', { class: 'upd-dot', title: 'update available' }) : null));
   }
 }
 
@@ -319,6 +325,7 @@ async function selectTab(id) {
   stopBattery();
   hideSaveBar();
   renderTabs();
+  renderUpdateBanner();
   await renderTab();
 }
 
@@ -334,7 +341,7 @@ async function renderTab() {
   hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
   const main = clear($('#main'));
   const f = { overview: tabOverview, fridge: () => tabDevice('fridge'), gas: () => tabDevice('mopeka'),
-              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, geofence: tabGeofence, notify: tabNotify, debug: tabDebug }[S.tab];
+              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, geofence: tabGeofence, notify: tabNotify, debug: tabDebug, update: tabUpdate }[S.tab];
   await f(main);
 }
 
@@ -678,7 +685,7 @@ async function gasHistoryCard() {
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
-  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['temperature_service'] },
+  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name'] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
 
@@ -700,6 +707,37 @@ function emptyDevice(spec) {
     h('button', { type: 'button', class: 'btn primary', disabled: !canEdit(), onclick: () => { const w = wizOpen(spec.title); spec.add(w); w.back = () => openSetup(); } }, 'Add the ' + spec.what));
 }
 
+// Front view of the wheel-arch tank (docs/tank/tank-drawing.jpg), mm, floor of the leg = 0.
+// Water is drawn to the height the sender measures; the shape clips it.
+function tankSvg(hmm, litres, cap, id) {
+  const W = 1150, H = 695, XC = 590, R = 385, LEG = XC - R, BOX = H - R;
+  const h = hmm == null ? null : Math.max(0, Math.min(H, hmm));
+  const shape = 'M0,' + H + ' L' + LEG + ',' + H + ' A' + R + ',' + R + ' 0 0 1 ' + XC + ',' + BOX +
+    ' L' + W + ',' + BOX + ' L' + W + ',0 L0,0 Z';
+  let s = '<svg viewBox="-110 -70 1290 800" role="img" aria-label="Tank, water ' + (h == null ? 'unknown' : Math.round(h) + ' mm') +
+    '" style="width:100%;height:auto;display:block;font:44px system-ui,sans-serif">' +
+    '<defs><clipPath id="' + id + '"><path d="' + shape + '"/></clipPath></defs>' +
+    '<path d="' + shape + '" style="fill:var(--tank-empty)"/>';
+  if (h != null) {
+    s += '<rect x="0" y="' + (H - h) + '" width="' + W + '" height="' + h + '" clip-path="url(#' + id + ')" style="fill:var(--water)"/>';
+  }
+  for (let t = 0; t <= 600; t += 100) {
+    s += '<line x1="-18" x2="0" y1="' + (H - t) + '" y2="' + (H - t) + '" style="stroke:var(--tank-line);stroke-width:3"/>' +
+      '<text x="-28" y="' + (H - t + 14) + '" text-anchor="end" style="fill:var(--tank-text)">' + t + '</text>';
+  }
+  s += '<path d="' + shape + '" style="fill:none;stroke:var(--tank-line);stroke-width:6;stroke-linejoin:round"/>' +
+    '<circle cx="60" cy="' + (H - 20) + '" r="16" style="fill:var(--tank-line)"><title>sensor</title></circle>' +
+    '<text x="' + (XC + 60) + '" y="' + (H - 40) + '" style="fill:var(--tank-text);font-size:40px">wheel arch</text>';
+  if (h != null) {
+    const y = H - h, ly = Math.max(40, Math.min(y - 16, H - 20));
+    s += '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" clip-path="url(#' + id + ')" style="stroke:var(--tank-line);stroke-width:3;stroke-dasharray:14 10"/>' +
+      '<text x="' + (W - 20) + '" y="' + ly + '" text-anchor="end" style="fill:var(--tank-text);font-weight:700">' +
+      Math.round(h) + ' mm' + (litres == null ? '' : ' · ' + litres.toFixed(1) + ' L' + (cap ? ' of ' + Math.round(cap) + ' L' : '')) + '</text>';
+  }
+  s += '<text x="-28" y="-30" text-anchor="end" style="fill:var(--tank-text);font-size:36px">mm</text></svg>';
+  return s;
+}
+
 function deviceHeader(kind, section) {
   const st = S.state, spec = DEV[kind];
   const dev = deviceOf(st, { mopeka: 'gas', esp32: 'water', fridge: 'fridge' }[kind]);
@@ -716,10 +754,14 @@ function deviceHeader(kind, section) {
     actions.append(primary('Calibrate', () => flowGasCalibrate(), !canEdit()), plain('Change the sensor', open(flowGas)));
   } else if (kind === 'esp32') {
     card.append(h('h3', {}, 'Water tank ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
-      h('div', { class: 'hero', style: 'grid-template-columns:repeat(3,1fr);margin:8px 0 0' },
+      h('div', { class: 'hero', style: 'grid-template-columns:repeat(2,1fr);margin:8px 0 0' },
         metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L of ' + (v['/Capacity'] == null ? '–' : (v['/Capacity'] * 1000).toFixed(0)) + ' L'),
         metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sender\'s own table'),
-        metric('Water temperature', v['/Temperature'] == null ? '–' : v['/Temperature'].toFixed(1), '°C', '')));
+        v['/Temperature'] == null ? null : metric(section.values.temperature_name || 'Temperature 1', v['/Temperature'].toFixed(1), '°C', 'probe 1'),
+        v['/Hydro/Temperature2'] == null ? null : metric(section.values.temperature2_name || 'Temperature 2', v['/Hydro/Temperature2'].toFixed(1), '°C', 'probe 2')));
+    const pic = h('div', { style: 'margin:12px 0 0' });
+    pic.innerHTML = tankSvg(v['/Hydro/HeightMm'], v['/Remaining'] == null ? null : v['/Remaining'] * 1000, v['/Capacity'] == null ? null : v['/Capacity'] * 1000, 'pi-tank');
+    card.append(pic);
     actions.append(primary('Calibrate', () => flowWaterCalibrate(), !canEdit()), plain('Change the sender', open(flowWater)));
   } else {
     const zones = (st.devices || []).filter(d => d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values).sort((a, b) => a.service < b.service ? -1 : 1);
@@ -2173,7 +2215,6 @@ async function slSettings(box) {
   if (!canEdit()) { clear(box).append(lockedNotice()); return; }
   const out = h('div', {});
   clear(box).append(out);
-  out.append(await updatePanel());
   const r = await api('/api/driver_config');
   if (!r.ok) { out.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read config.ini')); return; }
   S.forms = {};
@@ -2188,6 +2229,35 @@ async function slSettings(box) {
   out.append(h('div', { class: 'muted' }, 'Telegram messages are set up on the Notifications tab. Saving restarts this page (a few seconds): these settings are read when it starts. Settings that are not in config.ini use the defaults shown.'));
 }
 
+// ------------------------------------------------------------------ update
+// The page asks the Pi on load and every 30 min; the Pi asks GitHub at most every 6 h
+// (or when "Check now" is pressed). A new version shows a banner on every tab.
+async function checkUpdate(tries) {
+  const r = await api('/api/update_check');
+  if (!r.ok) return;
+  S.upd = r.data;
+  if (r.data.checking && (tries || 0) < 6) { setTimeout(() => checkUpdate((tries || 0) + 1), 3000); return; }
+  renderTabs();
+  renderUpdateBanner();
+}
+
+function renderUpdateBanner() {
+  const box = clear($('#updbanner')), d = S.upd;
+  if (!d || !d.available || !d.installed || S.tab === 'update' || S.updHidden === d.latest) return;
+  box.append(h('div', { class: 'banner warn upd-banner' },
+    h('div', { style: 'flex:1;min-width:0' }, h('b', {}, 'A new version of Venus OS mods is available'),
+      d.message ? h('div', { class: 'muted' }, (d.date ? d.date.slice(0, 10) + ' · ' : '') + d.message) : null),
+    h('div', { class: 'row', style: 'margin:0' },
+      h('button', { type: 'button', class: 'btn small primary', onclick: () => selectTab('update') }, 'Show update'),
+      h('button', { type: 'button', class: 'btn small', onclick: () => { S.updHidden = d.latest; renderUpdateBanner(); } }, 'Later'))));
+}
+
+async function tabUpdate(main) {
+  main.append(await updatePanel());
+  main.append(h('div', { class: 'muted' }, 'The page looks for a new version by itself (every few hours) and shows a banner on every tab when there is one. '
+    + 'Updating downloads the latest version from GitHub and restarts the services; your settings in config.ini are kept.'));
+}
+
 async function updatePanel() {
   const card = h('div', { class: 'card' }, h('h3', {}, 'Software update'));
   const body = h('div', {});
@@ -2197,17 +2267,19 @@ async function updatePanel() {
     clear(body);
     if (!r.ok) { body.append(h('div', { class: 'muted' }, r.data.error || 'Could not check')); return; }
     const d = r.data;
+    S.upd = d; renderTabs();
     body.append(h('div', { class: 'stats' }, stat('Installed', d.installed ? d.installed.slice(0, 7) : 'unknown', d.installed ? '' : 'updated by update.sh from now on', true),
       stat('Latest', d.latest ? d.latest.slice(0, 7) : (d.checking ? 'checking…' : '–'), d.date ? d.date.slice(0, 10) : '', true)));
     if (d.message) body.append(h('div', { class: 'muted' }, 'Latest change: ' + d.message));
     if (d.error) body.append(h('div', { class: 'muted' }, d.error));
     body.append(h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn small', onclick: () => draw(true) }, 'Check now'),
-      h('button', { class: 'btn small' + (d.available ? ' primary' : ''), disabled: d.running, onclick: () => confirmThen('Download the latest version and restart the services?', async () => {
+      h('button', { class: 'btn small' + (d.available ? ' primary' : ''), disabled: d.running || !canEdit(), onclick: () => confirmThen('Download the latest version and restart the services?', async () => {
         const x = await api('/api/update_run', {});
         toast(x.ok ? x.data.message : x.data.error, !x.ok);
         if (x.ok) watchUpdate(body);
       }) }, d.available ? 'Update now' : 'Reinstall latest'), d.available ? h('span', { class: 'chip warn' }, 'update available') : (d.installed && d.latest ? h('span', { class: 'chip ok' }, 'up to date') : null)));
-    if (d.checking) setTimeout(() => { if (S.tab === 'starlink' && S.slView === 'settings') draw(false); }, 2500);
+    if (!canEdit()) body.append(h('div', { class: 'muted', style: 'margin-top:6px' }, ['Unlock the page to update. ', h('a', { href: '/unlock' }, 'Unlock')]));
+    if (d.checking) setTimeout(() => { if (S.tab === 'update') draw(false); }, 2500);
   };
   await draw(false);
   return card;
@@ -2574,6 +2646,8 @@ async function boot() {
   renderTabs();
   const r = await refreshState();
   if (!r.ok) { $('#main').append(h('div', { class: 'banner bad' }, r.data.error || 'The Pi does not answer')); return; }
+  checkUpdate();                                   // in the background; shows a banner if there is a new version
+  setInterval(() => { if (!document.hidden) checkUpdate(); }, 30 * 60 * 1000);
   await renderTab();
   firstRunGuide();
   setInterval(async () => {

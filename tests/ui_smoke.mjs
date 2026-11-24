@@ -234,10 +234,16 @@ await page.locator('pre.rawbox', { hasText: 'packet loss' }).waitFor({ timeout: 
 check(true, 'network tool runs and shows its output');
 await shot(page, '07c4-starlink-debug');
 await page.getByRole('button', { name: 'Settings', exact: true }).click();
-await page.getByText('Software update').waitFor();
 await page.getByText('Telegram messages are set up on the Notifications tab').waitFor();
 check((await page.locator('.field', { hasText: 'Speed test every' }).locator('input').count()) === 1, 'settings offer the speed test interval');
 await shot(page, '07c5-starlink-settings');
+
+// software update has its own tab
+await tab(page, 'Update');
+await page.getByText('Software update').waitFor();
+await page.getByText('looks for a new version by itself').waitFor();
+check(true, 'software update lives on its own tab');
+await shot(page, '07c6-update');
 
 // raw data
 await tab(page, 'Debug');

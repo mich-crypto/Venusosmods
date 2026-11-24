@@ -63,10 +63,15 @@ custom_name = Fresh water
 # (com.victronenergy.temperature.esp32_hydro_temp). Victron documents the
 # tank /Temperature path only for Mopeka sensors, so the GUI may not show it
 # on this tank; a temperature service always shows up.
+# Up to two DS18B20 probes (numbered on the sender's page): each can be its
+# own temperature sensor with its own name. 1 = temperature_*, 2 = temperature2_*
 temperature_service = yes
-temperature_name = Water temperature
+temperature_name = Temperature 1
 # battery, fridge, generic, room, outdoor, waterheater, freezer
 temperature_type = generic
+temperature2_service = yes
+temperature2_name = Temperature 2
+temperature2_type = generic
 
 [fridge]
 # Compressor fridge with the "Alpicool" Bluetooth controller. Run

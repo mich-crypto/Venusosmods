@@ -77,7 +77,7 @@ Follow [wiring.md](wiring.md). In short:
 3. Connect the pressure sensor (option C: 0–3.3 V like the QDY30A, A: 0.5–4.5 V,
    or B: 4–20 mA) to GPIO4
    through the resistors.
-4. Optional: DS18B20 to GPIO5 with the 4.7 kΩ pull-up to 3V3.
+4. Optional: one or two DS18B20 probes to GPIO5 (in parallel) with one 4.7 kΩ pull-up to 3V3.
 5. Don't put the sensor in the tank yet; it's easier to test on the table.
 
 **Check:** with the 12 V on, the ESP32's power LED is on and the buck
@@ -95,7 +95,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
    https://espressif.github.io/arduino-esp32/package_esp32_index.json
    ```
 3. *Tools → Board → Boards Manager*: search **esp32**, install
-   **esp32 by Espressif Systems** (3.x; 2.0.17 works too).
+   **esp32 by Espressif Systems** version **3.3.x** (pick it in the version list; 2.0.17 works too, 4.0 does not yet).
 4. *Tools → Manage Libraries*: install **OneWire** (Paul Stoffregen) and
    **DallasTemperature** (Miles Burton). Only needed with the DS18B20.
 
@@ -109,7 +109,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
      for the other options are in [wiring.md](wiring.md).
    * `SENSOR_RANGE_MM`: the sensor's full scale in mm of water. From the
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
-   * `USE_DS18B20`: `1` with the probe, `0` without
+   * `USE_DS18B20`: `1` with temperature probes (the default; up to two), `0` without
    * `DEVICE_ID`: leave at `1` unless you build a second sender
    * `DEFAULT_TABLE`: leave as it is. You calibrate later over USB, without
      editing code.
@@ -121,7 +121,7 @@ converter still reads 5.0 V (about 4.7 V after the diode).
 | Board | **ESP32S3 Dev Module** |
 | USB CDC On Boot | **Enabled** (otherwise you see no serial output) |
 | Flash Size | match your board (4 MB / 8 MB / 16 MB; 4 MB always works) |
-| Partition Scheme | Default |
+| Partition Scheme | **Minimal SPIFFS (1.9MB APP with OTA)** (the default is too small for Wi-Fi + Bluetooth) |
 | Upload Speed | 921600 (use 115200 if uploads fail) |
 | Port | the new COM / `/dev/ttyACM*` / `/dev/cu.usbmodem*` port |
 
@@ -152,9 +152,52 @@ signal=0.512 height=3.0mm litres=0.4 level=0.5% temp=19.6 activity=0.4
 * Dip the sensor into a bucket: `height` should rise by roughly the depth.
 * `FAULT` = signal outside the fault limits: check wiring and the
   `SIGNAL_*` settings.
-* `temp=nan` = no DS18B20 found (wiring, pull-up, or `USE_DS18B20 0`).
+* `temp=nan` = no DS18B20 found (wiring, pull-up, or `USE_DS18B20 0`). With two
+  probes the line shows `temp=` and `temp2=`; `temps` lists them with their names.
+
+**Temperatures in Venus OS:** on the Pi's settings page, Water tab →
+*Settings*, switch on *Publish temperature 1* / *2* and type their names. Each
+then shows up as its own temperature sensor in Venus OS and VRM. (The names on
+the sender's page are for that page; Venus OS uses the names set on the Pi.)
 
 Note the **MAC** for later (optional in config.ini).
+
+### 3.6 The sender's own Wi-Fi page (works without Venus OS)
+
+The sender opens its own Wi-Fi network, so you can check and calibrate it
+even when the Pi is off or Venus OS doesn't work:
+
+1. On your phone, join the Wi-Fi **Watertank-1** (password **watertank**).
+   The phone may say "no internet": stay connected.
+2. Open **http://192.168.4.1**.
+
+The page shows a drawing of the tank filling up, the litres, level, water
+height and sensor signal, and each temperature probe with its name and a
+*Rename* button (updated every 2 s), and has buttons for everything the serial
+commands do: *Tank is empty: set zero*, measuring the tank in portions
+(*Start*, *Record*, *Save*), the active table, a console for any serial
+command, the Wi-Fi password and **firmware updates** (upload
+`esp32_hydro_tank.ino.bin`; the calibration is kept).
+
+**Change the Wi-Fi password** on the page the first time. Name and password
+defaults are in the sketch (`AP_SSID_PREFIX`, `AP_PASSWORD_DEFAULT`); set
+`USE_WIFI_AP 0` to switch the Wi-Fi off (saves about 0.5–1 W).
+
+**Two calibrations, which one counts?** The sender page calibrates the sender
+itself (what it broadcasts). The Pi's settings page can store its own table on
+top; once it has one, Venus OS uses the Pi's table and only takes the water
+height from the sender. If you set a new *zero* on the sender later, redo the
+Pi's calibration too, or choose *Use the sender's own table again* in its Calibrate popup.
+
+### 3.7 Flashing from the browser (no Arduino IDE)
+
+Ready-made files are in `firmware/bin/`. On a computer with **Chrome or Edge**
+(not an iPad/iPhone) open https://espressif.github.io/esptool-js/, plug in the
+ESP32-S3, click *Connect*, choose the port, set *Flash Address* **0x0** and
+the file **esp32_hydro_tank.merged.bin**, then *Program*. Tap **RST**
+afterwards. If it won't connect: hold **BOOT**, tap **RST**, release BOOT and
+try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
+sender id 1).
 
 ---
 
@@ -455,8 +498,7 @@ if you forget it. Open the address in Safari and add it to the home screen.
     and why, grey = the Pi could not reach the dish), the incident table and the
     history of your public IP address.
   * *Debug*: ping, traceroute, DNS lookup and an HTTP check run on the Pi.
-  * *Settings*: **software update** (compares with GitHub and runs
-    `update.sh`), the Starlink settings (speed test interval, ping targets,
+  * *Settings*: the Starlink settings (speed test interval, ping targets,
     billing day, data cap, electricity price). The Telegram messages are on
     the **Notifications** tab.
   **In Venus OS:** the dish also appears as a device called *Starlink
@@ -499,6 +541,11 @@ if you forget it. Open the address in Safari and add it to the home screen.
   service open-meteo.com), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
+* **Update** – the installed and the latest version, *Check now* and *Update
+  now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
+  services). The page checks for a new version by itself every few hours; when
+  there is one, a banner on every tab says so (*Show update* / *Later*) and the
+  Update tab gets a dot.
 * **Debug** – two views for troubleshooting. **Raw data**: what the sensors really send. *Gas* shows
   every Mopeka advertisement with its raw bytes (`data=`), the decoded
   distance, temperature, battery and echo quality, and the level that was
