@@ -184,7 +184,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // one breath in and out
 
-#define FW_VERSION           "2.7"
+#define FW_VERSION           "2.8"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -917,6 +917,7 @@ static void printHelp() {
     "  wifi ssid <name>    van Wi-Fi name    (wifi ssid - clears it)\n"
     "  wifi pass <text>    van Wi-Fi password\n"
     "  info                state as JSON (used by the Pi)\n"
+    "  live                raw reading as JSON (the Pi's live view)\n"
     "  zero                tank EMPTY: make the current height read 0 mm\n"
     "  zero <mm>           set the zero offset by hand\n"
     "  cal start           tank EMPTY: start a new table with 0 L at the current height\n"
@@ -949,6 +950,17 @@ static void handleCommand(String line) {
     out->print("ok");
   } else if (cmd == "info") {
     out->print(infoJson());
+  } else if (cmd == "live") {
+    // Unfiltered signal and height, plus what the filter makes of it
+    float h = isnan(emaHeight) ? NAN : max(0.0f, emaHeight);
+    String j = "{\"s\":" + (isnan(lastSignal) ? String("null") : String(lastSignal, 3));
+    j += String(",\"u\":\"") + (INPUT_CURRENT_LOOP ? "mA" : "V") + "\"";
+    j += ",\"raw\":" + (isnan(lastRawHeight) ? String("null") : String(lastRawHeight, 1));
+    j += ",\"h\":" + (isnan(h) ? String("null") : String(h, 1));
+    j += ",\"l\":" + (isnan(h) ? String("null") : String(heightToLitres(h), 1));
+    j += ",\"fault\":" + String(fault ? 1 : 0);
+    j += ",\"fast\":" + String(fastMode() ? (unsigned long)((fastUntil - millis()) / 1000) : 0UL) + "}";
+    out->print(j);
   } else if (cmd == "wifi") {
     int sp = rest.indexOf(' ');
     String sub = sp < 0 ? rest : rest.substring(0, sp);

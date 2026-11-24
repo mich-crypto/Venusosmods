@@ -360,6 +360,7 @@ class App(object):
             'GET /api/sender_fw': self.api_sender_fw,
             'POST /api/sender_update': self.api_sender_update,
             'GET /api/sender_update_log': self.api_sender_update_log,
+            'POST /api/sender_live': self.api_sender_live,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
@@ -1271,6 +1272,22 @@ class App(object):
         except OSError as e:
             return jsonr({'ok': False, 'error': 'could not start the update: %s' % e}, 500)
         return jsonr({'ok': True, 'message': 'Sender update started. Over Bluetooth it takes a few minutes.'})
+
+    def api_sender_live(self, req):
+        """Live view on/off: the water driver connects and reads the raw signal (15 min)."""
+        on = req.form.get('on', '1') == '1'
+        sec = self.sender_section()
+        if not sec:
+            return jsonr({'ok': False, 'error': 'no water sender set up'}, 400)
+        name = 'com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro')
+        try:
+            rc = self.bus.call_blocking(name, '/Hydro/Live', BUS_ITEM, 'SetValue', 'v',
+                                        [dbus.Int32(1 if on else 0, variant_level=1)], timeout=4)
+        except dbus.exceptions.DBusException as e:
+            return jsonr({'ok': False, 'error': 'the water driver did not answer (is it running?): %s' % e}, 502)
+        if rc not in (0, None):
+            return jsonr({'ok': False, 'error': 'no reading from the sender yet, so the Pi does not know where to connect'}, 409)
+        return jsonr({'ok': True, 'message': 'Live view on for 15 minutes.' if on else 'Live view off.'})
 
     def api_sender_update_log(self, req):
         try:

@@ -788,7 +788,7 @@ async function tabDevice(kind) {
   if (!canEdit()) main.append(lockedNotice());
   main.append(deviceHeader(kind, section));
   if (kind === 'fridge') main.append(fridgeControls());
-  if (kind === 'esp32') main.append(senderCard());
+  if (kind === 'esp32') main.append(liveCard(), senderCard());
   if (kind === 'mopeka') { const g = await gasHistoryCard(); if (g) main.append(g); const b = await mopekaBatteryCard(); if (b) main.append(b); }
 
   const form = { section, fields: {} };
@@ -2272,17 +2272,70 @@ function senderCard() {
         v['/Hydro/WifiMode'] == null ? '' : (v['/Hydro/AccessPoint'] ? 'own Wi-Fi on' : 'own Wi-Fi off') + (v['/Hydro/WifiIp'] ? ' · ' + v['/Hydro/WifiIp'] : ''), true),
       stat('Bluetooth link', link || 'not checked yet', when ? ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago' : '', true)),
     v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sender page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
-    link && link.indexOf('older than 2.7') >= 0 ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Update the sender once over USB or its own page (firmware 2.7 or newer); after that it updates from here.') : null,
+    !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
-      h('button', { type: 'button', class: 'btn small' + (newer ? ' primary' : ''), disabled: !canEdit() || !inst,
+      h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(),
         onclick: () => confirmThen('Update the sender firmware' + (latest ? ' to ' + latest : '') + '? Over Bluetooth this takes a few minutes; the water level pauses meanwhile. If it fails, the sender keeps its old firmware.', async () => {
           const x = await api('/api/sender_update', {});
           toast(x.ok ? x.data.message : x.data.error, !x.ok);
           if (x.ok) watchSenderUpdate(body);
-        }) }, newer ? 'Update sender firmware' : 'Reinstall sender firmware'),
+        }) }, newer || !inst ? 'Update sender firmware' : 'Reinstall sender firmware'),
       h('span', { class: 'muted' }, 'Wi-Fi settings and the sender password are in Settings below.')),
     body);
   return card;
+}
+
+// The Pi can only update a sender that already runs 2.7+ (its Bluetooth update service)
+function firstInstallHelp(link) {
+  const raw = 'https://github.com/mich-crypto/Venusosmods/raw/refs/heads/master/firmware/bin/';
+  const old = link && link.indexOf('older than 2.7') >= 0;
+  return h('div', { class: 'banner warn', style: 'margin-top:10px' },
+    h('b', {}, old ? 'The sender runs firmware older than 2.7.' : 'The Pi has not reached the sender over Bluetooth yet.'),
+    h('div', { class: 'muted', style: 'margin-top:4px' }, old
+      ? 'Older firmware can\'t be updated from here. Install 2.7 or newer once, then updates come from this page:'
+      : 'It checks every 5 minutes. If it never shows a version, the sender probably runs firmware older than 2.7: install the new one once, then updates come from this page:'),
+    h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
+      h('li', {}, 'On the sender\'s own page: join the Wi-Fi Watertank-1 (press BOOT on the ESP32 if it is off), open http://192.168.4.1, Firmware update, upload ',
+        h('a', { href: raw + 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin' }, 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'), '.'),
+      h('li', {}, 'Or over USB with the browser flasher (Chrome/Edge on a computer): Erase Flash, then ',
+        h('a', { href: raw + 'FLASH-AT-0x0_esp32_hydro_tank_full.bin' }, 'FLASH-AT-0x0_esp32_hydro_tank_full.bin'), ' at address 0x0.')));
+}
+
+// Live view: the Pi switches the sender's smoothing off and reads the raw signal twice a second
+function liveCard() {
+  const dev = deviceOf(S.state, 'water'), v = dev ? dev.values : {};
+  const on = !!v['/Hydro/Live'];
+  const vals = h('div', { class: 'stats' });
+  const note = h('div', { class: 'muted', style: 'margin-top:6px' });
+  const btn = h('button', { type: 'button', class: 'btn small' + (on ? '' : ' primary'), disabled: !canEdit() || !dev, onclick: async () => {
+    const x = await api('/api/sender_live', { on: on ? '0' : '1' });
+    toast(x.ok ? x.data.message : x.data.error, !x.ok);
+    if (x.ok) { await refreshState(); await renderTab(); }
+  } }, on ? 'Stop live reading' : 'Live reading (15 min)');
+  const draw = val => {
+    const age = val['/Hydro/LiveTime'] ? Date.now() / 1000 - val['/Hydro/LiveTime'] : null;
+    const fresh = age != null && age < 5;
+    const n = (x, d) => x == null ? '–' : Number(x).toFixed(d);
+    clear(vals).append(
+      stat('Sensor signal', fresh ? n(val['/Hydro/Signal'], 3) + ' ' + (val['/Hydro/SignalUnit'] || 'V') : '–', 'at GPIO4, unfiltered'),
+      stat('Height', fresh ? n(val['/Hydro/RawHeightMm'], 1) + ' mm' : '–', 'from this reading'),
+      stat('Litres', fresh ? n(val['/Hydro/LiveLitres'], 1) + ' L' : '–', fresh ? 'height ' + n(val['/Hydro/LiveHeightMm'], 1) + ' mm' : ''));
+    note.textContent = !val['/Hydro/Live'] ? 'Shows the real sensor voltage without smoothing, twice a second, for 15 minutes (over Bluetooth, sender firmware 2.8+). Handy with a potentiometer on GPIO4.'
+      : fresh ? 'Live: updated ' + age.toFixed(1) + ' s ago. Stops by itself after 15 minutes.' : 'Connecting to the sender over Bluetooth… (a few seconds)';
+  };
+  draw(v);
+  if (on) {
+    const tick = async () => {
+      if (S.tab !== 'water' || !document.body.contains(vals)) return;
+      await refreshState();
+      const d = deviceOf(S.state, 'water'), val = d ? d.values : {};
+      draw(val);
+      if (val['/Hydro/Live']) setTimeout(tick, 600); else renderTab();
+    };
+    setTimeout(tick, 600);
+  }
+  return h('div', { class: 'card' }, h('h3', {}, 'Live reading ', on ? h('span', { class: 'chip warn' }, 'live') : null), vals, note,
+    h('div', { class: 'row', style: 'margin-top:8px' }, btn));
 }
 
 async function watchSenderUpdate(body) {
@@ -2315,7 +2368,7 @@ function renderUpdateBanner() {
 
 async function tabUpdate(main) {
   main.append(await updatePanel());
-  if (deviceOf(S.state, 'water')) main.append(senderCard());
+  if (deviceOf(S.state, 'water') || (S.state.services || []).some(x => x.name === 'esp32_hydro' && x.enabled)) main.append(senderCard());
   main.append(h('div', { class: 'muted' }, 'The page looks for a new version by itself (every few hours) and shows a banner on every tab when there is one. '
     + 'Updating downloads the latest version from GitHub and restarts the services; your settings in config.ini are kept.'));
 }

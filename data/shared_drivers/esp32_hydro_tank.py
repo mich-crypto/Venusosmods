@@ -17,6 +17,7 @@ import time
 import esp32_hydro_protocol as proto
 import rawlog
 from gi.repository import GLib
+from venus_service import monotonic_s
 from venus_service import (BleDriver, TankDevice, TemperatureDevice, interpolate, parse_table,
                            FLUID_FRESH_WATER, TEMPERATURE_TYPES)
 
@@ -49,7 +50,11 @@ class Esp32HydroDriver(BleDriver):
                          '/Hydro/Sloshing', '/Hydro/Fault', '/Hydro/Temperature2',
                          # Bluetooth link (firmware 2.7+)
                          '/Hydro/WifiMode', '/Hydro/AccessPoint', '/Hydro/WifiIp',
-                         '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac'))
+                         '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac',
+                         # live view: raw reading over the Bluetooth link
+                         '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
+                         '/Hydro/LiveHeightMm', '/Hydro/LiveLitres', '/Hydro/LiveTime'),
+            setup=lambda svc: svc.add_path('/Hydro/Live', 0, writeable=True, onchangecallback=self._on_live_set))
         self.devices.append(self.tank)
         self.raw = rawlog.RawLog('water')
 
@@ -66,6 +71,8 @@ class Esp32HydroDriver(BleDriver):
         self.gatt = None
         self._collector = None
         self._expected = 0
+        self._mode = None              # what the running exchange is: checkin | live | stop
+        self.live_until = 0            # monotonic end of the live view (0 = off)
 
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
         self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
@@ -95,19 +102,76 @@ class Esp32HydroDriver(BleDriver):
         GLib.timeout_add_seconds(self.link_interval, self._link_tick)
         return False
 
-    def _link_tick(self):
-        if not self.seen_mac or (self.gatt is not None and self.gatt.busy):
-            return True
+    def _client(self):
         if self.gatt is None or self.gatt.mac != self.seen_mac.upper():
             from ble_gatt import GattClient
             self.gatt = GattClient(self.bus, self.seen_mac, proto.LINK_CMD_UUID, proto.LINK_REPLY_UUID,
                                    self._on_link_notify, adapter=self.adapter, timeout_s=40,
                                    scanner=getattr(self, 'scanner', None), connect_attempts=2)
-        frames = proto.link_commands(self.sender_password, self.wifi_mode, self.wifi_ssid, self.wifi_password)
+        return self.gatt
+
+    def _send(self, mode, frames):
+        """One exchange; every frame but auth gets a notified reply."""
+        self._mode = mode
         self._collector = proto.ReplyCollector()
-        self._expected = len(frames) - 1          # auth is answered without a notification
-        self.gatt.exchange(frames, self._on_link_done)
+        self._expected = sum(1 for f in frames if not f.startswith(b'Cauth '))
+        self._client().exchange(frames, self._on_link_done)
+
+    def _link_tick(self):
+        if not self.seen_mac or (self.gatt is not None and self.gatt.busy):
+            return True
+        self._send('checkin', proto.link_commands(self.sender_password, self.wifi_mode,
+                                                  self.wifi_ssid, self.wifi_password))
         return True
+
+    # Live view (settings page, Water tab): stay connected, switch the sender's
+    # smoothing off and read the raw signal about twice a second, for 15 minutes.
+    LIVE_S = 15 * 60
+
+    def _on_live_set(self, path, value):
+        try:
+            on = bool(int(value))
+        except (TypeError, ValueError):
+            return False
+        if on:
+            if not self.seen_mac:
+                return False                   # nothing received yet: no address to connect to
+            first = not self.live_until
+            self.live_until = monotonic_s() + self.LIVE_S
+            if first:
+                GLib.timeout_add(500, self._live_poll)
+        else:
+            self.live_until = monotonic_s() - 1   # the next poll stops it
+        return True
+
+    def _live_poll(self):
+        if not self.live_until:
+            return False
+        if self.gatt is not None and self.gatt.busy:
+            return True                        # a check-in or the last poll is still running
+        if monotonic_s() > self.live_until:
+            self.live_until = 0
+            self.tank['/Hydro/Live'] = 0
+            client = self._client()
+            client.keep_connected = False      # disconnects after this exchange
+            self._send('stop', [proto.link_commands(self.sender_password)[0], b'Cfast off'])
+            return False
+        self._client().keep_connected = True
+        self._send('live', [proto.link_commands(self.sender_password)[0], b'Chb', b'Cfast', b'Clive'])
+        return True
+
+    def apply_live(self, text):
+        try:
+            d = json.loads(text)
+        except ValueError:
+            return
+        t = self.tank
+        t['/Hydro/Signal'] = d.get('s')
+        t['/Hydro/SignalUnit'] = d.get('u')
+        t['/Hydro/RawHeightMm'] = d.get('raw')
+        t['/Hydro/LiveHeightMm'] = d.get('h')
+        t['/Hydro/LiveLitres'] = d.get('l')
+        t['/Hydro/LiveTime'] = time.time()
 
     def _on_link_notify(self, data):
         if self._collector is None:
@@ -119,6 +183,17 @@ class Esp32HydroDriver(BleDriver):
     def _on_link_done(self, ok, error):
         replies = self._collector.replies if self._collector else []
         self._collector = None
+        mode, self._mode = self._mode, None
+        if mode in ('live', 'stop'):
+            if replies and replies[-1].startswith('{'):
+                self.apply_live(replies[-1])
+                self.tank['/Hydro/LinkStatus'] = 'ok'
+            elif not ok:
+                self.tank['/Hydro/LinkStatus'] = 'live view: %s' % (error or 'failed')
+            if any(r.startswith('denied') for r in replies):
+                self.tank['/Hydro/LinkStatus'] = 'wrong sender password'
+                self.live_until = monotonic_s() - 1
+            return
         if not ok and len(replies) < self._expected:
             text = str(error or 'failed')
             if 'not found' in text:
