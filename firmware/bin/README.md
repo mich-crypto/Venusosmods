@@ -6,7 +6,7 @@ USB CDC On Boot enabled, partition scheme *Minimal SPIFFS (1.9MB APP with OTA)*,
 
 | File | Use it for |
 |---|---|
-| `esp32_hydro_tank.merged.bin` | **First flash** in the browser: https://espressif.github.io/esptool-js/ (Chrome/Edge on a computer), address **0x0** |
-| `esp32_hydro_tank.ino.bin` | **Updates** on the sender's own page (http://192.168.4.1 → Firmware update); keeps the calibration |
+| `FLASH-AT-0x0_esp32_hydro_tank_full.bin` | **First flash** in the browser: https://espressif.github.io/esptool-js/ (Chrome/Edge on a computer), address **0x0** |
+| `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin` | **Updates** on the sender's own page (http://192.168.4.1 → Firmware update); keeps the calibration |
 
 Different sensor or settings? Change the CONFIGURATION block and build with the Arduino IDE (docs/GUIDE.md, part 3).

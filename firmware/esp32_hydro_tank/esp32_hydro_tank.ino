@@ -853,7 +853,7 @@ details summary{cursor:pointer;font-weight:600}
  <div class="row"><input id="pw" type="text" autocomplete="off" placeholder="new password"><button onclick="setPw()">Save</button></div></details></div>
 
 <div class="card"><details><summary>Firmware update</summary>
- <div class="mut">Choose the <b>esp32_hydro_tank.ino.bin</b> file (not the merged one). Your calibration is kept.</div>
+ <div class="mut">Choose the <b>WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin</b> file (not the FLASH-AT-0x0 one). Your calibration is kept.</div>
  <div class="row"><input id="fw" type="file" accept=".bin"><button onclick="upd()">Upload</button></div></details></div>
 
 <div class="mut" id="foot"></div>
@@ -1043,10 +1043,15 @@ static void handlePassword() {
   startAp();
 }
 
+// The full image for the browser flasher starts with the bootloader, which
+// must never land in an app slot: an app's first segment loads at 0x3C......
+static bool wrongImage = false;
+
 static void handleUpdateDone() {
-  bool ok = !Update.hasError();
+  bool ok = !Update.hasError() && !wrongImage;
   server.send(200, "text/plain", ok ? "Update OK. The sender restarts; reload the page in ~10 s."
-                                    : String("Update failed: ") + Update.errorString());
+              : wrongImage ? "Wrong file: this is the FLASH-AT-0x0 file for the USB flasher. Upload WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin here. Nothing was changed."
+                           : String("Update failed: ") + Update.errorString());
   if (ok) { delay(500); ESP.restart(); }
 }
 
@@ -1054,11 +1059,18 @@ static void handleUpdateUpload() {
   HTTPUpload &u = server.upload();
   if (u.status == UPLOAD_FILE_START) {
     Serial.printf("Firmware update: %s\n", u.filename.c_str());
+    wrongImage = false;
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_WRITE) {
+    if (u.totalSize == 0 && u.currentSize >= 28 && u.buf[27] != 0x3C) {   // first chunk: check the image
+      wrongImage = true;
+      Update.abort();
+      Serial.println("Firmware update refused: not an app image (bootloader / full flash file?)");
+    }
+    if (wrongImage) return;
     if (Update.write(u.buf, u.currentSize) != u.currentSize) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_END) {
-    if (!Update.end(true)) Update.printError(Serial);
+    if (!wrongImage && !Update.end(true)) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_ABORTED) {
     Update.abort();
   }

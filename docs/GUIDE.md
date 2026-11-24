@@ -177,7 +177,7 @@ height and sensor signal, and each temperature probe with its name and a
 commands do: *Tank is empty: set zero*, measuring the tank in portions
 (*Start*, *Record*, *Save*), the active table, a console for any serial
 command, the Wi-Fi password and **firmware updates** (upload
-`esp32_hydro_tank.ino.bin`; the calibration is kept).
+`WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin`; the calibration is kept).
 
 **Status light:** the board's RGB LED **breathes blue** once the Wi-Fi
 network and the page are up. It stays off while starting, and also if the
@@ -197,13 +197,31 @@ Pi's calibration too, or choose *Use the sender's own table again* in its Calibr
 
 ### 3.7 Flashing from the browser (no Arduino IDE)
 
-Ready-made files are in `firmware/bin/`. On a computer with **Chrome or Edge**
-(not an iPad/iPhone) open https://espressif.github.io/esptool-js/, plug in the
-ESP32-S3, click *Connect*, choose the port, set *Flash Address* **0x0** and
-the file **esp32_hydro_tank.merged.bin**, then *Program*. Tap **RST**
-afterwards. If it won't connect: hold **BOOT**, tap **RST**, release BOOT and
-try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
+Ready-made files are in `firmware/bin/`. There are **two**, and the names
+say where each one goes:
+
+| File | Where |
+|---|---|
+| `FLASH-AT-0x0_esp32_hydro_tank_full.bin` | USB, browser flasher, address **0x0** (bootloader + partition table + app) |
+| `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin` | the sender's own page → *Firmware update* (app only) |
+
+On a computer with **Chrome or Edge** (not an iPad/iPhone):
+
+1. Open https://espressif.github.io/esptool-js/, plug in the ESP32-S3, click
+   *Connect* and choose the port. Won't connect: hold **BOOT**, tap **RST**,
+   release BOOT, try again.
+2. Click **Erase Flash** and wait until it's done.
+3. Flash Address **0x0**, file **FLASH-AT-0x0_esp32_hydro_tank_full.bin**,
+   then *Program*.
+4. Tap **RST**. The LED starts breathing blue after a few seconds.
+
+These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
 sender id 1).
+
+**Boot loop with `SHA-256 comparison failed` and `rst:0x7 (TG0WDT_SYS_RST)`**
+in the serial monitor: the app-only file was flashed at 0x0, so there is no
+bootloader. Erase the flash and flash the `FLASH-AT-0x0_…` file (steps 2–4).
+The sender's page refuses the `FLASH-AT-0x0_…` file the other way round.
 
 ---
 
