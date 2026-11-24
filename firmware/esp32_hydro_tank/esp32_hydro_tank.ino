@@ -187,7 +187,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_PERIOD_MS      3000   // Bluetooth only: one short blue blink this often
 #define BLINK_ON_MS          60     // ... this long (saves energy: the LED is off 98 % of the time)
 
-#define FW_VERSION           "3.0"
+#define FW_VERSION           "3.1"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
