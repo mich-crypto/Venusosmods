@@ -452,8 +452,11 @@ class StarlinkApiTests(AppTestCase):
     def test_nothing_restarts_the_water_driver_during_a_sender_update(self):
         lock = os.path.join(self.tmp, 'ota.lock')
         self.app.OTA_LOCK = lock
+        import subprocess
+        upd = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)', 'esp32_ota'])
+        self.addCleanup(upd.kill)
         with open(lock, 'w') as f:
-            f.write('%d esp32_hydro\n' % os.getpid())                     # a running update (this process)
+            f.write('%d esp32_hydro\n' % upd.pid)                         # a running update
         self.assertTrue(body_of(self.get('/api/state'))['sender_update'])
         for path, form in (('/api/restart', {'target': 'esp32_hydro'}),
                            ('/api/service', {'name': 'esp32_hydro', 'action': 'disable'}),

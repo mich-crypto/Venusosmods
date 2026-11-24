@@ -163,9 +163,15 @@ class LockTests(unittest.TestCase):
         d = tempfile.mkdtemp()
         lock = os.path.join(d, 'lock')
         self.assertIsNone(proto.ota_running(lock))                        # no file
+        import subprocess
+        upd = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)', 'esp32_ota'])
+        self.addCleanup(upd.kill)
         with open(lock, 'w') as f:
-            f.write('%d esp32_hydro\n' % os.getpid())
-        self.assertEqual(proto.ota_running(lock), os.getpid())
+            f.write('%d esp32_hydro\n' % upd.pid)
+        self.assertEqual(proto.ota_running(lock), upd.pid)
+        with open(lock, 'w') as f:
+            f.write('%d esp32_hydro\n' % os.getpid())                  # alive, but another program
+        self.assertIsNone(proto.ota_running(lock))
         with open(lock, 'w') as f:
             f.write('999999\n')                                           # dead pid: stale
         self.assertIsNone(proto.ota_running(lock))
