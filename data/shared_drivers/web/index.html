@@ -2358,6 +2358,7 @@ function senderCard() {
           toast(x.ok ? x.data.message : x.data.error, !x.ok);
           if (x.ok) watchSenderUpdate(body);
         }) }, newer || !inst ? 'Update sender firmware' : 'Reinstall sender firmware'),
+      h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
       h('span', { class: 'muted' }, 'Wi-Fi settings and the sender password are in Settings below.')),
     body);
   return card;
@@ -2414,6 +2415,25 @@ function liveCard() {
   }
   return h('div', { class: 'card' }, h('h3', {}, 'Live reading ', on ? h('span', { class: 'chip warn' }, 'live') : null), vals, note,
     h('div', { class: 'row', style: 'margin-top:8px' }, btn));
+}
+
+// Ask GitHub now (otherwise every 6 h) and say what it found
+async function checkSenderFw(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  let r = await api('/api/sender_fw?refresh=1');
+  for (let i = 0; i < 15 && r.ok && r.data.checking; i++) {
+    await new Promise(res => setTimeout(res, 1000));
+    r = await api('/api/sender_fw');
+  }
+  if (r.ok) S.senderFw = r.data;
+  const inst = senderInstalled(), latest = r.ok && r.data.latest;
+  if (!r.ok || r.data.error) toast((r.data && r.data.error) || 'Could not check', true);
+  else if (!latest) toast('No answer from GitHub yet, try again in a moment.', true);
+  else if (!inst) toast('Newest sender firmware: ' + latest + ' (the installed version is not known yet).');
+  else if (cmpVersion(latest, inst) > 0) toast('New sender firmware ' + latest + ' is available (installed ' + inst + ').');
+  else toast('The sender is up to date (' + inst + ').');
+  renderTabs(); renderUpdateBanner();
+  await renderTab();
 }
 
 async function watchSenderUpdate(body) {

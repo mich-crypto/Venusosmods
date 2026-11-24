@@ -632,7 +632,8 @@ if you forget it. Open the address in Safari and add it to the home screen.
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches
   the sender's test mode on meanwhile. Needs sender firmware 2.8+.
 * **Water → Sender** – the sender's firmware (installed and latest), its
-  Wi-Fi state and when the Pi last reached it over Bluetooth, and **Update
+  Wi-Fi state and when the Pi last reached it over Bluetooth, **Check for
+  update** (asks GitHub right away instead of every 6 hours) and **Update
   sender firmware**: downloads the latest from GitHub and sends it over
   Bluetooth (a few minutes; the level pauses meanwhile) or over the van Wi-Fi
   (seconds). The sender checks the file and keeps its old firmware if anything
