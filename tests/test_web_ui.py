@@ -431,6 +431,24 @@ class StarlinkApiTests(AppTestCase):
         d = body_of(self.get('/api/sender_fw'))
         self.assertEqual((d['latest'], d['checking'], d['running']), ('2.7', False, False))
 
+    def test_sender_live_view_switch(self):
+        sent = []
+
+        class Bus(object):
+            answer = 0
+
+            def call_blocking(inner, name, path, iface, method, sig, args, timeout=None):
+                sent.append((name, path, int(args[0])))
+                return inner.answer
+        self.app._bus = Bus()
+        r = self.post('/api/sender_live', {'on': '1'})
+        self.assertEqual(r.status, 200, r.body)
+        self.assertEqual(sent[-1], ('com.victronenergy.tank.esp32_hydro', '/Hydro/Live', 1))
+        self.post('/api/sender_live', {'on': '0'})
+        self.assertEqual(sent[-1][2], 0)
+        self.app._bus.answer = 2                                              # driver refused: no address yet
+        self.assertEqual(self.post('/api/sender_live', {'on': '1'}).status, 409)
+
     def test_a_failed_check_says_why(self):
         body_of(self.get('/api/sender_fw', query='refresh=1'))
         self.started[-1][1](1, b'curl: sh: curl: not found\nwget: wget: bad address \'raw.githubusercontent.com\'\n')

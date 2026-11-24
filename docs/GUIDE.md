@@ -599,12 +599,17 @@ if you forget it. Open the address in Safari and add it to the home screen.
   service open-meteo.com), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
+* **Water → Live reading** – the real sensor voltage at GPIO4 and the height
+  from it, without smoothing, about twice a second for 15 minutes (*Stop live
+  reading* ends it earlier). The Pi stays connected over Bluetooth and switches
+  the sender's test mode on meanwhile. Needs sender firmware 2.8+.
 * **Water → Sender** – the sender's firmware (installed and latest), its
   Wi-Fi state and when the Pi last reached it over Bluetooth, and **Update
   sender firmware**: downloads the latest from GitHub and sends it over
   Bluetooth (a few minutes; the level pauses meanwhile) or over the van Wi-Fi
   (seconds). The sender checks the file and keeps its old firmware if anything
-  goes wrong. Needs sender firmware 2.7+ once (USB or its own page).
+  goes wrong. Needs sender firmware 2.7+ once (USB or its own page): until
+  then the card shows how, with the download links.
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
   services). The page checks for a new version by itself every few hours, also

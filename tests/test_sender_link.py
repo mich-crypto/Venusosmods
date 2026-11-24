@@ -82,6 +82,53 @@ class DriverLinkTests(unittest.TestCase):
         self.assertEqual(d.seen_mac, 'AA:BB:CC:DD:EE:01')                  # other sender id ignored
 
 
+class LiveViewTests(unittest.TestCase):
+    class FakeClient(object):
+        def __init__(self):
+            self.busy, self.keep_connected, self.sent = False, False, []
+
+        def exchange(self, frames, done):
+            self.sent.append((list(frames), self.keep_connected))
+            self.done = done
+
+        def finish(self):
+            self.done(True, None)
+
+    def driver(self):
+        d = Esp32HydroDriver('s', section(''))
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        d.gatt = self.FakeClient()
+        d._client = lambda: d.gatt
+        return d
+
+    def test_live_view_reads_the_raw_signal_and_stops_by_itself(self):
+        d = self.driver()
+        self.assertTrue(d._on_live_set('/Hydro/Live', 1))
+        self.assertTrue(d._live_poll())
+        frames, keep = d.gatt.sent[-1]
+        self.assertEqual(frames, [b'Cauth watertank', b'Chb', b'Cfast', b'Clive'])
+        self.assertTrue(keep)                                              # stays connected between polls
+        d._on_link_notify(b'ok\x04Test mode on\x04{"s":0.512,"u":"V","raw":310.4,"h":305.2,"l":15.1,"fault":0,"fast":899}\x04')
+        s = d.tank.service
+        self.assertEqual((s['/Hydro/Signal'], s['/Hydro/SignalUnit'], s['/Hydro/RawHeightMm'], s['/Hydro/LiveLitres']),
+                         (0.512, 'V', 310.4, 15.1))
+        self.assertIsNotNone(s['/Hydro/LiveTime'])
+        d.live_until = fakes_now() - 1                                     # 15 minutes later
+        self.assertFalse(d._live_poll())
+        frames, keep = d.gatt.sent[-1]
+        self.assertEqual((frames[-1], keep, s['/Hydro/Live'], d.live_until), (b'Cfast off', False, 0, 0))
+
+    def test_live_view_needs_a_sender(self):
+        d = Esp32HydroDriver('s', section(''))
+        self.assertFalse(d._on_live_set('/Hydro/Live', 1))                 # nothing received yet
+        self.assertFalse(self.driver()._on_live_set('/Hydro/Live', 'x'))
+
+
+def fakes_now():
+    import venus_service
+    return venus_service.monotonic_s()
+
+
 class UpdaterTests(unittest.TestCase):
     def image(self, b27=0x3C):
         data = bytearray(8192)
