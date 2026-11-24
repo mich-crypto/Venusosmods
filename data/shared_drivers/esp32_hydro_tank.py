@@ -120,6 +120,17 @@ class Esp32HydroDriver(BleDriver):
         self._expected = sum(1 for f in frames if not f.startswith(b'Cauth '))
         self._client().exchange(frames, self._on_link_done)
 
+    def _retry_soon(self):
+        if getattr(self, '_retry_pending', False):
+            return
+        self._retry_pending = True
+
+        def again():
+            self._retry_pending = False
+            self._link_tick()
+            return False
+        GLib.timeout_add_seconds(60, again)
+
     def _link_tick(self):
         if not self.seen_mac:
             # without a broadcast the Pi doesn't know where to connect: say so on the page
@@ -208,6 +219,9 @@ class Esp32HydroDriver(BleDriver):
             if 'not found' in text:
                 text = 'sensor firmware without Bluetooth link (older than 2.7)'
                 self._link_quiet_until = monotonic_s() + 3600
+            else:
+                # a dropped or refused connection is often a one-off: try again in a minute
+                self._retry_soon()
             log.info('link: %s', text)
             self.tank['/Hydro/LinkStatus'] = text
             return

@@ -267,6 +267,12 @@ Check from both ends:
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
 
+**"Connected" but "Two-way link: device disconnected"** on the Water tab: the
+readings arrive (the sensor broadcasts, the Pi listens), but the short
+connection for settings and updates fails. Sensor firmware 4.0 or newer fixes
+dropped links with the Raspberry Pi's built-in Bluetooth; until it works the
+sensor keeps its own Wi-Fi on as the fallback.
+
 Nothing in 3. but the phone sees VHT: the Pi is out of range, its Bluetooth is
 off (Venus OS: Settings → Bluetooth), or `device_id` in the Pi's settings
 doesn't match `DEVICE_ID` in the firmware. From firmware 3.2 the sender keeps

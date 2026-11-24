@@ -2395,9 +2395,9 @@ function senderCard() {
       stat('Firmware', inst || '–', latest ? 'latest ' + latest : '', true),
       stat('Wi-Fi', v['/Hydro/WifiMode'] ? (modes[v['/Hydro/WifiMode']] || v['/Hydro/WifiMode']) : '–',
         v['/Hydro/WifiMode'] == null ? '' : (v['/Hydro/AccessPoint'] ? 'own Wi-Fi on' : 'own Wi-Fi off') + (v['/Hydro/WifiIp'] ? ' · ' + v['/Hydro/WifiIp'] : ''), true),
-      stat('Bluetooth link', !dev ? 'no data' : link || 'not checked yet', when ? ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago' : '', true)),
+      stat('Two-way link', !dev ? 'no data' : link || 'not checked yet', (when ? 'ok ' + ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago · ' : '') + 'settings, updates', true)),
     v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sensor page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
-    noData ? noDataHelp(svc) : !inst ? firstInstallHelp(link) : null,
+    noData ? noDataHelp(svc) : link && link !== 'ok' && dev && val(dev, '/Connected') === 1 ? linkHelp(link, inst) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
       h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(),
         onclick: () => confirmThen('Update the sensor firmware' + (latest ? ' to ' + latest : '') + '? Over Bluetooth this takes a few minutes; the water level pauses meanwhile. If it fails, the sensor keeps its old firmware.', async () => {
@@ -2419,7 +2419,24 @@ async function setSenderWifi(sec, mode) {
   if (x.ok) { await loadDriver(); await renderTab(); }
 }
 
-// Nothing arrives from the sender at all: say what to check, before anything about firmware
+// Readings arrive (broadcast) but the two-way connection fails: explain the difference
+function linkHelp(link, inst) {
+  if (link.indexOf('older than 2.7') >= 0) return firstInstallHelp(link);
+  const raw = 'https://github.com/mich-crypto/Venusosmods/raw/refs/heads/master/firmware/bin/';
+  return h('div', { class: 'banner warn', style: 'margin-top:10px' },
+    h('b', {}, 'Readings arrive, but the two-way link fails: ' + link),
+    h('div', { class: 'muted', style: 'margin-top:4px' },
+      '"Connected" at the top means the level arrives: the sensor broadcasts it and the Pi listens. The two-way link is a short connection every 5 minutes '
+      + 'for the Wi-Fi setting, the firmware version and updates. While it fails, the sensor keeps its own Wi-Fi on (fallback). The Pi tries again in a minute.'),
+    h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
+      h('li', {}, 'Sensor firmware 4.0 or newer fixes dropped links with the Raspberry Pi\'s built-in Bluetooth: install ',
+        h('a', { href: raw + 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin' }, 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'),
+        ' on the sensor\'s own page (join Watertank-1, http://192.168.4.1, Firmware update).'),
+      h('li', {}, '"wrong sensor password": set Settings → Connection → Sensor password to the sensor\'s Wi-Fi password.'),
+      h('li', {}, 'Close phone apps that may be connected to the sensor (e.g. nRF Connect).')));
+}
+
+// Nothing arrives from the sensor at all: say what to check, before anything about firmware
 function noDataHelp(svc) {
   const running = svc && svc.state === 'up';
   return h('div', { class: 'banner bad', style: 'margin-top:10px' },
