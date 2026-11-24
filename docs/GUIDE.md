@@ -236,6 +236,26 @@ top; once it has one, Venus OS uses the Pi's table and only takes the water
 height from the sender. If you set a new *zero* on the sender later, redo the
 Pi's calibration too, or choose *Use the sender's own table again* in its Calibrate popup.
 
+### Does the sender's Bluetooth work?
+
+Check from both ends:
+
+1. **The sender:** its page (green light: join its Wi-Fi, or press BOOT) says
+   *Bluetooth: broadcasting the level every 2 s*, how many devices are
+   connected and when the Pi last checked in. In the Serial Monitor every
+   status line ends with `ble=on` (`ble=OFF` = not broadcasting).
+2. **Your phone:** the free app **nRF Connect** (iOS/Android) → *Scan*: a
+   device **VHT** with manufacturer data `0xFFFF` must appear, updating every
+   2 s. If it's there, the sender is fine and the problem is on the Pi side.
+3. **The Pi:** settings page → *Debug → Raw data → Water*: every received
+   packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
+   log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
+
+Nothing in 3. but the phone sees VHT: the Pi is out of range, its Bluetooth is
+off (Venus OS: Settings → Bluetooth), or `device_id` in the Pi's settings
+doesn't match `DEVICE_ID` in the firmware. From firmware 3.2 the sender keeps
+broadcasting while the Pi (or a phone) is connected to it.
+
 ### 3.7 Flashing from the browser (no Arduino IDE)
 
 Ready-made files are in `firmware/bin/`. There are **two**, and the names
