@@ -35,6 +35,24 @@ LINK_SERVICE_UUID = '5f6d0001-8d4b-4bd1-9a1c-7ad0a8e3c101'
 LINK_CMD_UUID = '5f6d0002-8d4b-4bd1-9a1c-7ad0a8e3c101'
 LINK_REPLY_UUID = '5f6d0003-8d4b-4bd1-9a1c-7ad0a8e3c101'
 EOT = b'\x04'
+
+# While esp32_ota.py sends firmware, this file holds its pid. The water driver
+# waits instead of starting, and the settings page refuses restarts, reboots
+# and software updates: a second Bluetooth connection would break the upload.
+OTA_LOCK = '/tmp/venusosmods-sender-ota.lock'
+
+
+def ota_running(path=None):
+    """pid of a running sender firmware update, else None (a stale lock is ignored)."""
+    import os
+    path = path or OTA_LOCK
+    try:
+        with open(path) as f:
+            pid = int(f.read().split()[0])
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError, IndexError):
+        return None
 WIFI_MODES = ('auto', 'van', 'ap')
 
 

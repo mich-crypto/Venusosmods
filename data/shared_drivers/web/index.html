@@ -103,8 +103,8 @@ details.group > .body { padding:0 16px 8px; }
 .savebar .in { max-width:1100px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .banner { border:1px solid var(--line); border-left:3px solid var(--muted); border-radius:3px; padding:12px 14px; margin:0 0 14px; background:var(--card); }
 .upd-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--warn); margin-left:6px; vertical-align:middle; }
-#updbanner { padding:0 16px; }
-#updbanner .upd-banner { display:flex; gap:10px; align-items:center; flex-wrap:wrap; max-width:1068px; margin:14px auto 0; }
+#updbanner, #busybanner { padding:0 16px; }
+#updbanner .upd-banner, #busybanner .upd-banner { display:flex; gap:10px; align-items:center; flex-wrap:wrap; max-width:1068px; margin:14px auto 0; }
 .banner.warn { border-left-color:var(--warn); } .banner.ok { border-left-color:var(--ok); } .banner.bad { border-left-color:var(--bad); }
 #toast { position:fixed; left:50%; bottom:80px; transform:translateX(-50%); z-index:20; max-width:90vw; background:var(--ink); color:#000;
   padding:10px 16px; border-radius:3px; opacity:0; pointer-events:none; transition:opacity .2s; font-size:.92rem; }
@@ -231,6 +231,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
   </div>
   <nav id="tabs" role="tablist"></nav>
 </header>
+<div id="busybanner"></div>
 <div id="updbanner"></div>
 <main id="main"></main>
 <div class="savebar" id="savebar" hidden><div class="in" id="saveinner"></div></div>
@@ -470,12 +471,13 @@ async function tabOverview(main) {
   const rows = (st.services || []).map(s => {
     const chip = s.state === 'up' ? h('span', { class: 'chip ok' }, 'running ' + ago(s.seconds))
       : s.enabled ? h('span', { class: 'chip bad' }, 'stopped') : h('span', { class: 'chip' }, 'off');
+    const held = senderBusy() && s.name === 'esp32_hydro';    // stopped on purpose during the sender update
     return h('tr', {},
-      h('td', {}, s.name), h('td', {}, chip),
+      h('td', {}, s.name), h('td', {}, held ? h('span', { class: 'chip warn' }, 'paused: sender update') : chip),
       h('td', {}, h('div', { class: 'row' },
         h('button', { class: 'btn small', onclick: () => showLog(s.name) }, 'Log'),
-        s.enabled ? h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => svcRestart(s.name) }, 'Restart') : null,
-        s.name !== 'web_ui' ? h('button', { class: 'btn small', disabled: !canEdit(), onclick: () => svcToggle(s) }, s.enabled ? 'Turn off' : 'Turn on') : null)));
+        s.enabled ? h('button', { class: 'btn small', disabled: !canEdit() || held, onclick: () => svcRestart(s.name) }, 'Restart') : null,
+        s.name !== 'web_ui' ? h('button', { class: 'btn small', disabled: !canEdit() || held, onclick: () => svcToggle(s) }, s.enabled ? 'Turn off' : 'Turn on') : null)));
   });
   main.append(h('div', { class: 'card' }, h('table', {}, h('tr', {}, h('th', {}, 'Driver'), h('th', {}, 'Status'), h('th', {}, '')), rows)));
   if (st.serialbattery) {
@@ -488,7 +490,7 @@ async function tabOverview(main) {
   main.append(h('h2', {}, 'System'));
   main.append(h('div', { class: 'card row' }, h('div', {}, h('b', {}, 'Restart Venus OS'), h('div', { class: 'muted' }, 'Reboots the Raspberry Pi. Needed after changing Bluetooth settings of dbus-serialbattery.')),
     h('span', { class: 'spacer' }),
-    h('button', { class: 'btn danger', disabled: !canEdit(), onclick: () => confirmThen('Reboot the Pi now? The page will be unavailable for about a minute.', () => post('/api/reboot', {})) }, 'Reboot')));
+    h('button', { class: 'btn danger', disabled: !canEdit() || senderBusy(), onclick: () => confirmThen('Reboot the Pi now? The page will be unavailable for about a minute.', () => post('/api/reboot', {})) }, 'Reboot')));
 }
 
 async function post(path, form, quiet) {
@@ -499,6 +501,16 @@ async function post(path, form, quiet) {
 }
 
 function confirmThen(text, fn) { if (window.confirm(text)) return fn(); }
+
+// While the sender's firmware is sent, nothing may restart the water driver or the Pi
+const senderBusy = () => !!(S.state && S.state.sender_update);
+function renderBusyBanner() {
+  const box = clear($('#busybanner'));
+  if (!senderBusy()) return;
+  box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
+    h('b', {}, 'Water sender firmware update running'),
+    h('div', { class: 'muted' }, 'Don\'t restart the water driver, reboot the Pi or update the software until it has finished (a few minutes). The page blocks it meanwhile.'))));
+}
 
 async function svcRestart(name) { await post('/api/restart', { target: name }); await refreshState(); }
 async function svcToggle(s) {
@@ -1345,7 +1357,7 @@ async function saveSb(restart) {
   await renderTab();
   if (r.data.reboot_needed) {
     $('#main').prepend(h('div', { class: 'banner warn row' }, 'Saved. Bluetooth/CAN settings only apply after a reboot of the Pi.',
-      h('span', { class: 'spacer' }), h('button', { class: 'btn danger small', onclick: () => confirmThen('Reboot the Pi now?', () => post('/api/reboot', {})) }, 'Reboot now')));
+      h('span', { class: 'spacer' }), h('button', { class: 'btn danger small', disabled: senderBusy(), onclick: () => confirmThen('Reboot the Pi now?', () => post('/api/reboot', {})) }, 'Reboot now')));
   }
 }
 
@@ -2582,7 +2594,7 @@ async function tabFiles(main) {
 async function refreshState() {
   const r = await api('/api/state');
   if (r.ok && S.auth && !r.data.authed) setAuth(null);          // the password was changed on the Pi
-  if (r.ok) { S.state = r.data; renderLock(); }
+  if (r.ok) { S.state = r.data; renderLock(); renderBusyBanner(); }
   return r;
 }
 

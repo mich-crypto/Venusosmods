@@ -37,6 +37,7 @@ from gi.repository import GLib  # noqa: E402
 
 import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
+import esp32_hydro_protocol as esp32_proto  # noqa: E402
 import devices  # noqa: E402
 import rawlog  # noqa: E402
 import netmon  # noqa: E402
@@ -344,6 +345,9 @@ class App(object):
                 return jsonr({'ok': False, 'error': 'locked', 'locked': True}, 401)
         elif self.password and not authed:
             return jsonr({'ok': False, 'error': 'locked', 'locked': True}, 401)
+
+        if self.blocked_by_sender_update(req):
+            return jsonr({'ok': False, 'error': self.BUSY_MSG, 'busy': True}, 409)
 
         name = (req.method + ' ' + req.path)
         handler = {
@@ -1247,8 +1251,38 @@ class App(object):
                       'checking': bool(info.get('checking')), 'running': self.sender_update_running()})
 
     def sender_update_running(self):
+        """True while sender firmware is being sent: from this page, or esp32_ota.py over SSH."""
         proc = getattr(self, 'sender_proc', None)
-        return proc is not None and proc.poll() is None
+        return (proc is not None and proc.poll() is None) or bool(esp32_proto.ota_running(self.OTA_LOCK))
+
+    OTA_LOCK = None                      # None = the default path (tests use their own)
+
+    def sender_services(self):
+        names = {'esp32_hydro'}
+        sec = self.sender_section()
+        if sec and sec.get('service'):
+            names.add(sec['service'])
+        return names
+
+    BUSY_MSG = ('The water sender\'s firmware is being updated. Wait until it has finished '
+                '(a few minutes): a restart now would break the upload.')
+
+    def blocked_by_sender_update(self, req):
+        """Requests that would restart the water driver, the Pi or all services."""
+        if req.method != 'POST' or not self.sender_update_running():
+            return False
+        f, p = req.form, req.path
+        if p in ('/api/reboot', '/api/update_run', '/api/sender_live'):
+            return True
+        if p == '/api/restart':
+            return f.get('target', '') in self.sender_services()
+        if p == '/api/service':
+            return f.get('name', '') in self.sender_services()
+        if p == '/api/driver_config':
+            return ct.kind_of(f.get('section', ''), {}) == 'esp32'
+        if p == '/api/device_add':
+            return f.get('kind', '') == 'water'
+        return False
 
     def sender_section(self):
         """The [esp32] section of config.ini (first one), as a dict."""
@@ -1265,6 +1299,8 @@ class App(object):
     def api_sender_update(self, req):
         if self.sender_update_running():
             return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
+        if self.update_running():
+            return jsonr({'ok': False, 'error': 'the Pi software is being updated: try again when it has finished'}, 409)
         sec = self.sender_section()
         if not sec:
             return jsonr({'ok': False, 'error': 'no water sender set up'}, 400)
@@ -1356,6 +1392,7 @@ class App(object):
             'version': VERSION, 'password_set': bool(self.password), 'authed': self.authed(req),
             'services': self.service_states(), 'devices': ours, 'batteries': batteries,
             'serialbattery': bool(sb), 'starlink': self.starlink.summary(),
+            'sender_update': self.sender_update_running(),
         })
 
     # ------------------------------------------------------ driver config
