@@ -186,8 +186,9 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BREATH_PERIOD_MS     3000   // Wi-Fi on: green breathing, one breath in and out
 #define BLINK_PERIOD_MS      3000   // Bluetooth only: one short blue blink this often
 #define BLINK_ON_MS          60     // ... this long (saves energy: the LED is off 98 % of the time)
+#define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.2"
+#define FW_VERSION           "3.3"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -644,6 +645,8 @@ static volatile uint32_t otaLastData = 0;
 static bool otaFailed = false;
 static uint32_t otaRestartAt = 0;
 static volatile bool otaEndRequested = false;   // finished in loop(): the check reads the whole image
+
+static bool otaBusy() { return otaActive || otaEndRequested || otaRestartAt; }
 
 static void linkSetReply(const String &text) {
   if (linkReply) linkReply->setValue(text);
@@ -1144,6 +1147,7 @@ static void pollSerial() {
 // -------------------------------------------------------------- status LED
 
 static bool webUp = false;   // set once the Wi-Fi network and the web server run
+static bool otaBusy();       // a firmware upload from the Pi is running (Bluetooth link part)
 
 static void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
 #if STATUS_LED_PIN >= 0
@@ -1159,18 +1163,20 @@ static void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
 // Bluetooth only. Squaring the cosine wave makes the fade look even to the eye.
 static void updateLed() {
   static uint32_t last = 0;
-  static int lastG = -1, lastB = -1;
+  static int lastR = -1, lastG = -1, lastB = -1;
   uint32_t now = millis();
   if (now - last < 20) return;              // 50 updates a second is smooth enough
   last = now;
-  int g = 0, b = 0;
-  if (webUp) {                              // Wi-Fi on: green breathing
+  int r = 0, g = 0, b = 0;
+  if (otaBusy()) {                          // firmware arriving: green and red alternate
+    if ((now / OTA_BLINK_MS) % 2) g = STATUS_LED_MAX; else r = STATUS_LED_MAX;
+  } else if (webUp) {                       // Wi-Fi on: green breathing
     float x = (1.0f - cosf(2.0f * PI * (now % BREATH_PERIOD_MS) / BREATH_PERIOD_MS)) / 2.0f;
     g = lroundf(x * x * STATUS_LED_MAX);
   } else if (now % BLINK_PERIOD_MS < BLINK_ON_MS) {
     b = STATUS_LED_MAX;                     // Bluetooth only: short blue blink
   }
-  if (g != lastG || b != lastB) { ledWrite(0, g, b); lastG = g; lastB = b; }
+  if (r != lastR || g != lastG || b != lastB) { ledWrite(r, g, b); lastR = r; lastG = g; lastB = b; }
 }
 
 // ------------------------------------------------------- own Wi-Fi + web page
