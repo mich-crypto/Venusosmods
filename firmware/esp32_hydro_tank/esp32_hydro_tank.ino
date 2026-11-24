@@ -189,7 +189,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.9"
+#define FW_VERSION           "4.0"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -613,7 +613,9 @@ static void updateAdvertisement() {
 static BLEServer *linkServer = nullptr;
 static BLECharacteristic *linkReply = nullptr;
 static volatile bool linkAuthed = false;
-static volatile bool advRestart = false;   // a device connected: broadcast on (from loop())
+static volatile bool advRestart = false;   // a device connected: broadcast on again (from loop(), a bit later)
+static volatile uint32_t linkConnectedAt = 0;  // millis() of the last connection
+#define ADV_AFTER_CONNECT_MS 3000            // let the connection settle (service discovery, MTU) first
 static uint32_t advRestarts = 0;           // how often the watchdog had to restart it
 static volatile bool linkConnected = false;
 static String apPassword;                  // own Wi-Fi password, also the Bluetooth key
@@ -723,6 +725,8 @@ static String linkImmediate(const String &cmd) {
     String md5 = sp < 0 ? String() : rest.substring(sp + 1);
     if (otaActive) Update.abort();
     otaGot = 0; otaFailed = false; otaV2 = v2; otaLastData = millis();
+    // a short connection interval (7.5-15 ms) makes the upload several times faster
+    if (linkServer) linkServer->requestConnParams(linkServer->getConnId(), 6, 12, 0, 400);
     otaActive = otaSize > 0 && Update.begin(otaSize);
     if (otaActive && md5.length() == 32) Update.setMD5(md5.c_str());
     if (!otaActive) return String("error ota begin: ") + Update.errorString();
@@ -743,9 +747,10 @@ static String linkImmediate(const String &cmd) {
 class LinkServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *s) override {
     linkConnected = true; linkAuthed = false;
-    advRestart = true;                       // keep broadcasting the level while connected
-    // ask for a short connection interval (7.5-15 ms): firmware uploads go several times faster
-    s->requestConnParams(s->getConnId(), 6, 12, 0, 400);
+    linkConnectedAt = millis();
+    advRestart = true;                       // keep broadcasting the level while connected (after a moment)
+    // No connection-parameter request here: right at the start of a connection it made the
+    // Raspberry Pi's built-in Bluetooth drop the link. It is asked for when an update starts.
   }
   void onDisconnect(BLEServer *s) override {
     linkConnected = false; linkAuthed = false;
@@ -1721,7 +1726,8 @@ void loop() {
   // A connection stops the broadcast in the Bluetooth stack; the Pi needs it for the
   // level, so start it again at once, and check every 5 s that it is still running.
   static uint32_t tAdvCheck = 0;
-  if (advRestart || now - tAdvCheck >= 5000) {
+  bool settling = linkConnected && now - linkConnectedAt < ADV_AFTER_CONNECT_MS;
+  if (!settling && (advRestart || now - tAdvCheck >= 5000)) {
     tAdvCheck = now;
     if (advRestart || !advertising->isAdvertising()) {
       if (!advRestart) { advRestarts++; Serial.println("Bluetooth broadcast had stopped: started again."); }

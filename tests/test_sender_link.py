@@ -103,6 +103,22 @@ class DriverLinkTests(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertIn('older than 2.7', d.tank.service['/Hydro/LinkStatus'])
 
+    def test_a_dropped_link_is_tried_again_in_a_minute(self):
+        import esp32_hydro_tank
+        later = []
+        orig = esp32_hydro_tank.GLib.timeout_add_seconds
+        esp32_hydro_tank.GLib.timeout_add_seconds = lambda s, f, *a: later.append((s, f)) or 1
+        try:
+            d = Esp32HydroDriver('s', section(''))
+            d._collector = proto.ReplyCollector()
+            d._expected = 3
+            d._on_link_done(False, 'device disconnected')
+            d._on_link_done(False, 'device disconnected')               # only one retry waiting
+        finally:
+            esp32_hydro_tank.GLib.timeout_add_seconds = orig
+        self.assertEqual([s for s, f in later], [60])
+        self.assertEqual(d.tank.service['/Hydro/LinkStatus'], 'device disconnected')
+
     def test_the_sender_address_is_learned_from_its_broadcast(self):
         d = Esp32HydroDriver('s', section(''))
         d.handle_advertisement('AA:BB:CC:DD:EE:01', {0xFFFF: proto.build(1, 50, 37, 75, 200, sequence=1)}, -60)
