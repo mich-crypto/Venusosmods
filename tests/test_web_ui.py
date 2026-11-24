@@ -420,6 +420,38 @@ class StarlinkApiTests(AppTestCase):
         self.assertTrue(d['available'])                                  # nothing installed yet = unknown version
         self.assertEqual(body_of(self.get('/api/update_log'))['running'], False)
 
+    def test_sender_firmware_check(self):
+        d = body_of(self.get('/api/sender_fw'))
+        self.assertTrue(d['checking'] and d['latest'] is None)
+        argv, cb = self.started[-1]
+        self.assertIn('raw.githubusercontent.com/mich-crypto/Venusosmods/master/firmware/bin/VERSION', argv[-1])
+        cb(0, b'2.7\n')
+        d = body_of(self.get('/api/sender_fw'))
+        self.assertEqual((d['latest'], d['checking'], d['running']), ('2.7', False, False))
+
+    def test_sender_update_runs_the_updater_with_the_sender_details(self):
+        calls = []
+
+        class Proc(object):
+            def poll(inner):
+                return None
+        orig = web_ui.subprocess.Popen
+        web_ui.subprocess.Popen = lambda args, **kw: calls.append(args) or Proc()
+        self.app.devices = lambda: ([{'service': 'com.victronenergy.tank.esp32_hydro', 'kind': 'tank',
+                                      'values': {'/Hydro/Mac': 'AA:BB:CC:DD:EE:01', '/Hydro/WifiIp': ''}}], [])
+        try:
+            self.app.SENDER_LOG = os.path.join(self.tmp, 'sender.log')
+            r = self.post('/api/sender_update', {})
+            self.assertEqual(r.status, 200, r.body)
+            args = calls[-1]
+            self.assertTrue(args[1].endswith('esp32_ota.py'))
+            self.assertEqual(args[args.index('--mac') + 1], 'AA:BB:CC:DD:EE:01')
+            self.assertEqual(args[args.index('--password') + 1], 'watertank')       # the default
+            self.assertNotIn('--ip', args)
+            self.assertEqual(self.post('/api/sender_update', {}).status, 409)       # one at a time
+        finally:
+            web_ui.subprocess.Popen = orig
+
     def test_saving_says_what_was_written_and_never_shows_secrets(self):
         r = body_of(self.post('/api/driver_config', {'section': 'starlink', 'f.cap_gb': '100'}))
         self.assertTrue(r['ok'] and r['restarted'])                                  # read once at start-up: a save restarts the page

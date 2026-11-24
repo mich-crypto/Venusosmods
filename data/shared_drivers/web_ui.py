@@ -373,6 +373,9 @@ class App(object):
             'GET /api/update_check': self.api_update_check,
             'POST /api/update_run': self.api_update_run,
             'GET /api/update_log': self.api_update_log,
+            'GET /api/sender_fw': self.api_sender_fw,
+            'POST /api/sender_update': self.api_sender_update,
+            'GET /api/sender_update_log': self.api_sender_update_log,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
@@ -1197,6 +1200,81 @@ class App(object):
                       'running': self.update_running()})
 
     UPDATE_LOG = '/tmp/venusosmods-update.log'
+    SENDER_LOG = '/tmp/venusosmods-sender-update.log'
+
+    # ------------------------------------------------ ESP32 water sender firmware
+
+    def api_sender_fw(self, req):
+        """Latest sender firmware on GitHub (firmware/bin/VERSION), checked at most every 6 h."""
+        info = getattr(self, 'sender_fw_info', None) or {}
+        stale = time.time() - info.get('checked', 0) > 6 * 3600
+        if (req.query.get('refresh') == '1' or stale) and not info.get('checking'):
+            self.sender_fw_info = info = dict(info, checking=True)
+
+            def got(rc, out):
+                text = out.decode('utf-8', 'replace').strip() if rc == 0 else ''
+                ok = bool(re.match(r'^\d+(\.\d+)+$', text))
+                self.sender_fw_info = {'checked': time.time(), 'checking': False,
+                                       'latest': text if ok else info.get('latest'),
+                                       'error': None if ok else 'could not reach GitHub'}
+            starlink_hub.run_async(['curl', '-fs', '-m', '10', 'https://raw.githubusercontent.com/%s/master/firmware/bin/VERSION'
+                                    % self.UPDATE_REPO], got, timeout=14)
+        info = getattr(self, 'sender_fw_info', None) or {}
+        return jsonr({'ok': True, 'latest': info.get('latest'), 'error': info.get('error'),
+                      'checking': bool(info.get('checking')), 'running': self.sender_update_running()})
+
+    def sender_update_running(self):
+        proc = getattr(self, 'sender_proc', None)
+        return proc is not None and proc.poll() is None
+
+    def sender_section(self):
+        """The [esp32] section of config.ini (first one), as a dict."""
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read(self.driver_config)
+        except configparser.Error:
+            return None
+        for name in parser.sections():
+            if ct.kind_of(name, parser[name]) == 'esp32':
+                return dict(parser[name], section=name)
+        return None
+
+    def api_sender_update(self, req):
+        if self.sender_update_running():
+            return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
+        sec = self.sender_section()
+        if not sec:
+            return jsonr({'ok': False, 'error': 'no water sender set up'}, 400)
+        service = sec.get('service') or 'esp32_hydro'
+        values = {}
+        for d in self.devices()[0]:
+            if d['service'] == 'com.victronenergy.tank.%s' % service:
+                values = d['values']
+        mac = values.get('/Hydro/Mac') or sec.get('mac') or ''
+        ip = values.get('/Hydro/WifiIp') or ''
+        args = [sys.executable, os.path.join(HERE, 'esp32_ota.py'), '--download', '--service', service,
+                '--password', sec.get('sender_password') or 'watertank', '--adapter', sec.get('adapter') or 'hci0']
+        if mac:
+            args += ['--mac', mac]
+        if ip:
+            args += ['--ip', ip]
+        try:
+            log_file = open(self.SENDER_LOG, 'w')
+            self.sender_proc = subprocess.Popen(args, stdout=log_file, stderr=subprocess.STDOUT,
+                                                stdin=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:
+            return jsonr({'ok': False, 'error': 'could not start the update: %s' % e}, 500)
+        return jsonr({'ok': True, 'message': 'Sender update started. Over Bluetooth it takes a few minutes.'})
+
+    def api_sender_update_log(self, req):
+        try:
+            with open(self.SENDER_LOG) as f:
+                text = f.read()[-6000:]
+        except OSError:
+            text = ''
+        proc = getattr(self, 'sender_proc', None)
+        return jsonr({'ok': True, 'text': text, 'running': self.sender_update_running(),
+                      'code': None if proc is None else proc.poll()})
 
     def update_running(self):
         proc = getattr(self, 'update_proc', None)

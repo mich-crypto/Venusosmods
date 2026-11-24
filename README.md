@@ -38,7 +38,8 @@ data/                              -> copied to /data on the Pi
     esp32_hydro_protocol.py        decoder: ESP32 advertisement (shared spec with the firmware)
     alpicool_protocol.py           decoder: fridge frames
     mopeka_venus.py                driver: Mopeka  -> tank
-    esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature)
+    esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature), Bluetooth check-in (Wi-Fi mode, firmware version)
+    esp32_ota.py                   sender firmware update from the Pi (Bluetooth, or HTTP on the van Wi-Fi)
     fridge_venus.py                driver: fridge  -> temperature per zone
     web_ui.py + web/index.html     settings page on port 8088: setup guide, calibration popups, drivers, dbus-serialbattery
     devices.py                     recognises Mopeka / fridge / ESP32 water senders in a Bluetooth scan

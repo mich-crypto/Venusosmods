@@ -77,7 +77,7 @@ Follow [wiring.md](wiring.md). In short:
 3. Connect the pressure sensor (option C: 0–3.3 V like the QDY30A, A: 0.5–4.5 V,
    or B: 4–20 mA) to GPIO4
    through the resistors.
-4. Optional: one or two DS18B20 probes to GPIO5 (in parallel) with one 4.7 kΩ pull-up to 3V3.
+4. Optional: DS18B20 probe 1 to GPIO5, probe 2 to GPIO6, each with a 4.7 kΩ pull-up to 3V3.
 5. Don't put the sensor in the tank yet; it's easier to test on the table.
 
 **Check:** with the 12 V on, the ESP32's power LED is on and the buck
@@ -164,12 +164,39 @@ Note the **MAC** for later (optional in config.ini).
 
 ### 3.6 The sender's own Wi-Fi page (works without Venus OS)
 
-The sender opens its own Wi-Fi network, so you can check and calibrate it
-even when the Pi is off or Venus OS doesn't work:
+The sender has its own Wi-Fi network with a web page, for when the Pi is off
+or Venus OS doesn't work. To save energy it is **not on all the time**
+(firmware 2.7+). It switches on by itself:
+
+* for the first **10 minutes after power-on**,
+* for **30 minutes after pressing the BOOT button** on the ESP32,
+* whenever the **Pi has not checked in over Bluetooth for 15 minutes**
+  (the fallback: Venus OS down, Pi off, Bluetooth broken),
+* always, if *Sender Wi-Fi* on the Venus OS page is set to *Own Wi-Fi always on*.
+
+It never switches off while a phone is connected to it. The **blue breathing
+light** shows when its page is reachable.
+
+**Sender Wi-Fi** (Venus OS page → Water → Settings):
+
+| Setting | What it does | Energy |
+|---|---|---|
+| Bluetooth only, own Wi-Fi as fallback (default) | Pi and sender talk over Bluetooth; own Wi-Fi only as above | lowest |
+| Join the van Wi-Fi | also joins your van Wi-Fi (*Van Wi-Fi name / password*); its page is then on the van network (link on the Water tab); firmware updates over Wi-Fi in seconds; own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
+| Own Wi-Fi always on | like before 2.7 | highest |
+
+The Pi needs the **Sender password** (the password of the sender's own Wi-Fi,
+default `watertank`) to change settings and update the firmware. If you change
+the Wi-Fi password on the sender's page, enter the same one there.
+
+To use the page:
 
 1. On your phone, join the Wi-Fi **Watertank-1** (password **watertank**).
-   The phone may say "no internet": stay connected.
-2. Open **http://192.168.4.1**.
+   The phone may say "no internet": stay connected (*Use without internet*).
+2. Most phones then open the page by themselves (like hotel Wi-Fi). If not,
+   open **http://192.168.4.1** or **http://watertank.local** – type the
+   `http://`, browsers otherwise try `https://`, which the sender doesn't
+   speak. Still nothing: switch mobile data off for a moment.
 
 The page shows a drawing of the tank filling up, the litres, level, water
 height and sensor signal, and each temperature probe with its name and a
@@ -177,7 +204,20 @@ height and sensor signal, and each temperature probe with its name and a
 commands do: *Tank is empty: set zero*, measuring the tank in portions
 (*Start*, *Record*, *Save*), the active table, a console for any serial
 command, the Wi-Fi password and **firmware updates** (upload
-`esp32_hydro_tank.ino.bin`; the calibration is kept).
+`WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin`; the calibration is kept).
+
+**Test mode:** *Test mode: fast reading* on the page (or `fast` in the Serial
+Monitor) turns the smoothing off for 15 minutes: the level follows the signal
+at once and the page updates 4 times a second. Handy on the bench with a
+potentiometer on GPIO4 (outer legs 3V3 and GND, middle leg GPIO4; never 5 V).
+It switches itself off after 15 minutes and at a restart.
+
+**Status light:** the board's RGB LED **breathes blue** while the sender's
+page is reachable (own Wi-Fi on, or connected to the van Wi-Fi). Off = Wi-Fi
+off to save energy (Bluetooth still works), still starting, or the Wi-Fi could
+not start (the Serial Monitor then says why). Press BOOT to switch it on. Some boards have the
+LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
+`STATUS_LED_MAX` sets how bright it gets.
 
 **Change the Wi-Fi password** on the page the first time. Name and password
 defaults are in the sketch (`AP_SSID_PREFIX`, `AP_PASSWORD_DEFAULT`); set
@@ -191,13 +231,31 @@ Pi's calibration too, or choose *Use the sender's own table again* in its Calibr
 
 ### 3.7 Flashing from the browser (no Arduino IDE)
 
-Ready-made files are in `firmware/bin/`. On a computer with **Chrome or Edge**
-(not an iPad/iPhone) open https://espressif.github.io/esptool-js/, plug in the
-ESP32-S3, click *Connect*, choose the port, set *Flash Address* **0x0** and
-the file **esp32_hydro_tank.merged.bin**, then *Program*. Tap **RST**
-afterwards. If it won't connect: hold **BOOT**, tap **RST**, release BOOT and
-try again. These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
+Ready-made files are in `firmware/bin/`. There are **two**, and the names
+say where each one goes:
+
+| File | Where |
+|---|---|
+| `FLASH-AT-0x0_esp32_hydro_tank_full.bin` | USB, browser flasher, address **0x0** (bootloader + partition table + app) |
+| `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin` | the sender's own page → *Firmware update* (app only) |
+
+On a computer with **Chrome or Edge** (not an iPad/iPhone):
+
+1. Open https://espressif.github.io/esptool-js/, plug in the ESP32-S3, click
+   *Connect* and choose the port. Won't connect: hold **BOOT**, tap **RST**,
+   release BOOT, try again.
+2. Click **Erase Flash** and wait until it's done.
+3. Flash Address **0x0**, file **FLASH-AT-0x0_esp32_hydro_tank_full.bin**,
+   then *Program*.
+4. Tap **RST**. The LED starts breathing blue after a few seconds.
+
+These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
 sender id 1).
+
+**Boot loop with `SHA-256 comparison failed` and `rst:0x7 (TG0WDT_SYS_RST)`**
+in the serial monitor: the app-only file was flashed at 0x0, so there is no
+bootloader. Erase the flash and flash the `FLASH-AT-0x0_…` file (steps 2–4).
+The sender's page refuses the `FLASH-AT-0x0_…` file the other way round.
 
 ---
 
@@ -541,11 +599,18 @@ if you forget it. Open the address in Safari and add it to the home screen.
   service open-meteo.com), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
+* **Water → Sender** – the sender's firmware (installed and latest), its
+  Wi-Fi state and when the Pi last reached it over Bluetooth, and **Update
+  sender firmware**: downloads the latest from GitHub and sends it over
+  Bluetooth (a few minutes; the level pauses meanwhile) or over the van Wi-Fi
+  (seconds). The sender checks the file and keeps its old firmware if anything
+  goes wrong. Needs sender firmware 2.7+ once (USB or its own page).
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
-  services). The page checks for a new version by itself every few hours; when
-  there is one, a banner on every tab says so (*Show update* / *Later*) and the
-  Update tab gets a dot.
+  services). The page checks for a new version by itself every few hours, also
+  for new water sender firmware; when there is one, a banner on every tab says
+  so (*Show update* / *Later*) and the Update tab gets a dot. The Update tab
+  also has the sender card.
 * **Debug** – two views for troubleshooting. **Raw data**: what the sensors really send. *Gas* shows
   every Mopeka advertisement with its raw bytes (`data=`), the decoded
   distance, temperature, battery and echo quality, and the level that was
