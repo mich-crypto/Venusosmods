@@ -174,8 +174,8 @@ or Venus OS doesn't work. To save energy it is **not on all the time**
   (the fallback: Venus OS down, Pi off, Bluetooth broken),
 * always, if *Sensor Wi-Fi* on the Venus OS page is set to *Own Wi-Fi always on*.
 
-It never switches off while a phone is connected to it. The **green breathing
-light** shows when its page is reachable.
+It never switches off while a phone is connected to it. The **green flash**
+(every 2 s, dim) shows when its page is reachable.
 
 **Sensor Wi-Fi** (Venus OS page → Water → Settings):
 
@@ -230,9 +230,10 @@ It switches itself off after 15 minutes and at a restart.
 
 | Light | Meaning |
 |---|---|
-| **green, breathing** | Wi-Fi on: the sender's page is reachable (own Wi-Fi, or the van Wi-Fi) |
-| **blue flash every 2 s** | a reading went out over Bluetooth (firmware 3.5+): on top of the green when Wi-Fi is on, alone on Bluetooth only. No blue flash = not broadcasting |
-| **green and red, alternating fast** | new firmware is arriving from the Venus OS page (firmware 3.3+); don't cut the power |
+| **dim flash every 2 s, blue and green taking turns** | Bluetooth sends and Wi-Fi is on (firmware 3.9+) |
+| **dim blue flash every 2 s** | Bluetooth only (saves energy); press BOOT to switch the own Wi-Fi on |
+| **dim green flash every 2 s** | Wi-Fi on, but the Bluetooth broadcast is not running |
+| **green and red, alternating fast (bright)** | new firmware is arriving from the Venus OS page; don't cut the power |
 | off | still starting, or no power |
 
 The Wi-Fi stays on (green) until the Pi has checked in over Bluetooth, which
@@ -289,7 +290,7 @@ On a computer with **Chrome or Edge** (not an iPad/iPhone):
 2. Click **Erase Flash** and wait until it's done.
 3. Flash Address **0x0**, file **FLASH-AT-0x0_esp32_hydro_tank_full.bin**,
    then *Program*.
-4. Tap **RST**. The LED starts breathing green after a few seconds.
+4. Tap **RST**. The LED starts flashing (dim, every 2 s) after a few seconds.
 
 These files use the defaults (QDY30A 0–3.3 V, 2 m, up to two DS18B20 probes,
 sender id 1).
