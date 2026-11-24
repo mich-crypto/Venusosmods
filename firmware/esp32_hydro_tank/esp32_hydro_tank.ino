@@ -154,6 +154,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define AP_SSID_PREFIX       "Watertank-"   // + DEVICE_ID -> "Watertank-1"
 #define AP_PASSWORD_DEFAULT  "watertank"    // 8..63 chars; change it on the page
 #define AP_CHANNEL           6
+#define MDNS_NAME            "watertank"    // also reachable as http://watertank.local
 
 // ---- Status LED: the board's RGB LED (WS2812) breathes blue while the
 //      Wi-Fi page is up. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
@@ -161,7 +162,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // one breath in and out
 
-#define FW_VERSION           "2.2"
+#define FW_VERSION           "2.3"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -172,6 +173,8 @@ static const TankPoint DEFAULT_TABLE[] = {
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <DNSServer.h>
+#include <ESPmDNS.h>
 #endif
 
 #if USE_DS18B20
@@ -779,6 +782,7 @@ static void updateLed() {
 #if USE_WIFI_AP
 
 static WebServer server(80);
+static DNSServer dns;        // answers every name with our address: phones then open the page by themselves
 static String apPassword;
 
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
@@ -1088,8 +1092,19 @@ static void webStart() {
   server.on("/api/cmd", HTTP_POST, handleCmd);
   server.on("/api/password", HTTP_POST, handlePassword);
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
-  server.onNotFound([]() { server.sendHeader("Location", "/"); server.send(302); });
+  // Phones test for internet with fixed addresses (captive.apple.com/hotspot-detect.html,
+  // connectivitycheck.gstatic.com/generate_204, ...). The DNS server sends them here and
+  // this redirect makes the phone show its "sign in to network" window with our page.
+  server.onNotFound([]() {
+    server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/");
+    server.send(302, "text/plain", "");
+  });
   server.begin();
+  dns.setErrorReplyCode(DNSReplyCode::NoError);
+  dns.start(53, "*", WiFi.softAPIP());
+  if (MDNS.begin(MDNS_NAME)) MDNS.addService("http", "tcp", 80);
+  Serial.printf("Web page: http://%s or http://%s.local (also opens by itself on most phones)\n",
+                WiFi.softAPIP().toString().c_str(), MDNS_NAME);
   if (!webUp) Serial.println("Web page not reachable: the Wi-Fi network did not start (LED stays off).");
 }
 
@@ -1128,6 +1143,7 @@ void loop() {
   if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
   pollSerial();
 #if USE_WIFI_AP
+  dns.processNextRequest();
   server.handleClient();
 #endif
   updateLed();

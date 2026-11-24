@@ -168,8 +168,11 @@ The sender opens its own Wi-Fi network, so you can check and calibrate it
 even when the Pi is off or Venus OS doesn't work:
 
 1. On your phone, join the Wi-Fi **Watertank-1** (password **watertank**).
-   The phone may say "no internet": stay connected.
-2. Open **http://192.168.4.1**.
+   The phone may say "no internet": stay connected (*Use without internet*).
+2. Most phones then open the page by themselves (like hotel Wi-Fi). If not,
+   open **http://192.168.4.1** or **http://watertank.local** – type the
+   `http://`, browsers otherwise try `https://`, which the sender doesn't
+   speak. Still nothing: switch mobile data off for a moment.
 
 The page shows a drawing of the tank filling up, the litres, level, water
 height and sensor signal, and each temperature probe with its name and a
