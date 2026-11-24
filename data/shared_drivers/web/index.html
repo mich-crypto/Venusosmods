@@ -940,7 +940,30 @@ async function tabDevice(kind) {
         field.append(seg, note);
         draw();
       }
-      // the Wi-Fi name and password are needed for "Wi-Fi network" and for updates from this page
+      // the Wi-Fi name and password are needed for "Wi-Fi network" and for updates from this page:
+      // take the Pi's own Wi-Fi with one click, or pick a nearby network
+      const ssidField = form.fields.wifi_ssid && form.fields.wifi_ssid.input;
+      if (ssidField && canEdit()) {
+        const pick = h('div', { class: 'row', style: 'margin:4px 0 8px' });
+        const fieldBox = ssidField.closest('.field');
+        fieldBox.insertBefore(pick, fieldBox.children[1] || null);     // under the field's label
+        api('/api/wifi_networks').then(r => {
+          if (!r.ok) return;
+          const { pi, networks } = r.data;
+          if (pi) pick.append(h('button', { type: 'button', class: 'btn small primary', onclick: async () => {
+            const x = await api('/api/sender_use_pi_wifi', {});
+            toast(x.ok ? x.data.message : x.data.error, !x.ok);
+            if (x.ok) { await loadDriver(); await renderTab(); }
+            else if (x.data.ssid) { ssidField.value = x.data.ssid; ssidField.dispatchEvent(new Event('input')); }
+          } }, 'Use the Pi\'s Wi-Fi (' + pi + ')'));
+          if (networks.length) {
+            const sel = h('select', { style: 'max-width:240px' }, h('option', { value: '' }, pi ? 'or pick a network…' : 'Pick a network…'),
+              networks.map(n => h('option', { value: n.name }, n.name + (n.strength ? '  ' + n.strength + ' %' : ''))));
+            sel.addEventListener('change', () => { if (sel.value) { ssidField.value = sel.value; ssidField.dispatchEvent(new Event('input')); } });
+            pick.append(sel);
+          }
+        });
+      }
       // shown always: the firmware update downloads over this Wi-Fi in every mode
     }
     main.append(card);

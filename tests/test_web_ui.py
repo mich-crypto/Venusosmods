@@ -510,6 +510,46 @@ class StarlinkApiTests(AppTestCase):
         self.app._bus = Bus()
         return sent
 
+    def connman(self, joined=True):
+        services = [
+            ('/net/connman/service/wifi_b827_43616d706572_managed_psk',
+             {'Type': 'wifi', 'Name': 'Camper', 'State': 'online' if joined else 'idle', 'Strength': 80, 'Security': ['psk']}),
+            ('/net/connman/service/wifi_b827_4e6569676862_managed_psk',
+             {'Type': 'wifi', 'Name': 'Neighbour', 'State': 'idle', 'Strength': 40, 'Security': ['psk']}),
+            ('/net/connman/service/ethernet_b827_cable', {'Type': 'ethernet', 'Name': 'Wired', 'State': 'online'}),
+        ]
+
+        class Mgr(object):
+            def GetServices(inner, dbus_interface=None, timeout=None):
+                return services
+
+        class Bus(object):
+            def get_object(inner, name, path, introspect=True):
+                return Mgr()
+        self.app._bus = Bus()
+        base = os.path.join(self.tmp, 'connman')
+        os.makedirs(os.path.join(base, 'wifi_b827_43616d706572_managed_psk'), exist_ok=True)
+        with open(os.path.join(base, 'wifi_b827_43616d706572_managed_psk', 'settings'), 'w') as f:
+            f.write('[wifi_b827_43616d706572_managed_psk]\nName=Camper\nPassphrase=van-pass 123\n')
+        self.app.CONNMAN_DIRS = (base,)
+
+    def test_wifi_networks_and_the_pis_own(self):
+        self.connman()
+        d = body_of(self.get('/api/wifi_networks'))
+        self.assertEqual((d['pi'], [n['name'] for n in d['networks']]), ('Camper', ['Camper', 'Neighbour']))
+        self.assertNotIn('van-pass', str(d))                                  # never sent to the browser
+
+    def test_use_the_pis_wifi_for_the_sensor(self):
+        self.connman()
+        r = self.post('/api/sender_use_pi_wifi', {})
+        self.assertEqual(r.status, 200, r.body)
+        self.assertNotIn('van-pass', r.body.decode())
+        text = self.config_text()
+        self.assertIn('wifi_ssid = Camper', text)
+        self.assertIn('wifi_password = van-pass 123', text)
+        self.connman(joined=False)                                           # Pi on cable
+        self.assertEqual(self.post('/api/sender_use_pi_wifi', {}).status, 409)
+
     def test_sensor_update_needs_the_van_wifi(self):
         self.sensor_ready(wifi=False)
         r = self.post('/api/sender_update', {})

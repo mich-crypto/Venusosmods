@@ -383,6 +383,8 @@ class App(object):
             'GET /api/sender_update_log': self.api_sender_update_log,
             'POST /api/sender_live': self.api_sender_live,
             'GET /api/sender_live': self.api_sender_live_values,
+            'GET /api/wifi_networks': self.api_wifi_networks,
+            'POST /api/sender_use_pi_wifi': self.api_sender_use_pi_wifi,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
@@ -1431,6 +1433,72 @@ class App(object):
         except dbus.exceptions.DBusException as e:
             return jsonr({'ok': False, 'error': 'the water driver did not answer: %s' % e}, 502)
         return jsonr({'ok': True, 'now': time.time(), 'values': dict((p, values.get(p)) for p in self.LIVE_PATHS)})
+
+    # ------------------------------------------------ Wi-Fi networks (Venus OS uses connman)
+    CONNMAN_DIRS = ('/var/lib/connman', '/data/var/lib/connman')
+
+    def wifi_services(self):
+        """[{name, id, state, strength, security}] of the Wi-Fi networks connman sees, or None."""
+        try:
+            mgr = self.bus.get_object('net.connman', '/', introspect=False)
+            services = mgr.GetServices(dbus_interface='net.connman.Manager', timeout=4)
+        except dbus.exceptions.DBusException:
+            return None
+        out, seen = [], set()
+        for path, props in services:
+            if str(props.get('Type', '')) != 'wifi':
+                continue
+            name = str(props.get('Name', '') or '')
+            if not name or name in seen:
+                continue                             # hidden networks, and the same network twice
+            seen.add(name)
+            out.append({'name': name, 'id': str(path).rsplit('/', 1)[-1], 'state': str(props.get('State', '')),
+                        'strength': int(props.get('Strength', 0) or 0),
+                        'security': [str(x) for x in props.get('Security', [])]})
+        return sorted(out, key=lambda n: -n['strength'])
+
+    def connman_passphrase(self, service_id):
+        """The stored password of a network the Pi has joined (connman keeps it as root)."""
+        if not re.match(r'^[A-Za-z0-9_]+$', service_id or ''):
+            return None
+        for base in self.CONNMAN_DIRS:
+            try:
+                with open(os.path.join(base, service_id, 'settings')) as f:
+                    for line in f:
+                        if line.startswith('Passphrase='):
+                            return line.split('=', 1)[1].rstrip('\n')
+            except OSError:
+                continue
+        return None
+
+    def api_wifi_networks(self, req):
+        nets = self.wifi_services()
+        if nets is None:
+            return jsonr({'ok': False, 'error': 'the Pi\'s Wi-Fi list is not available (connman not running?)'}, 502)
+        pi = next((n['name'] for n in nets if n['state'] in ('ready', 'online')), None)
+        return jsonr({'ok': True, 'pi': pi, 'networks': [dict((k, n[k]) for k in ('name', 'strength', 'state')) for n in nets]})
+
+    def api_sender_use_pi_wifi(self, req):
+        """Give the sensor the Wi-Fi the Pi is on: name and password go straight into config.ini."""
+        nets = self.wifi_services() or []
+        cur = next((n for n in nets if n['state'] in ('ready', 'online')), None)
+        if cur is None:
+            return jsonr({'ok': False, 'error': 'The Pi is not on Wi-Fi (cable?): choose the network and type its password.'}, 409)
+        open_net = not cur['security'] or cur['security'] == ['none']
+        pw = '' if open_net else self.connman_passphrase(cur['id'])
+        if pw is None:
+            return jsonr({'ok': False, 'error': 'The Pi\'s Wi-Fi password could not be read: type it in.', 'ssid': cur['name']}, 409)
+        sec = self.sender_section()
+        if not sec:
+            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
+        text = self.read_text(self.driver_config)
+        new = ct.set_values(text, sec['section'], {'wifi_ssid': cur['name'], 'wifi_password': pw or None})
+        problem = ct.check_syntax(new)
+        if problem:
+            return jsonr({'ok': False, 'error': 'file would be invalid: ' + problem}, 400)
+        ct.write_file(self.driver_config, new)
+        self.restart_service(sec.get('service') or 'esp32_hydro')     # the driver reads it at start
+        return jsonr({'ok': True, 'ssid': cur['name'], 'message': 'The sensor uses the Pi\'s Wi-Fi “%s” now.' % cur['name']})
 
     def api_sender_update_log(self, req):
         self.fw_progress()
