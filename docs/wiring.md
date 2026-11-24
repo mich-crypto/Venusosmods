@@ -23,7 +23,7 @@
                     ┌───────┴───────┐
                     │ Buck → 5.0 V  │   set to 5.0 V with a multimeter
                     └──┬─────────┬──┘   BEFORE connecting the ESP32
-                    5V │     GND │
+                    5V ├─────────│───── 5 V sensor supply (option C, before the diode)
                        ▼ 1N5819  │      (stripe towards the ESP32)
                        │         │
                ESP32 5V/VIN     GND ─── van ground / sensor ground
@@ -43,32 +43,38 @@ This is the firmware's default. The output can go straight to the ESP32,
 with no divider and no shunt resistor. The QDY30A datasheet is saved in
 [datasheets/](datasheets/QDY30A-water-level-transmitter.png).
 
-QDY30A 3-wire voltage version, colours per the datasheet:
+QDY30A 3-wire voltage version, **5 V supply, 0–3.3 V output**, colours per
+the datasheet:
 
 ```
- red    (V+)   ── fused 12 V   (see "Supply voltage" below)
- green  (V-)   ── GND  (common with the ESP32 GND)
- yellow (out)  ──[10k]──┬───────┬── GPIO4
-                        │       │
-                     [100nF]  [1M]
-                        │       │
-                       GND     GND
+ Buck 5.0 V out ──┬──|>|── ESP32 5V        (1N5819, stripe towards the ESP32)
+                  │
+ red    (V+)  ────┘                         sensor gets the full 5.0 V
+ green  (V-)  ────────────── GND            (common GND: buck, ESP32, sensor)
+ yellow (out) ──[10k]──┬───────┬── GPIO4
+                       │       │
+                    [100nF]  [1M]
+                       │       │
+                      GND     GND
 ```
 Firmware: `INPUT_CURRENT_LOOP 0`, `DIVIDER_RATIO 1.0f`,
 `SIGNAL_AT_ZERO 0.0f`, `SIGNAL_AT_FULL 3.3f`, `SENSOR_RANGE_MM 2000.0f`
 (for the 2 m version), `SIGNAL_FAULT_LOW -1.0f`, `SIGNAL_FAULT_HIGH 3.05f`.
+These are the sketch defaults and what the ready-made firmware in
+`firmware/bin/` uses; only change `SENSOR_RANGE_MM` if yours is not 2 m.
 
-* **Supply voltage:** the datasheet lists 10–32 V DC for the voltage-output
-  versions (0–5 V, 1–5 V) and 5 V only for the 0.5–4.5 V ratiometric version.
-  The 0–3.3 V version is not in its table, and another seller lists a 0–3.3 V
-  version for 5 V. **Ask the seller, or read the label on the cable, before
-  powering it.** Most likely it is 10–32 V: then use the van's fused 12 V.
-  If it says 5 V, use the ESP32's 5V pin instead.
-* **Test before connecting the ESP32:** power the sensor alone and measure
+* **Supply:** take the sensor's 5 V from the buck output **before** the diode,
+  not from the ESP32's 5V pin: after the diode it only gets ~4.7 V, which can
+  be below a 5 V sensor's minimum. Never use the ESP32's **3V3** pin for it,
+  and never 12 V for a 5 V sensor.
+* **On the bench with USB only** (buck not powered) the sensor has no supply
+  and reads 0. Either switch the 12 V on as well, or for a quick test put the
+  red wire on the ESP32's 5V pin temporarily.
+* **Test before connecting the ESP32:** power the sensor alone (5 V) and measure
   yellow to green with a multimeter: about 0 V in air, rising by about 0.165 V
   per 10 cm when you lower it into a bucket or a pipe filled with water.
-* **Why 10 kΩ:** with 12 V on the sensor, a fault could push the output above
-  3.3 V. The 10 kΩ limits the current into the pin's protection diode to under
+* **Why 10 kΩ:** a fault in the sensor could push the output towards its 5 V
+  supply, above what the pin takes. The 10 kΩ limits the current into the pin's protection diode to under
   1 mA. With the 1 MΩ pull-down it reads about 1 % low, which the
   calibration cancels out.
 * **Resolution:** the ESP32 reads up to about 3.1 V, i.e. about 1.88 m of
