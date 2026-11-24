@@ -449,6 +449,26 @@ class StarlinkApiTests(AppTestCase):
         self.app._bus.answer = 2                                              # driver refused: no address yet
         self.assertEqual(self.post('/api/sender_live', {'on': '1'}).status, 409)
 
+    def test_nothing_restarts_the_water_driver_during_a_sender_update(self):
+        lock = os.path.join(self.tmp, 'ota.lock')
+        self.app.OTA_LOCK = lock
+        with open(lock, 'w') as f:
+            f.write('%d esp32_hydro\n' % os.getpid())                     # a running update (this process)
+        self.assertTrue(body_of(self.get('/api/state'))['sender_update'])
+        for path, form in (('/api/restart', {'target': 'esp32_hydro'}),
+                           ('/api/service', {'name': 'esp32_hydro', 'action': 'disable'}),
+                           ('/api/driver_config', {'section': 'esp32_hydro', 'f.wifi_mode': 'ap', 'restart': '1'}),
+                           ('/api/device_add', {'kind': 'water'}),
+                           ('/api/reboot', {}), ('/api/update_run', {}), ('/api/sender_live', {'on': '1'})):
+            r = self.post(path, form)
+            self.assertEqual(r.status, 409, path)
+            self.assertIn('being updated', body_of(r)['error'])
+        self.assertEqual(self.post('/api/restart', {'target': 'fridge'}).status, 200)   # other drivers are fine
+        with open(lock, 'w') as f:
+            f.write('999999 esp32_hydro\n')                               # update ended without cleaning up
+        self.assertFalse(body_of(self.get('/api/state'))['sender_update'])
+        self.assertEqual(self.post('/api/restart', {'target': 'esp32_hydro'}).status, 400)   # not enabled here, but allowed
+
     def test_a_failed_check_says_why(self):
         body_of(self.get('/api/sender_fw', query='refresh=1'))
         self.started[-1][1](1, b'curl: sh: curl: not found\nwget: wget: bad address \'raw.githubusercontent.com\'\n')

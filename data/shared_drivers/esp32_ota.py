@@ -230,7 +230,13 @@ def main():
         say('Not updating: the sender\'s Bluetooth address is not known yet (no reading received).')
         return 2
 
+    other = proto.ota_running()
+    if other and other != os.getpid():
+        say('Not updating: another sender update is running (process %d).' % other)
+        return 2
     import ble_scanner
+    with open(proto.OTA_LOCK, 'w') as f:   # page and driver keep their hands off meanwhile
+        f.write('%d %s\n' % (os.getpid(), args.service))
     svc('-d', args.service)               # the driver checks in over the same link
     ble_scanner.request_global_pause(1200)
     time.sleep(3)
@@ -244,6 +250,10 @@ def main():
         return 1
     finally:
         ble_scanner.clear_global_pause()
+        try:
+            os.remove(proto.OTA_LOCK)
+        except OSError:
+            pass
         svc('-u', args.service)
 
 

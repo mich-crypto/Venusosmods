@@ -129,6 +129,37 @@ def fakes_now():
     return venus_service.monotonic_s()
 
 
+class LockTests(unittest.TestCase):
+    def test_lock_only_counts_while_the_updater_lives(self):
+        d = tempfile.mkdtemp()
+        lock = os.path.join(d, 'lock')
+        self.assertIsNone(proto.ota_running(lock))                        # no file
+        with open(lock, 'w') as f:
+            f.write('%d esp32_hydro\n' % os.getpid())
+        self.assertEqual(proto.ota_running(lock), os.getpid())
+        with open(lock, 'w') as f:
+            f.write('999999\n')                                           # dead pid: stale
+        self.assertIsNone(proto.ota_running(lock))
+        with open(lock, 'w') as f:
+            f.write('garbage')
+        self.assertIsNone(proto.ota_running(lock))
+
+    def test_the_driver_waits_for_a_running_update(self):
+        import esp32_hydro_tank
+        calls = {'n': 0}
+
+        def running(path=None):
+            calls['n'] += 1
+            return 123 if calls['n'] < 3 else None                      # finishes after two checks
+        orig, proto.ota_running = proto.ota_running, running
+        sleep, esp32_hydro_tank.time.sleep = esp32_hydro_tank.time.sleep, lambda s: None
+        try:
+            esp32_hydro_tank.wait_for_sender_update()
+            self.assertEqual(calls['n'], 3)
+        finally:
+            proto.ota_running, esp32_hydro_tank.time.sleep = orig, sleep
+
+
 class UpdaterTests(unittest.TestCase):
     def image(self, b27=0x3C):
         data = bytearray(8192)
