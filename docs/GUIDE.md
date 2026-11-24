@@ -498,8 +498,7 @@ if you forget it. Open the address in Safari and add it to the home screen.
     and why, grey = the Pi could not reach the dish), the incident table and the
     history of your public IP address.
   * *Debug*: ping, traceroute, DNS lookup and an HTTP check run on the Pi.
-  * *Settings*: **software update** (compares with GitHub and runs
-    `update.sh`), the Starlink settings (speed test interval, ping targets,
+  * *Settings*: the Starlink settings (speed test interval, ping targets,
     billing day, data cap, electricity price). The Telegram messages are on
     the **Notifications** tab.
   **In Venus OS:** the dish also appears as a device called *Starlink
@@ -542,6 +541,11 @@ if you forget it. Open the address in Safari and add it to the home screen.
   service open-meteo.com), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
+* **Update** – the installed and the latest version, *Check now* and *Update
+  now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
+  services). The page checks for a new version by itself every few hours; when
+  there is one, a banner on every tab says so (*Show update* / *Later*) and the
+  Update tab gets a dot.
 * **Debug** – two views for troubleshooting. **Raw data**: what the sensors really send. *Gas* shows
   every Mopeka advertisement with its raw bytes (`data=`), the decoded
   distance, temperature, battery and echo quality, and the level that was
