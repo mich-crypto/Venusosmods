@@ -212,6 +212,13 @@ commands do: *Tank is empty: set zero*, measuring the tank in portions
 command, the Wi-Fi password and **firmware updates** (upload
 `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin`; the calibration is kept).
 
+**Simulate a level (firmware 3.6+):** on the sender's page, *Simulate a level*:
+0 / 25 / 50 / 75 / 100 % or a height in mm. The sender broadcasts that level at
+once instead of the sensor, and a stopwatch counts the seconds since, so you can
+see how long Venus OS (Remote Console, VRM) takes to show it. A red chip says
+SIMULATION while it runs; *Stop* or 15 minutes ends it. Serial: `sim 50%`,
+`sim 300`, `sim off`.
+
 **Test mode:** *Test mode: fast reading* on the page (or `fast` in the Serial
 Monitor) turns the smoothing off for 15 minutes: the level follows the signal
 at once and the page updates 4 times a second. Handy on the bench with a

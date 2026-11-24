@@ -18,7 +18,7 @@
   --font:"D-DIN","DIN Alternate","Bahnschrift","Helvetica Neue",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
 * { box-sizing:border-box; }
-html { font-size:16px; -webkit-text-size-adjust:100%; }
+html { font-size:14px; -webkit-text-size-adjust:100%; }
 body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--font); line-height:1.4; }
 header { background:rgba(0,0,0,.82); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
   border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
@@ -31,15 +31,15 @@ nav button { background:none; border:0; border-bottom:2px solid transparent; pad
   letter-spacing:.16em; text-transform:uppercase; color:var(--muted); cursor:pointer; white-space:nowrap; }
 nav button:hover { color:var(--ink); }
 nav button[aria-selected=true] { color:var(--ink); border-color:var(--ink); }
-main { max-width:1100px; margin:0 auto; padding:18px 16px; padding-bottom:110px; }
+main { max-width:1100px; margin:0 auto; padding:12px 16px; padding-bottom:100px; }
 h2 { font-size:.72rem; margin:28px 0 10px; font-weight:600; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); }
 h2:first-child { margin-top:0; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:16px 18px; margin-bottom:12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:12px 14px; margin-bottom:10px; }
 .grid .card { margin:0; }
 .card h3, .chart h3 { font-size:.7rem; margin:0 0 6px; display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:.16em;
   text-transform:uppercase; color:var(--muted); }
-.big { font-size:2.2rem; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
+.big { font-size:1.9rem; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
 .big small { font-size:.9rem; font-weight:400; color:var(--muted); }
 .muted { color:var(--muted); font-size:.85rem; overflow-wrap:anywhere; }
 .chip { display:inline-block; font-size:.66rem; font-weight:600; padding:2px 9px; border-radius:99px; border:1px solid var(--line);
@@ -49,15 +49,15 @@ h2:first-child { margin-top:0; }
 .bar-level { height:3px; background:var(--line); overflow:hidden; margin:10px 0 8px; }
 .bar-level > i { display:block; height:100%; background:var(--ink); }
 button, select, input, textarea { font:inherit; color:inherit; }
-.btn { background:transparent; border:1px solid #3d3d3d; border-radius:3px; padding:9px 14px; cursor:pointer; min-height:42px; }
+.btn { background:transparent; border:1px solid #3d3d3d; border-radius:3px; padding:8px 12px; cursor:pointer; min-height:38px; }
 .btn:hover:not(:disabled) { border-color:var(--ink); }
 .btn.primary { background:var(--ink); border-color:var(--ink); color:#000; font-weight:600; }
 .btn.danger { color:var(--bad); border-color:#5a2420; }
-.btn.small { padding:5px 10px; min-height:34px; font-size:.85rem; }
+.btn.small { padding:4px 10px; min-height:32px; font-size:.85rem; }
 .btn:disabled { opacity:.35; cursor:not-allowed; }
 .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 table { width:100%; border-collapse:collapse; }
-td, th { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line-soft); font-size:.92rem; }
+td, th { text-align:left; padding:7px 6px; border-bottom:1px solid var(--line-soft); font-size:.92rem; }
 tbody tr:hover td { background:#0c0c0c; }
 th { color:var(--faint); font-weight:600; font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; }
 .field { margin:0 0 16px; }
@@ -122,7 +122,7 @@ dialog pre { background:var(--code); border:1px solid var(--line-soft); border-r
 .pills button[aria-pressed=true] { background:var(--ink); color:#000; font-weight:700; }
 /* hero numbers and hairline stat grids, as in Stardashy */
 .hero { display:grid; grid-template-columns:repeat(3,1fr); border:1px solid var(--line); border-radius:4px; margin-bottom:12px; }
-.hero .metric { padding:22px 20px; border-right:1px solid var(--line); min-width:0; }
+.hero .metric { padding:14px 14px; border-right:1px solid var(--line); min-width:0; }
 .hero .metric:last-child { border-right:0; }
 .metric .label, .tile .k, .stat .k { color:var(--muted); font-size:.64rem; letter-spacing:.18em; text-transform:uppercase; font-weight:600; }
 .metric .num { font-size:clamp(40px,7vw,76px); font-weight:600; line-height:1.05; font-variant-numeric:tabular-nums; letter-spacing:-.02em; margin:6px 0 2px; }
@@ -130,8 +130,8 @@ dialog pre { background:var(--code); border:1px solid var(--line-soft); border-r
 .metric .sub { color:var(--muted); font-size:.8rem; }
 .tiles, .stats { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); border-top:1px solid var(--line); border-left:1px solid var(--line);
   margin-bottom:12px; }
-.tile, .stat { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:14px 16px; min-width:0; }
-.tile .v, .stat .v { font-size:1.6rem; font-weight:600; line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.tile, .stat { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:10px 12px; min-width:0; }
+.tile .v, .stat .v { font-size:1.4rem; font-weight:600; line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .tile .v small, .stat .v small { font-size:.75rem; font-weight:400; color:var(--muted); }
 .tile .s, .stat .s { color:var(--muted); font-size:.78rem; }
 .metaline { color:var(--muted); font-size:.8rem; margin:2px 0 14px; display:flex; flex-wrap:wrap; gap:4px 18px; }
@@ -2428,27 +2428,31 @@ function liveCard() {
     toast(x.ok ? x.data.message : x.data.error, !x.ok);
     if (x.ok) { await refreshState(); await renderTab(); }
   } }, on ? 'Stop live reading' : 'Live reading (15 min)');
-  const draw = val => {
-    const age = val['/Hydro/LiveTime'] ? Date.now() / 1000 - val['/Hydro/LiveTime'] : null;
-    const fresh = age != null && age < 5;
+  // the last reading stays on screen between updates; the note says how old it is
+  const draw = (val, now) => {
+    const age = val['/Hydro/LiveTime'] ? (now || Date.now() / 1000) - val['/Hydro/LiveTime'] : null;
+    const have = val['/Hydro/LiveTime'] != null;
     const n = (x, d) => x == null ? '–' : Number(x).toFixed(d);
     clear(vals).append(
-      stat('Sensor signal', fresh ? n(val['/Hydro/Signal'], 3) + ' ' + (val['/Hydro/SignalUnit'] || 'V') : '–', 'at GPIO4, unfiltered'),
-      stat('Height', fresh ? n(val['/Hydro/RawHeightMm'], 1) + ' mm' : '–', 'from this reading'),
-      stat('Litres', fresh ? n(val['/Hydro/LiveLitres'], 1) + ' L' : '–', fresh ? 'height ' + n(val['/Hydro/LiveHeightMm'], 1) + ' mm' : ''));
-    note.textContent = !val['/Hydro/Live'] ? 'Shows the real sensor voltage without smoothing, twice a second, for 15 minutes (over Bluetooth, sender firmware 2.8+). Handy with a potentiometer on GPIO4.'
-      : fresh ? 'Live: updated ' + age.toFixed(1) + ' s ago. Stops by itself after 15 minutes.' : 'Connecting to the sender over Bluetooth… (a few seconds)';
+      stat('Sensor signal', have ? n(val['/Hydro/Signal'], 3) + ' ' + (val['/Hydro/SignalUnit'] || 'V') : '–', 'at GPIO4, unfiltered'),
+      stat('Height', have ? n(val['/Hydro/RawHeightMm'], 1) + ' mm' : '–', 'from this reading'),
+      stat('Litres', have ? n(val['/Hydro/LiveLitres'], 1) + ' L' : '–', have ? 'height ' + n(val['/Hydro/LiveHeightMm'], 1) + ' mm' : ''));
+    note.textContent = !val['/Hydro/Live'] ? (have ? 'Last live reading ' + ago(Math.round(age)) + ' ago. ' : '')
+        + 'Shows the real sensor voltage without smoothing, twice a second, for 15 minutes (over Bluetooth, sender firmware 2.8+). Handy with a potentiometer on GPIO4.'
+      : !have ? 'Connecting to the sender over Bluetooth… (a few seconds)'
+      : age < 3 ? 'Live: updated ' + Math.max(0, age).toFixed(1) + ' s ago. Stops by itself after 15 minutes.'
+      : 'Live: waiting for the sender (last reading ' + age.toFixed(0) + ' s ago)…';
   };
   draw(v);
   if (on) {
     const tick = async () => {
       if (S.tab !== 'water' || !document.body.contains(vals)) return;
-      await refreshState();
-      const d = deviceOf(S.state, 'water'), val = d ? d.values : {};
-      draw(val);
-      if (val['/Hydro/Live']) setTimeout(tick, 600); else renderTab();
+      const r = await api('/api/sender_live');
+      if (!document.body.contains(vals)) return;
+      if (r.ok) draw(r.data.values, r.data.now);
+      if (!r.ok || r.data.values['/Hydro/Live']) setTimeout(tick, 500); else { await refreshState(); renderTab(); }
     };
-    setTimeout(tick, 600);
+    setTimeout(tick, 300);
   }
   return h('div', { class: 'card' }, h('h3', {}, 'Live reading ', on ? h('span', { class: 'chip warn' }, 'live') : null), vals, note,
     h('div', { class: 'row', style: 'margin-top:8px' }, btn));
