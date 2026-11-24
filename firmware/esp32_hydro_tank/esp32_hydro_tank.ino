@@ -187,7 +187,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_PERIOD_MS      3000   // Bluetooth only: one short blue blink this often
 #define BLINK_ON_MS          60     // ... this long (saves energy: the LED is off 98 % of the time)
 
-#define FW_VERSION           "3.1"
+#define FW_VERSION           "3.2"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -521,8 +521,9 @@ static void buildPayload(uint8_t *p) {
 
   if (serialLog) {
     Serial.printf("signal=%.3f height=%.1fmm litres=%.1f level=%.1f%% temp=%.1f temp2=%.1f "
-                  "activity=%.1f%s%s%s%s\n",
+                  "activity=%.1f ble=%s%s%s%s%s\n",
                   lastSignal, height, litres, level, temperatureC, temp2Valid ? tempC[1] : NAN, activity,
+                  advertising && advertising->isAdvertising() ? "on" : "OFF",
                   sloshing ? " SLOSH" : "", filling ? " FILLING" : "",
                   draining ? " DRAINING" : "", (flags & FLAG_FAULT) ? " FAULT" : "");
   }
@@ -579,6 +580,8 @@ static void updateAdvertisement() {
 static BLEServer *linkServer = nullptr;
 static BLECharacteristic *linkReply = nullptr;
 static volatile bool linkAuthed = false;
+static volatile bool advRestart = false;   // a device connected: broadcast on (from loop())
+static uint32_t advRestarts = 0;           // how often the watchdog had to restart it
 static volatile bool linkConnected = false;
 static String apPassword;                  // own Wi-Fi password, also the Bluetooth key
 static uint32_t lastPiHeard = 0;           // millis() of the last "hb" (0 = never)
@@ -700,6 +703,7 @@ static String linkImmediate(const String &cmd) {
 class LinkServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *s) override {
     linkConnected = true; linkAuthed = false;
+    advRestart = true;                       // keep broadcasting the level while connected
     // ask for a short connection interval (7.5-15 ms): firmware uploads go several times faster
     s->requestConnParams(s->getConnId(), 6, 12, 0, 400);
   }
@@ -1213,6 +1217,7 @@ details summary{cursor:pointer;font-weight:600}
   <div><span class="mut">Zero offset</span><b><span id="z">–</span> mm</b></div>
  </div>
  <div id="chips"></div>
+ <div class="mut" id="blue" style="margin-top:8px"></div>
  <div class="row"><button id="fastbtn" onclick="cmd(fastOn?'fast off':'fast')">Test mode: fast reading</button></div>
 </div>
 
@@ -1314,6 +1319,9 @@ async function refresh(){
   $('chips').innerHTML=c;
   $('tbl').innerHTML=tab(s.table);
   $('calbox').innerHTML=s.cal_active?'<p class="mut">Measured so far ('+s.cal_points.length+' points):</p>'+tab(s.cal_points):'';
+  $('blue').innerHTML='Bluetooth: '+(s.ble_adv?'<b>broadcasting</b> the level every 2 s':'<b style="color:var(--bad)">not broadcasting</b>')
+    +(s.ble_conn?' · '+s.ble_conn+' connected':'')+' · Pi '+(s.pi_ago_s<0?'has not checked in yet':'checked in '+Math.round(s.pi_ago_s/60)+' min ago')
+    +(s.ble_restarts?' · broadcast restarted '+s.ble_restarts+'×':'');
   const modes={auto:'Bluetooth, own Wi-Fi only as fallback',van:'van Wi-Fi'+(s.sta_ip?' ('+s.sta_ip+')':' (not connected)'),ap:'own Wi-Fi always on'};
   $('foot').textContent='Wi-Fi mode: '+(modes[s.wifi_mode]||s.wifi_mode)+' (set on the Venus OS page) · Pi '+(s.pi_ago_s<0?'not heard yet':'heard '+Math.round(s.pi_ago_s/60)+' min ago')+' · Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
  }catch(e){$('foot').textContent='No connection to the sender…'}
@@ -1381,6 +1389,9 @@ static void handleStatus() {
   j += "\"uptime_s\":" + String(millis() / 1000) + ",";
   j += "\"wifi_mode\":\"" + wifiMode + "\",\"pi_ago_s\":" + String(lastPiHeard ? (long)((millis() - lastPiHeard) / 1000) : -1L) + ",";
   j += "\"sta_ip\":\"" + staIp() + "\",\"ap_on\":" + String(apOn ? "true" : "false") + ",";
+  j += "\"ble_adv\":" + String(advertising && advertising->isAdvertising() ? "true" : "false") + ",";
+  j += "\"ble_conn\":" + String(linkServer ? linkServer->getConnectedCount() : 0) + ",";
+  j += "\"ble_restarts\":" + String(advRestarts) + ",";
   jsonNum(j, "signal", lastSignal, 3);
   j += INPUT_CURRENT_LOOP ? "\"signal_unit\":\"mA\"," : "\"signal_unit\":\"V\",";
   jsonNum(j, "height_mm", height);
@@ -1601,6 +1612,17 @@ void loop() {
   if (now - tSample >= SAMPLE_PERIOD_MS) { tSample = now; sampleLevel(); }
   if (now - tTrend >= TREND_PERIOD_MS)   { tTrend = now; updateTrend(); updateTemperature(); }
   if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
+  // A connection stops the broadcast in the Bluetooth stack; the Pi needs it for the
+  // level, so start it again at once, and check every 5 s that it is still running.
+  static uint32_t tAdvCheck = 0;
+  if (advRestart || now - tAdvCheck >= 5000) {
+    tAdvCheck = now;
+    if (advRestart || !advertising->isAdvertising()) {
+      if (!advRestart) { advRestarts++; Serial.println("Bluetooth broadcast had stopped: started again."); }
+      advRestart = false;
+      advertising->start();
+    }
+  }
   pollSerial();
 #if USE_WIFI_AP
   updateWifi();
