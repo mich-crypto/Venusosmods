@@ -180,16 +180,15 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define CPU_MHZ              80
 
 // ---- Status LED: the board's RGB LED (WS2812) breathes green while Wi-Fi is
-//      on (the page is reachable) and blinks blue briefly every 3 s when the
-//      sender runs on Bluetooth only. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
+//      on (the page is reachable) and flashes blue each time a reading goes
+//      out over Bluetooth (every 2 s), with or without Wi-Fi. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
 #define STATUS_LED_PIN       48     // -1 = no LED
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // Wi-Fi on: green breathing, one breath in and out
-#define BLINK_PERIOD_MS      3000   // Bluetooth only: one short blue blink this often
-#define BLINK_ON_MS          60     // ... this long (saves energy: the LED is off 98 % of the time)
+#define BLINK_ON_MS          100    // blue flash each time a new reading goes out over Bluetooth (every ADV_UPDATE_MS)
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.4"
+#define FW_VERSION           "3.5"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -1149,6 +1148,7 @@ static void pollSerial() {
 
 static bool webUp = false;   // set once the Wi-Fi network and the web server run
 static bool otaBusy();       // a firmware upload from the Pi is running (Bluetooth link part)
+static uint32_t lastAdvSent = 0;   // millis() of the last broadcast update (blue flash)
 
 static void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
 #if STATUS_LED_PIN >= 0
@@ -1160,8 +1160,9 @@ static void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
 #endif
 }
 
-// Green breathing while the page is reachable, a short blue blink every 3 s on
-// Bluetooth only. Squaring the cosine wave makes the fade look even to the eye.
+// Green breathing while the page is reachable, a short blue flash with every
+// reading sent over Bluetooth (on top of the green), green/red during a firmware
+// update. Squaring the cosine wave makes the fade look even to the eye.
 static void updateLed() {
   static uint32_t last = 0;
   static int lastR = -1, lastG = -1, lastB = -1;
@@ -1171,11 +1172,11 @@ static void updateLed() {
   int r = 0, g = 0, b = 0;
   if (otaBusy()) {                          // firmware arriving: green and red alternate
     if ((now / OTA_BLINK_MS) % 2) g = STATUS_LED_MAX; else r = STATUS_LED_MAX;
+  } else if (lastAdvSent && now - lastAdvSent < BLINK_ON_MS) {
+    b = STATUS_LED_MAX;                     // a reading just went out over Bluetooth: blue flash
   } else if (webUp) {                       // Wi-Fi on: green breathing
     float x = (1.0f - cosf(2.0f * PI * (now % BREATH_PERIOD_MS) / BREATH_PERIOD_MS)) / 2.0f;
     g = lroundf(x * x * STATUS_LED_MAX);
-  } else if (now % BLINK_PERIOD_MS < BLINK_ON_MS) {
-    b = STATUS_LED_MAX;                     // Bluetooth only: short blue blink
   }
   if (r != lastR || g != lastG || b != lastB) { ledWrite(r, g, b); lastR = r; lastG = g; lastB = b; }
 }
@@ -1620,7 +1621,11 @@ void loop() {
 
   if (now - tSample >= SAMPLE_PERIOD_MS) { tSample = now; sampleLevel(); }
   if (now - tTrend >= TREND_PERIOD_MS)   { tTrend = now; updateTrend(); updateTemperature(); }
-  if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
+  if (now - tAdv >= ADV_UPDATE_MS) {
+    tAdv = now;
+    updateAdvertisement();
+    if (advertising->isAdvertising()) lastAdvSent = now ? now : 1;   // flash only when it really goes out
+  }
   // A connection stops the broadcast in the Bluetooth stack; the Pi needs it for the
   // level, so start it again at once, and check every 5 s that it is still running.
   static uint32_t tAdvCheck = 0;

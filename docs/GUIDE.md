@@ -223,7 +223,7 @@ It switches itself off after 15 minutes and at a restart.
 | Light | Meaning |
 |---|---|
 | **green, breathing** | Wi-Fi on: the sender's page is reachable (own Wi-Fi, or the van Wi-Fi) |
-| **blue, short blink every 3 s** | Bluetooth only (saves energy); press BOOT to switch the own Wi-Fi on |
+| **blue flash every 2 s** | a reading went out over Bluetooth (firmware 3.5+): on top of the green when Wi-Fi is on, alone on Bluetooth only. No blue flash = not broadcasting |
 | **green and red, alternating fast** | new firmware is arriving from the Venus OS page (firmware 3.3+); don't cut the power |
 | off | still starting, or no power |
 
