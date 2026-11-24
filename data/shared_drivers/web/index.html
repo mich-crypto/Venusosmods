@@ -334,7 +334,8 @@ function lockedNotice() {
   return h('div', { class: 'banner warn' },
     st && !st.password_set
       ? 'No password is set, so this page is read-only. Set one with: nano /data/shared_drivers/config.ini  ([web] password = ...) and restart the page.'
-      : ['Unlock the page to change settings. ', h('a', { href: '/unlock' }, 'Unlock')]);
+      : ['Settings are hidden until you unlock the page (the password is printed by the install command, '
+         + 'and is in /data/shared_drivers/config.ini under [web]). ', h('a', { href: '/unlock' }, 'Unlock')]);
 }
 
 async function renderTab() {
@@ -780,7 +781,12 @@ function deviceHeader(kind, section) {
 async function tabDevice(kind) {
   const main = $('#main'), spec = DEV[kind];
   S.forms = {};
-  if (!canEdit() && S.state.password_set) { main.append(lockedNotice()); return; }
+  if (!canEdit() && S.state.password_set) {
+    main.append(lockedNotice());
+    // the settings need the password; what the sender reports is public (from /api/state)
+    if (kind === 'esp32' && deviceOf(S.state, 'water')) main.append(liveCard(), senderCard());
+    return;
+  }
   const r = await loadDriver();
   if (!r.ok) { main.append(h('div', { class: 'banner bad' }, r.data.error || 'Could not read config.ini')); return; }
   const section = S.driver.sections.find(s => s.kind === kind);
