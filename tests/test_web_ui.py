@@ -243,11 +243,28 @@ class AccessTests(AppTestCase):
         self.assertEqual(self.post('/api/driver_config', form).status, 200)
 
     def test_wrong_passwords_are_throttled(self):
-        for _ in range(8):
-            self.call('POST', '/api/restart', {'target': 'fridge'}, dict(CSRF, **basic('nope')))
+        for i in range(8):
+            self.call('POST', '/api/restart', {'target': 'fridge'}, dict(CSRF, **basic('nope%d' % i)))
         r = self.call('POST', '/api/restart', {'target': 'fridge'}, dict(CSRF, **basic(self.PASSWORD)))
         self.assertEqual(r.status, 429)
         self.assertEqual(self.svc_calls(), [])
+
+    def test_guesses_on_any_route_count(self):
+        # the page's own login checks the password with GET /api/state: guesses there count too
+        for i in range(8):
+            r = self.call('GET', '/api/state', headers=basic('guess%d' % i))
+            self.assertFalse(body_of(r)['authed'])
+        r = self.call('GET', '/api/state', headers=basic(self.PASSWORD))
+        self.assertEqual(r.status, 429)
+        self.assertEqual(self.call('GET', '/api/state').status, 200)        # without a password: still readable
+
+    def test_a_resent_wrong_password_is_one_guess(self):
+        # a browser that keeps sending an old saved password must not lock the user out
+        for _ in range(30):
+            self.call('GET', '/api/state', headers=basic('old-password'))
+        r = self.call('GET', '/api/state', headers=basic(self.PASSWORD))
+        self.assertEqual(r.status, 200)
+        self.assertTrue(body_of(r)['authed'])
 
     def test_read_only_without_a_password(self):
         app = self.make_app('')

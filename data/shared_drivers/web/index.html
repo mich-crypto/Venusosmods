@@ -241,7 +241,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
 <script>
 'use strict';
 // ---------------------------------------------------------------- helpers
-const S = { tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
+const S = { auth: null, tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
 const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
               ['battery', 'Battery'], ['starlink', 'Starlink'], ['geofence', 'Geofence'], ['notify', 'Notifications'], ['debug', 'Debug'], ['update', 'Update']];
 
@@ -270,8 +270,67 @@ function toast(msg, bad) {
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.className = ''; }, bad ? 6000 : 3000);
 }
 
-async function api(path, form) {
+// Login on the page itself. The password goes along as an Authorization header with every request.
+// (The browser's own login box is unreliable: Firefox stops showing it after a few cancels, Safari
+// fills in old passwords.) Kept for this tab, or on this device with "Remember".
+const AUTH_KEY = 'venusAuth';
+function storedAuth() {
+  for (const store of ['sessionStorage', 'localStorage']) {
+    try { const v = window[store].getItem(AUTH_KEY); if (v) return v; } catch (e) { /* private window */ }
+  }
+  return null;
+}
+function setAuth(value, remember) {
+  S.auth = value;
+  for (const store of ['sessionStorage', 'localStorage']) {
+    try {
+      if (value && (store === 'sessionStorage' || remember)) window[store].setItem(AUTH_KEY, value);
+      else window[store].removeItem(AUTH_KEY);
+    } catch (e) { /* the login still works for this page view */ }
+  }
+}
+const basicAuth = pw => 'Basic ' + btoa(unescape(encodeURIComponent('pi:' + pw)));   // UTF-8 safe
+
+function unlock() {
+  const w = wizOpen('Unlock');
+  const pw = h('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Password', style: 'width:100%' });
+  const remember = h('input', { type: 'checkbox' });
+  const err = h('div', { class: 'banner bad', hidden: true });
+  const go = async () => {
+    err.hidden = true;
+    if (!pw.value) { pw.focus(); return; }
+    const auth = basicAuth(pw.value);
+    const r = await api('/api/state', null, auth);
+    if (r.ok && r.data.authed) {
+      setAuth(auth, remember.checked);
+      S.state = r.data; S.locked = false;
+      renderLock();
+      toast('Unlocked');
+      w.close();
+      return;
+    }
+    err.textContent = r.status === 429 ? 'Too many wrong passwords. Wait a minute and try again.'
+      : r.status === 0 ? 'No connection to the Pi.' : 'Wrong password.';
+    err.hidden = false;
+    pw.select();
+  };
+  pw.addEventListener('keydown', ev => { if (ev.key === 'Enter') go(); });
+  w.show(h('div', { class: 'muted' }, 'The password is in config.ini on the Pi, section [web] (the installer printed it).'),
+    h('div', { style: 'margin:12px 0' }, pw),
+    h('label', { class: 'row', style: 'gap:8px;align-items:center' }, remember, 'Remember on this device'),
+    err, nav(primary('Unlock', go)));
+  setTimeout(() => pw.focus(), 50);
+}
+
+function lock() {
+  setAuth(null);
+  refreshState().then(() => renderTab());
+}
+
+async function api(path, form, authOverride) {
   const opts = { headers: { 'X-Requested-With': 'venussettings' } };
+  const auth = authOverride || S.auth;
+  if (auth) opts.headers['Authorization'] = auth;
   if (form) {
     opts.method = 'POST';
     opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
@@ -311,9 +370,10 @@ function renderLock() {
   if (!st.password_set) {
     box.append(h('span', { class: 'chip warn', title: 'Set a password in config.ini ([web] password) to be able to change settings' }, 'Read-only'));
   } else if (st.authed) {
-    box.append(h('button', { type: 'button', class: 'btn small', style: 'margin-right:10px', onclick: () => openSetup() }, 'Setup guide'), h('span', { class: 'chip ok' }, 'Unlocked'));
+    box.append(h('button', { type: 'button', class: 'btn small', style: 'margin-right:10px', onclick: () => openSetup() }, 'Setup guide'), h('span', { class: 'chip ok' }, 'Unlocked'),
+      ...(S.auth ? [h('button', { type: 'button', class: 'btn small', style: 'margin-left:10px', onclick: lock }, 'Lock')] : []));
   } else {
-    box.append(h('a', { class: 'btn primary small', href: '/unlock' }, 'Unlock to edit'));
+    box.append(h('button', { type: 'button', class: 'btn primary small', onclick: unlock }, 'Unlock to edit'));
   }
   $('#hostline').textContent = [st.host, st.venus && 'Venus OS ' + st.venus].filter(Boolean).join(' · ');
 }
@@ -334,7 +394,7 @@ function lockedNotice() {
   return h('div', { class: 'banner warn' },
     st && !st.password_set
       ? 'No password is set, so this page is read-only. Set one with: nano /data/shared_drivers/config.ini  ([web] password = ...) and restart the page.'
-      : ['Unlock the page to change settings. ', h('a', { href: '/unlock' }, 'Unlock')]);
+      : ['Unlock the page to change settings. ', h('a', { href: '#', onclick: ev => { ev.preventDefault(); unlock(); } }, 'Unlock')]);
 }
 
 async function renderTab() {
@@ -2278,7 +2338,7 @@ async function updatePanel() {
         toast(x.ok ? x.data.message : x.data.error, !x.ok);
         if (x.ok) watchUpdate(body);
       }) }, d.available ? 'Update now' : 'Reinstall latest'), d.available ? h('span', { class: 'chip warn' }, 'update available') : (d.installed && d.latest ? h('span', { class: 'chip ok' }, 'up to date') : null)));
-    if (!canEdit()) body.append(h('div', { class: 'muted', style: 'margin-top:6px' }, ['Unlock the page to update. ', h('a', { href: '/unlock' }, 'Unlock')]));
+    if (!canEdit()) body.append(h('div', { class: 'muted', style: 'margin-top:6px' }, ['Unlock the page to update. ', h('a', { href: '#', onclick: ev => { ev.preventDefault(); unlock(); } }, 'Unlock')]));
     if (d.checking) setTimeout(() => { if (S.tab === 'update') draw(false); }, 2500);
   };
   await draw(false);
@@ -2400,6 +2460,7 @@ async function tabFiles(main) {
 // ------------------------------------------------------------------- boot
 async function refreshState() {
   const r = await api('/api/state');
+  if (r.ok && S.auth && !r.data.authed) setAuth(null);          // the password was changed on the Pi
   if (r.ok) { S.state = r.data; renderLock(); }
   return r;
 }
@@ -2643,6 +2704,7 @@ async function tabNotify(main) {
 }
 
 async function boot() {
+  S.auth = storedAuth();
   renderTabs();
   const r = await refreshState();
   if (!r.ok) { $('#main').append(h('div', { class: 'banner bad' }, r.data.error || 'The Pi does not answer')); return; }
