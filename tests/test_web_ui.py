@@ -449,29 +449,6 @@ class StarlinkApiTests(AppTestCase):
         self.app._bus.answer = 2                                              # driver refused: no address yet
         self.assertEqual(self.post('/api/sender_live', {'on': '1'}).status, 409)
 
-    def test_nothing_restarts_the_water_driver_during_a_sender_update(self):
-        lock = os.path.join(self.tmp, 'ota.lock')
-        self.app.OTA_LOCK = lock
-        import subprocess
-        upd = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)', 'esp32_ota'])
-        self.addCleanup(upd.kill)
-        with open(lock, 'w') as f:
-            f.write('%d esp32_hydro\n' % upd.pid)                         # a running update
-        self.assertTrue(body_of(self.get('/api/state'))['sender_update'])
-        for path, form in (('/api/restart', {'target': 'esp32_hydro'}),
-                           ('/api/service', {'name': 'esp32_hydro', 'action': 'disable'}),
-                           ('/api/driver_config', {'section': 'esp32_hydro', 'f.wifi_mode': 'ap', 'restart': '1'}),
-                           ('/api/device_add', {'kind': 'water'}),
-                           ('/api/reboot', {}), ('/api/update_run', {}), ('/api/sender_live', {'on': '1'})):
-            r = self.post(path, form)
-            self.assertEqual(r.status, 409, path)
-            self.assertIn('being updated', body_of(r)['error'])
-        self.assertEqual(self.post('/api/restart', {'target': 'fridge'}).status, 200)   # other drivers are fine
-        with open(lock, 'w') as f:
-            f.write('999999 esp32_hydro\n')                               # update ended without cleaning up
-        self.assertFalse(body_of(self.get('/api/state'))['sender_update'])
-        self.assertEqual(self.post('/api/restart', {'target': 'esp32_hydro'}).status, 400)   # not enabled here, but allowed
-
     def test_live_values_are_read_fresh(self):
         asked = []
 
@@ -513,28 +490,68 @@ class StarlinkApiTests(AppTestCase):
         self.started[-1][1](None, b'')
         self.assertIn('timed out', body_of(self.get('/api/update_check'))['error'])
 
-    def test_sender_update_runs_the_updater_with_the_sender_details(self):
-        calls = []
+    def sensor_ready(self, wifi=True):
+        text = self.config_text()
+        if wifi:
+            text = text.replace('#wifi_ssid = Camper', 'wifi_ssid = Camper').replace('#wifi_password = ...', 'wifi_password = s3cret')
+        with open(self.config, 'w') as f:
+            f.write(text)
+        self.values = {'/Hydro/Mac': 'AA:BB:CC:DD:EE:01', '/FirmwareVersion': '4.0', '/Hydro/WifiIp': ''}
+        self.app.devices = lambda: ([{'service': 'com.victronenergy.tank.esp32_hydro', 'kind': 'tank', 'values': self.values}], [])
+        self.app.dbus_dump = lambda name, max_age=None: dict(self.values)
+        self.app.own_ip = lambda: '192.168.1.5'
+        self.app.FW_FILE = os.path.join(self.tmp, 'fw.bin')
+        sent = []
 
-        class Proc(object):
-            def poll(inner):
-                return None
-        orig = web_ui.subprocess.Popen
-        web_ui.subprocess.Popen = lambda args, **kw: calls.append(args) or Proc()
-        self.app.devices = lambda: ([{'service': 'com.victronenergy.tank.esp32_hydro', 'kind': 'tank',
-                                      'values': {'/Hydro/Mac': 'AA:BB:CC:DD:EE:01', '/Hydro/WifiIp': ''}}], [])
-        try:
-            self.app.SENDER_LOG = os.path.join(self.tmp, 'sender.log')
-            r = self.post('/api/sender_update', {})
-            self.assertEqual(r.status, 200, r.body)
-            args = calls[-1]
-            self.assertTrue(args[1].endswith('esp32_ota.py'))
-            self.assertEqual(args[args.index('--mac') + 1], 'AA:BB:CC:DD:EE:01')
-            self.assertEqual(args[args.index('--password') + 1], 'watertank')       # the default
-            self.assertNotIn('--ip', args)
-            self.assertEqual(self.post('/api/sender_update', {}).status, 409)       # one at a time
-        finally:
-            web_ui.subprocess.Popen = orig
+        class Bus(object):
+            def call_blocking(inner, name, path, iface, method, sig, args, timeout=None):
+                sent.append((name, path, str(args[0])))
+                return 0
+        self.app._bus = Bus()
+        return sent
+
+    def test_sensor_update_needs_the_van_wifi(self):
+        self.sensor_ready(wifi=False)
+        r = self.post('/api/sender_update', {})
+        self.assertEqual(r.status, 400)
+        self.assertIn('Settings → Connection', body_of(r)['error'])
+
+    def test_sensor_update_over_wifi(self):
+        sent = self.sensor_ready()
+        self.assertEqual(self.post('/api/sender_update', {}).status, 200)
+        argv, cb = self.started[-1]
+        self.assertIn('WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin', ' '.join(argv))
+        self.assertEqual(self.post('/api/sender_update', {}).status, 409)                 # one at a time
+        image = bytearray(200000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(self.app.FW_FILE, 'wb') as f:
+            f.write(image)
+        cb(0, b'')
+        name, path, cmd = sent[-1]
+        self.assertEqual((name, path), ('com.victronenergy.tank.esp32_hydro', '/Hydro/Command'))
+        url = cmd.split(' ', 1)[1]
+        self.assertTrue(url.startswith('http://192.168.1.5:8088/fw/') and url.endswith('.bin'))
+        fw = self.call('GET', url.split('8088', 1)[1])                                     # no password: the sensor has none
+        self.assertEqual((fw.status, len(fw.body)), (200, 200000))
+        self.assertEqual(self.call('GET', '/fw/0000.bin').status, 404)                    # only the one-time address
+        self.values.update({'/Hydro/CommandResult': 'ok fwget: joining the Wi-Fi and downloading',
+                            '/FirmwareVersion': '4.1', '/Hydro/LinkTime': time.time() + 1})
+        log = body_of(self.get('/api/sender_update_log'))
+        self.assertEqual(log['state'], 'done')
+        self.assertIn('now runs firmware 4.1', log['text'])
+
+    def test_sensor_update_reports_the_sensor_error(self):
+        sent = self.sensor_ready()
+        self.post('/api/sender_update', {})
+        image = bytearray(200000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(self.app.FW_FILE, 'wb') as f:
+            f.write(image)
+        self.started[-1][1](0, b'')
+        self.values.update({'/Hydro/FwError': "could not join the Wi-Fi 'Camper'", '/Hydro/LinkTime': time.time() + 1})
+        log = body_of(self.get('/api/sender_update_log'))
+        self.assertEqual(log['state'], 'failed')
+        self.assertIn("could not join the Wi-Fi 'Camper'", log['text'])
 
     def test_saving_says_what_was_written_and_never_shows_secrets(self):
         r = body_of(self.post('/api/driver_config', {'section': 'starlink', 'f.cap_gb': '100'}))

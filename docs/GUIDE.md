@@ -177,14 +177,15 @@ or Venus OS doesn't work. To save energy it is **not on all the time**
 It never switches off while a phone is connected to it. The **green flash**
 (every 2 s, dim) shows when its page is reachable.
 
-**Sensor Wi-Fi** (Venus OS page → Water → Settings):
+**Sensor Wi-Fi** (Venus OS page → Water → Settings → Connection) is one switch:
+*AP on* (own Wi-Fi always on), *Wi-Fi network* (joins your van Wi-Fi) or
+*Bluetooth only* (saves energy, own Wi-Fi only as fallback). In detail:
 
-| Setting | What it does | Energy |
+| Switch position | What it does | Energy |
 |---|---|---|
-| Bluetooth only, own Wi-Fi as fallback (default) | Pi and sender talk over Bluetooth; own Wi-Fi only as above | lowest |
-| Join the van Wi-Fi | also joins your van Wi-Fi (*Van Wi-Fi name / password*); its page is then on the van network (link on the Water tab); firmware updates over Wi-Fi in seconds; own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
-| Own Wi-Fi always on | like before 2.7 | highest |
-| Wi-Fi off (firmware 3.4+) | no own Wi-Fi at all, not even after power-on or as fallback; only the **BOOT button** switches it on for 30 minutes | lowest |
+| **Bluetooth only** (default) | Pi and sensor talk over Bluetooth; the own Wi-Fi comes on only as above (power-on, BOOT button, Pi silent for 15 minutes) | lowest |
+| **Wi-Fi network** | also joins your van Wi-Fi (*Wi-Fi network name / password*); its page is then on the van network (link on the Water tab); own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
+| **AP on** | the own Wi-Fi "Watertank-1" is always on | highest |
 
 Set it under Water → Settings → *Connection*. The sensor follows at its next
 Bluetooth check-in (within a minute after saving), so the Pi must be receiving
@@ -653,16 +654,15 @@ if you forget it. Open the address in Safari and add it to the home screen.
   from it, without smoothing, about twice a second for 15 minutes (*Stop live
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches
   the sender's test mode on meanwhile. Needs sender firmware 2.8+.
-* **Water → Water level sensor** – the sender's firmware (installed and latest), its
-  Wi-Fi state and when the Pi last reached it over Bluetooth, **Check for
-  update** (asks GitHub right away instead of every 6 hours) and **Update
-  sender firmware**: downloads the latest from GitHub and sends it over
-  Bluetooth (a few minutes; the level pauses meanwhile) or over the van Wi-Fi
-  (seconds). The sender checks the file and keeps its old firmware if anything
-  goes wrong. From sender firmware 3.0 a refused packet or a dropped connection
-  doesn't end the update: the Pi asks how much has arrived and carries on
-  (the sender keeps a started upload for 2 minutes). Needs sender firmware 2.7+ once (USB or its own page): until
-  then the card shows how, with the download links.
+* **Water → Water level sensor** – the sensor's firmware (installed and latest),
+  its Wi-Fi state and the two-way link, **Check for update** and **Update sensor
+  firmware** (firmware 4.1+ on the sensor): the Pi downloads the update from
+  GitHub and offers it on its own web server; over Bluetooth it only sends the
+  sensor a short command, and the sensor joins the Wi-Fi network from *Settings →
+  Connection*, downloads the file in seconds, installs it and restarts. If
+  anything fails it keeps its old firmware. Needs the Wi-Fi network name and
+  password in the settings once. The first update to 4.1 goes over the sensor's
+  own page (Firmware update).
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
   services; the page then reloads itself with the new version). The page checks for a new version by itself every few hours, also

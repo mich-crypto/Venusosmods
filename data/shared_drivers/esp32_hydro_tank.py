@@ -53,8 +53,10 @@ class Esp32HydroDriver(BleDriver):
                          '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac',
                          # live view: raw reading over the Bluetooth link
                          '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
-                         '/Hydro/LiveHeightMm', '/Hydro/LiveLitres', '/Hydro/LiveTime'),
-            setup=lambda svc: svc.add_path('/Hydro/Live', 0, writeable=True, onchangecallback=self._on_live_set))
+                         '/Hydro/LiveHeightMm', '/Hydro/LiveLitres', '/Hydro/LiveTime',
+                         # firmware update: the page's command, the sensor's answer and last error
+                         '/Hydro/CommandResult', '/Hydro/FwError'),
+            setup=self._writable_paths)
         self.devices.append(self.tank)
         self.raw = rawlog.RawLog('water')
 
@@ -73,6 +75,7 @@ class Esp32HydroDriver(BleDriver):
         self._expected = 0
         self._mode = None              # what the running exchange is: checkin | live | stop
         self._link_quiet_until = 0     # old firmware without the link: try only once an hour
+        self._command = None           # waiting to be sent to the sensor
         self.live_until = 0            # monotonic end of the live view (0 = off)
 
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
@@ -103,6 +106,32 @@ class Esp32HydroDriver(BleDriver):
     def _first_link(self):
         self._link_tick()
         GLib.timeout_add_seconds(self.link_interval, self._link_tick)
+        return False
+
+    def _writable_paths(self, svc):
+        svc.add_path('/Hydro/Live', 0, writeable=True, onchangecallback=self._on_live_set)
+        svc.add_path('/Hydro/Command', '', writeable=True, onchangecallback=self._on_command_set)
+
+    # A command from the settings page for the sensor (the firmware update: "fwget <url>").
+    # The van Wi-Fi name and password are added here, from config.ini, so they never pass the page.
+    def _on_command_set(self, path, value):
+        cmd = str(value or '').strip()
+        if not cmd or not self.seen_mac:
+            return False
+        if cmd.startswith('fwget '):
+            cmd += '\t%s\t%s' % (self.wifi_ssid, self.wifi_password)
+        self._command = cmd
+        self.tank['/Hydro/CommandResult'] = None
+        GLib.timeout_add(0, self._send_command)
+        return True
+
+    def _send_command(self):
+        if self.gatt is not None and self.gatt.busy:
+            GLib.timeout_add(1000, self._send_command)    # a check-in or live reading is running
+            return False
+        cmd, self._command = self._command, None
+        if cmd:
+            self._send('command', [proto.link_commands(self.sender_password)[0], b'C' + cmd.encode('utf-8')])
         return False
 
     def _client(self):
@@ -204,6 +233,15 @@ class Esp32HydroDriver(BleDriver):
         replies = self._collector.replies if self._collector else []
         self._collector = None
         mode, self._mode = self._mode, None
+        if mode == 'command':
+            answer = replies[-1].strip() if replies else 'no answer: %s' % (error or 'link failed')
+            if any(r.startswith('denied') for r in replies):
+                answer = 'wrong sensor password'
+            self.tank['/Hydro/CommandResult'] = answer
+            # the sensor restarts with the new firmware: ask for its version soon (twice)
+            for s in (45, 90):
+                GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
+            return
         if mode in ('live', 'stop'):
             if replies and replies[-1].startswith('{'):
                 self.apply_live(replies[-1])
@@ -243,6 +281,7 @@ class Esp32HydroDriver(BleDriver):
         self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
         self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
         self.tank['/Hydro/TempNames'] = json.dumps(info.get('tn') or [])
+        self.tank['/Hydro/FwError'] = info.get('fw_err') or ''
         self.tank['/Hydro/LinkStatus'] = 'ok'
         self.tank['/Hydro/LinkTime'] = int(time.time())
 
@@ -295,17 +334,5 @@ class Esp32HydroDriver(BleDriver):
             self.temp2.publish(r.temperature2)
 
 
-def wait_for_sender_update(max_s=900):
-    """Started (by hand, or by a software update) while the sender's firmware is being
-    sent: wait, a second Bluetooth connection would break the upload."""
-    t0, said = time.time(), -60
-    while proto.ota_running() and time.time() - t0 < max_s:
-        if time.time() - said >= 60:
-            log.warning('sensor firmware update running: waiting before starting')
-            said = time.time()
-        time.sleep(5)
-
-
 if __name__ == '__main__':
-    wait_for_sender_update()               # (its warning goes to stderr; main() sets up logging, --debug included)
     Esp32HydroDriver.main()

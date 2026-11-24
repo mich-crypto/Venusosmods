@@ -627,3 +627,39 @@ class VenusPythonTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TimeZoneTests(unittest.TestCase):
+    @unittest.skipUnless(os.path.isfile('/usr/share/zoneinfo/Europe/Amsterdam'), 'no zoneinfo here')
+    def test_logs_use_the_venus_os_time_zone(self):
+        import time
+
+        class Obj(object):
+            def GetValue(self, dbus_interface=None, timeout=None):
+                return 'Europe/Amsterdam'
+
+        class Bus(object):
+            def get_object(self, name, path, introspect=True):
+                return Obj()
+        saved = os.environ.get('TZ')
+        try:
+            os.environ['TZ'] = 'UTC'
+            time.tzset()
+            self.assertEqual(venus_service.use_venus_timezone(Bus()), 'Europe/Amsterdam')
+            self.assertEqual(time.strftime('%H:%M', time.localtime(1795000000)), '12:06')   # 11:06 UTC in winter
+        finally:
+            if saved is None:
+                os.environ.pop('TZ', None)
+            else:
+                os.environ['TZ'] = saved
+            time.tzset()
+
+    def test_unknown_zone_changes_nothing(self):
+        class Obj(object):
+            def GetValue(self, dbus_interface=None, timeout=None):
+                return '../../etc/passwd'
+
+        class Bus(object):
+            def get_object(self, name, path, introspect=True):
+                return Obj()
+        self.assertIsNone(venus_service.use_venus_timezone(Bus()))

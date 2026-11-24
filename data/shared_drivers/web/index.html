@@ -76,6 +76,10 @@ textarea { max-width:100%; box-sizing:border-box; min-height:300px; font-family:
 details.adv { margin:6px 0 0; } details.adv > summary { cursor:pointer; color:var(--muted); padding:6px 0; }
 .switch { display:inline-flex; align-items:center; gap:10px; cursor:pointer; }
 .lockwrap { position:relative; display:inline-block; }
+.seg { display:inline-flex; border:1px solid var(--line); border-radius:4px; overflow:hidden; margin:4px 0; flex-wrap:wrap; }
+.segbtn { background:transparent; color:var(--muted); border:0; border-right:1px solid var(--line); padding:8px 14px; font:inherit; font-size:.85rem; cursor:pointer; }
+.segbtn:last-child { border-right:0; }
+.segbtn.on { background:var(--ink); color:var(--bg); font-weight:600; }
 .chipbtn { cursor:pointer; background:transparent; font-family:inherit; }
 .lockmenu { position:absolute; right:0; top:calc(100% + 6px); background:var(--card); border:1px solid var(--line); border-radius:4px; padding:6px; z-index:20; min-width:140px; }
 .switch input { width:46px; height:26px; appearance:none; -webkit-appearance:none; background:#262626; border:1px solid var(--line);
@@ -527,8 +531,8 @@ function renderBusyBanner() {
   }
   if (!senderBusy()) return;
   box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
-    h('b', {}, 'Water level sensor firmware update running'),
-    h('div', { class: 'muted' }, 'Don\'t restart the water driver, reboot the Pi or update the software until it has finished (a few minutes). The page blocks it meanwhile.'))));
+    h('b', {}, 'Water level sensor update running'),
+    h('div', { class: 'muted' }, 'It downloads the new firmware from the Pi over Wi-Fi and restarts by itself (about a minute). Please don\'t reboot the Pi meanwhile.'))));
 }
 
 // Gas / Water / Fridge tab: swap in a fresh top card (level, height, drawing, temperatures)
@@ -914,11 +918,30 @@ async function tabDevice(kind) {
       card.append(h('h4', { class: 'group' }, 'Calibration'), h('div', { class: 'row' },
         primary('Calibrate', () => flowWaterCalibrate(), !canEdit()),
         plain('Change the water level sensor', () => { const w = wizOpen(spec.title); flowWater(w); w.back = () => openSetup(); })));
-      // the van Wi-Fi name and password only matter for "Join the van Wi-Fi"
+      // Sensor Wi-Fi as one switch: AP on / Wi-Fi network / Bluetooth only
       const mode = form.fields.wifi_mode && form.fields.wifi_mode.input;
-      const van = ['wifi_ssid', 'wifi_password'].map(k => form.fields[k] && form.fields[k].input.closest('.field')).filter(Boolean);
-      const show = () => van.forEach(el => { el.style.display = mode && mode.value === 'van' ? '' : 'none'; });
-      if (mode) { mode.addEventListener('change', show); show(); }
+      if (mode) {
+        const field = mode.closest('.field');
+        const opts = [['ap', 'AP on'], ['van', 'Wi-Fi network'], ['auto', 'Bluetooth only']];
+        const help = { ap: 'The sensor\'s own Wi-Fi "Watertank-1" is always on (uses the most energy).',
+          van: 'The sensor joins the Wi-Fi network below; its page is then reachable in the van network.',
+          auto: 'Saves energy: Wi-Fi off. It only comes on by itself if the Pi can\'t reach the sensor over Bluetooth for 15 minutes, or for 30 minutes after pressing the BOOT button.' };
+        const seg = h('div', { class: 'seg', role: 'radiogroup' });
+        const note = h('div', { class: 'help' });
+        const draw = () => {
+          const cur = mode.value === 'off' || !mode.value ? 'auto' : mode.value;
+          clear(seg).append(...opts.map(([v, label]) => h('button', { type: 'button', role: 'radio', 'aria-checked': cur === v,
+            class: 'segbtn' + (cur === v ? ' on' : ''), disabled: !canEdit(),
+            onclick: () => { mode.value = v; mode.dispatchEvent(new Event('input')); mode.dispatchEvent(new Event('change')); draw(); } }, label)));
+          note.textContent = help[cur];
+        };
+        mode.style.display = 'none';
+        field.querySelectorAll('.help').forEach(el => { el.style.display = 'none'; });
+        field.append(seg, note);
+        draw();
+      }
+      // the Wi-Fi name and password are needed for "Wi-Fi network" and for updates from this page
+      // shown always: the firmware update downloads over this Wi-Fi in every mode
     }
     main.append(card);
   } else if (simple.length || forget) main.append(h('div', { class: 'card' }, h('h3', {}, 'Settings'), simple.map(row), forget));
@@ -2400,13 +2423,15 @@ function senderCard() {
     noData ? noDataHelp(svc) : link && link !== 'ok' && dev && val(dev, '/Connected') === 1 ? linkHelp(link, inst) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
       h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(),
-        onclick: () => confirmThen('Update the sensor firmware' + (latest ? ' to ' + latest : '') + '? Over Bluetooth this takes a few minutes; the water level pauses meanwhile. If it fails, the sensor keeps its old firmware.', async () => {
+        onclick: () => confirmThen('Update the sensor firmware' + (latest ? ' to ' + latest : '') + '? The sensor joins the Wi-Fi from Settings → Connection for a moment, downloads it from the Pi and restarts (about a minute). If anything fails it keeps its old firmware.', async () => {
           const x = await api('/api/sender_update', {});
           toast(x.ok ? x.data.message : x.data.error, !x.ok);
           if (x.ok) watchSenderUpdate(body);
         }) }, newer || !inst ? 'Update sensor firmware' : 'Reinstall sensor firmware'),
       h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
-      h('span', { class: 'muted' }, 'Wi-Fi of the sensor: Settings → Connection below.')),
+      h('span', { class: 'muted' }, sec && (sec.values.wifi_ssid || '').trim()
+        ? 'Updates download over the Wi-Fi “' + sec.values.wifi_ssid + '”.'
+        : 'To update from here, enter the Wi-Fi name and password under Settings → Connection.')),
     body);
   return card;
 }
@@ -2529,16 +2554,18 @@ async function checkSenderFw(btn) {
   await renderTab();
 }
 
+// Follow the update: download, command over Bluetooth, the sensor fetching it, the new version
 async function watchSenderUpdate(body) {
   const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:30vh;margin-top:8px' }, 'starting…');
   clear(body).append(pre);
-  for (let i = 0; i < 600; i++) {
+  for (let i = 0; i < 400; i++) {
     await new Promise(r => setTimeout(r, 2000));
     const x = await api('/api/sender_update_log');
     if (!x.ok) continue;
-    pre.textContent = x.data.text || '(no output yet)';
+    pre.textContent = x.data.text || '(starting…)';
     pre.scrollTop = pre.scrollHeight;
-    if (!x.data.running) { toast(x.data.code === 0 ? 'Water level sensor updated. The new version shows after its next check-in.' : 'Water level sensor update failed, see the log.', x.data.code !== 0); return; }
+    if (x.data.state === 'done') { toast('The water level sensor is updated.'); await refreshState(); return; }
+    if (x.data.state === 'failed') { toast('The update did not work, see the log. The sensor keeps its old firmware.', true); return; }
   }
 }
 

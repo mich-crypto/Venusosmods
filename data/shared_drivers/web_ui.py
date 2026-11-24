@@ -37,7 +37,6 @@ from gi.repository import GLib  # noqa: E402
 
 import battery_debug  # noqa: E402
 import config_tools as ct  # noqa: E402
-import esp32_hydro_protocol as esp32_proto  # noqa: E402
 import devices  # noqa: E402
 import rawlog  # noqa: E402
 import netmon  # noqa: E402
@@ -238,6 +237,8 @@ class App(object):
         self._bus = None
         self.recorder = battery_debug.Recorder(interval=opts.get('sample_s', 10))
         self.state_dir = opts.get('state_dir') or os.path.join(HERE, 'state')
+        self.http_port = int(opts.get('port') or 8088)
+        self.fw_job = None                       # the running sensor firmware update, see api_sender_update
         self.starlink = starlink_hub.Hub(opts.get('starlink') or {}, opts.get('telegram') or {},
                                          netmon.Store(os.path.join(self.state_dir, 'starlink.json')))
         self._dumps = {}                   # service -> (time, values), filled by poll_dumps
@@ -328,6 +329,8 @@ class App(object):
                             'text/plain', {'WWW-Authenticate': 'Basic realm="Venus settings"'})
         if req.method == 'GET' and req.path == '/api/state':
             return self.api_state(req)
+        if req.method == 'GET' and req.path.startswith('/fw/'):
+            return self.serve_sensor_fw(req.path)     # the sensor has no password: a one-time address
         if req.method not in ('GET', 'POST'):
             return jsonr({'ok': False, 'error': 'method not allowed'}, 405)
         if not req.path.startswith('/api/'):
@@ -346,8 +349,6 @@ class App(object):
         elif self.password and not authed:
             return jsonr({'ok': False, 'error': 'locked', 'locked': True}, 401)
 
-        if self.blocked_by_sender_update(req):
-            return jsonr({'ok': False, 'error': self.BUSY_MSG, 'busy': True}, 409)
 
         name = (req.method + ' ' + req.path)
         handler = {
@@ -1227,7 +1228,6 @@ class App(object):
         lines = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith('<')]
         reason = '; '.join(l for l in lines[-4:] if l.startswith(('curl', 'wget', 'sh:')))
         return 'could not reach GitHub' + (' (%s)' % reason[:200] if reason else '')
-    SENDER_LOG = '/tmp/venusosmods-sensor-update.log'
 
     # ------------------------------------------------ ESP32 water sender firmware
 
@@ -1252,38 +1252,8 @@ class App(object):
                       'checking': bool(info.get('checking')), 'running': self.sender_update_running()})
 
     def sender_update_running(self):
-        """True while sensor firmware is being sent: from this page, or esp32_ota.py over SSH."""
-        proc = getattr(self, 'sender_proc', None)
-        return (proc is not None and proc.poll() is None) or bool(esp32_proto.ota_running(self.OTA_LOCK))
-
-    OTA_LOCK = None                      # None = the default path (tests use their own)
-
-    def sender_services(self):
-        names = {'esp32_hydro'}
-        sec = self.sender_section()
-        if sec and sec.get('service'):
-            names.add(sec['service'])
-        return names
-
-    BUSY_MSG = ('The water level sensor\'s firmware is being updated. Wait until it has finished '
-                '(a few minutes): a restart now would break the upload.')
-
-    def blocked_by_sender_update(self, req):
-        """Requests that would restart the water driver, the Pi or all services."""
-        if req.method != 'POST' or not self.sender_update_running():
-            return False
-        f, p = req.form, req.path
-        if p in ('/api/reboot', '/api/update_run', '/api/sender_live'):
-            return True
-        if p == '/api/restart':
-            return f.get('target', '') in self.sender_services()
-        if p == '/api/service':
-            return f.get('name', '') in self.sender_services()
-        if p == '/api/driver_config':
-            return ct.kind_of(f.get('section', ''), {}) == 'esp32'
-        if p == '/api/device_add':
-            return f.get('kind', '') == 'water'
-        return False
+        job = self.fw_job
+        return bool(job and job['state'] in ('downloading', 'sent', 'fetched'))
 
     def sender_section(self):
         """The [esp32] section of config.ini (first one), as a dict."""
@@ -1297,34 +1267,140 @@ class App(object):
                 return dict(parser[name], section=name)
         return None
 
+    # -------------------------------- sensor firmware update: Bluetooth asks, Wi-Fi carries
+    #
+    # 1. the Pi downloads the app image from GitHub,
+    # 2. offers it at http://<pi>:8088/fw/<random>.bin for 10 minutes (no password, one-time),
+    # 3. the water driver sends the sensor "fwget <that address>" over Bluetooth, with the van
+    #    Wi-Fi name and password from the settings,
+    # 4. the sensor joins the van Wi-Fi, downloads, installs and restarts,
+    # 5. its next check-in reports the new version.
+    FW_URL = 'https://raw.githubusercontent.com/%s/master/firmware/bin/WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'
+    FW_FILE = '/tmp/venusosmods-sensor-fw.bin'
+    FW_OFFER_S = 600
+
+    def fw_log(self, text):
+        self.fw_job['log'].append('%s  %s' % (time.strftime('%H:%M:%S'), text))
+
+    def own_ip(self):
+        """The Pi's address on the local network (the route to the internet)."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))           # no packet is sent: only picks the route
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except OSError:
+            pass
+        try:                                     # no route to the internet: the first local address
+            out = subprocess.run(['ip', '-o', '-4', 'addr', 'show', 'scope', 'global'],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3).stdout.decode()
+            m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/', out)
+            return m.group(1) if m else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    def sender_device(self, sec):
+        service = sec.get('service') or 'esp32_hydro'
+        for d in self.devices()[0]:
+            if d['service'] == 'com.victronenergy.tank.%s' % service:
+                return 'com.victronenergy.tank.%s' % service, d['values']
+        return 'com.victronenergy.tank.%s' % service, {}
+
     def api_sender_update(self, req):
         if self.sender_update_running():
             return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
-        if self.update_running():
-            return jsonr({'ok': False, 'error': 'the Pi software is being updated: try again when it has finished'}, 409)
         sec = self.sender_section()
         if not sec:
             return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
-        service = sec.get('service') or 'esp32_hydro'
-        values = {}
-        for d in self.devices()[0]:
-            if d['service'] == 'com.victronenergy.tank.%s' % service:
-                values = d['values']
-        mac = values.get('/Hydro/Mac') or sec.get('mac') or ''
-        ip = values.get('/Hydro/WifiIp') or ''
-        args = [sys.executable, os.path.join(HERE, 'esp32_ota.py'), '--download', '--service', service,
-                '--password', sec.get('sender_password') or 'watertank', '--adapter', sec.get('adapter') or 'hci0']
-        if mac:
-            args += ['--mac', mac]
-        if ip:
-            args += ['--ip', ip]
+        name, values = self.sender_device(sec)
+        if not (sec.get('wifi_ssid') or '').strip() and not values.get('/Hydro/WifiIp'):
+            return jsonr({'ok': False, 'error': 'The sensor downloads updates over Wi-Fi: enter the Wi-Fi name and password '
+                          'under Settings → Connection first.'}, 400)
+        if not values.get('/Hydro/Mac'):
+            return jsonr({'ok': False, 'error': 'no reading from the sensor yet, so the Pi can\'t reach it'}, 409)
+        self.fw_job = {'state': 'downloading', 'log': [], 'started': time.time(), 'token': None,
+                       'from_version': values.get('/FirmwareVersion'), 'name': name, 'size': 0}
+        self.fw_log('Downloading the latest sensor firmware from GitHub ...')
+        script = ('curl -fsSL -m 120 -o "$2" "$1" 2>&1 && exit 0; '
+                  'wget -q -T 120 -O "$2" "$1" 2>&1 && exit 0; exit 1')
+        starlink_hub.run_async(['sh', '-c', script, 'fetch', self.FW_URL % self.UPDATE_REPO, self.FW_FILE],
+                               self._fw_downloaded, timeout=150, with_errors=True)
+        return jsonr({'ok': True, 'message': 'Update started: the sensor will download it over Wi-Fi.'})
+
+    def _fw_downloaded(self, rc, out):
+        job = self.fw_job
         try:
-            log_file = open(self.SENDER_LOG, 'w')
-            self.sender_proc = subprocess.Popen(args, stdout=log_file, stderr=subprocess.STDOUT,
-                                                stdin=subprocess.DEVNULL, start_new_session=True)
-        except OSError as e:
-            return jsonr({'ok': False, 'error': 'could not start the update: %s' % e}, 500)
-        return jsonr({'ok': True, 'message': 'Water level sensor update started. Over Bluetooth it takes a few minutes.'})
+            with open(self.FW_FILE, 'rb') as f:
+                data = f.read()
+        except OSError:
+            data = b''
+        if rc != 0 or len(data) < 100000 or data[0] != 0xE9 or data[27] != 0x3C:
+            job['state'] = 'failed'
+            self.fw_log('Download failed: %s' % (self.fetch_error(rc, out.decode('utf-8', 'replace'))
+                                                  if rc != 0 else 'not a sensor firmware file'))
+            return
+        job['data'], job['size'] = data, len(data)
+        job['token'] = os.urandom(8).hex()
+        ip = self.own_ip()
+        if not ip:
+            job['state'] = 'failed'
+            self.fw_log('The Pi has no network address the sensor could download from.')
+            return
+        url = 'http://%s:%d/fw/%s.bin' % (ip, self.http_port, job['token'])
+        self.fw_log('Got %d kB. Offering it to the sensor at %s' % (len(data) // 1024, url.rsplit('/', 1)[0] + '/...'))
+        self.fw_log('Asking the sensor over Bluetooth to join the Wi-Fi and download it ...')
+        try:
+            self.bus.call_blocking(job['name'], '/Hydro/Command', BUS_ITEM, 'SetValue', 'v',
+                                   [dbus.String('fwget ' + url, variant_level=1)], timeout=4)
+        except dbus.exceptions.DBusException as e:
+            job['state'] = 'failed'
+            self.fw_log('The water driver did not take the command: %s' % e)
+            return
+        job['state'] = 'sent'
+        job['sent'] = time.time()
+
+    def serve_sensor_fw(self, path):
+        job = self.fw_job
+        ok = (job and job.get('token') and path == '/fw/%s.bin' % job['token'] and job['state'] in ('sent', 'fetched')
+              and time.time() - job.get('sent', 0) < self.FW_OFFER_S)
+        if not ok:
+            return Response(404, 'not found', 'text/plain')
+        if job['state'] == 'sent':
+            job['state'] = 'fetched'
+            self.fw_log('The sensor is downloading the firmware (%d kB) ...' % (job['size'] // 1024))
+        return Response(200, job['data'], 'application/octet-stream')
+
+    def fw_progress(self):
+        """Move the job on from what the driver reports (command answer, version, errors)."""
+        job = self.fw_job
+        if not job or job['state'] not in ('sent', 'fetched'):
+            return
+        try:
+            values = self.dbus_dump(job['name'], max_age=2)
+        except dbus.exceptions.DBusException:
+            values = {}
+        answer = values.get('/Hydro/CommandResult') or ''
+        if answer and answer != job.get('answer'):
+            job['answer'] = answer
+            self.fw_log('Sensor: %s' % answer)
+            if not answer.startswith('ok'):
+                job['state'] = 'failed'
+                return
+        err = values.get('/Hydro/FwError') or ''
+        if err and job.get('sent') and (values.get('/Hydro/LinkTime') or 0) > job['sent']:
+            job['state'] = 'failed'
+            self.fw_log('Sensor: %s. It keeps its old firmware.' % err)
+            return
+        now_v = values.get('/FirmwareVersion')
+        if now_v and now_v != job['from_version'] and (values.get('/Hydro/LinkTime') or 0) > job.get('sent', 0):
+            job['state'] = 'done'
+            self.fw_log('Done: the sensor now runs firmware %s.' % now_v)
+            return
+        if time.time() - job.get('sent', 0) > self.FW_OFFER_S:
+            job['state'] = 'failed'
+            self.fw_log('No new version reported within 10 minutes: the sensor keeps its old firmware. '
+                        'Check the Wi-Fi name and password, or update on the sensor\'s own page.')
 
     def api_sender_live(self, req):
         """Live view on/off: the water driver connects and reads the raw signal (15 min)."""
@@ -1357,14 +1433,10 @@ class App(object):
         return jsonr({'ok': True, 'now': time.time(), 'values': dict((p, values.get(p)) for p in self.LIVE_PATHS)})
 
     def api_sender_update_log(self, req):
-        try:
-            with open(self.SENDER_LOG) as f:
-                text = f.read()[-6000:]
-        except OSError:
-            text = ''
-        proc = getattr(self, 'sender_proc', None)
-        return jsonr({'ok': True, 'text': text, 'running': self.sender_update_running(),
-                      'code': None if proc is None else proc.poll()})
+        self.fw_progress()
+        job = self.fw_job or {'state': None, 'log': []}
+        return jsonr({'ok': True, 'state': job['state'], 'text': '\n'.join(job['log']),
+                      'running': self.sender_update_running()})
 
     def update_running(self):
         proc = getattr(self, 'update_proc', None)
@@ -1939,11 +2011,14 @@ def main():
     telegram_cfg = dict(parser[args.telegram_section]) if parser.has_section(args.telegram_section) else {}
 
     DBusGMainLoop(set_as_default=True)
+    import venus_service
+    venus_service.use_venus_timezone(dbus.SystemBus())       # log times in the Venus OS time zone
+    GLib.timeout_add_seconds(600, lambda: (venus_service.use_venus_timezone(dbus.SystemBus()), True)[1])
     app = App({'driver_config': args.config, 'init_dir': args.init_dir, 'service_dir': args.service_dir,
                'log_dir': args.log_dir, 'rc_local': args.rc_local, 'password': password,
                'serialbattery_dir': args.serialbattery_dir, 'sample_s': max(1, args.sample_s),
                'starlink': starlink_cfg, 'telegram': telegram_cfg, 'rawlog_dir': args.rawlog_dir,
-               'state_dir': args.state_dir})
+               'state_dir': args.state_dir, 'port': port})
     server = Server(app, host, port)
     log.info('Settings page on http://%s:%d/', host, server.port)
     if not args.no_firewall and get('open_firewall', 'yes').lower() in ct.TRUE:

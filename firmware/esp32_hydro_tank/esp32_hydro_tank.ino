@@ -189,7 +189,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.0"
+#define FW_VERSION           "4.1"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -201,6 +201,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #include <WebServer.h>
 #include <Update.h>
 #include <DNSServer.h>
+#include <HTTPUpdate.h>
 #include <ESPmDNS.h>
 #endif
 
@@ -598,14 +599,12 @@ static void updateAdvertisement() {
 // The Pi checks in every few minutes ("hb"), which keeps the own Wi-Fi off in
 // auto mode, sets the Wi-Fi mode and reads "info". Everything except "auth"
 // and "info" needs "auth <password>" first (the own Wi-Fi password).
-// "ota begin <size> <md5>", 'D' chunks, "ota end" update the firmware; those
-// are answered at once (read the reply characteristic), the rest in loop().
-// "ota begin2 <size> <md5>" (firmware 3.0+): every chunk is 'D' + its offset
-// (uint32 LE) + data, so the Pi can repeat a chunk after an error, or carry on
-// after a dropped connection: "ota status" says how much has arrived. The
-// update survives a disconnect for OTA_IDLE_MS. The reply to begin2 names the
-// packet size that fits one Bluetooth frame ("ok ota begin v2 mtu=247").
-#define OTA_IDLE_MS          (2UL * 60UL * 1000UL)
+// Firmware updates (4.1+): Bluetooth only carries one short command,
+//   fwget <url>\t<van Wi-Fi name>\t<van Wi-Fi password>
+// The sensor joins the van Wi-Fi, downloads the file from the Pi over HTTP and
+// installs it (checked by the update library; the old firmware stays if
+// anything fails), then restarts. Sending 1.2 MB through Bluetooth was slow
+// and broke easily; Wi-Fi does it in seconds.
 #define LINK_SERVICE_UUID    "5f6d0001-8d4b-4bd1-9a1c-7ad0a8e3c101"
 #define LINK_CMD_UUID        "5f6d0002-8d4b-4bd1-9a1c-7ad0a8e3c101"
 #define LINK_REPLY_UUID      "5f6d0003-8d4b-4bd1-9a1c-7ad0a8e3c101"
@@ -620,6 +619,7 @@ static uint32_t advRestarts = 0;           // how often the watchdog had to rest
 static volatile bool linkConnected = false;
 static String apPassword;                  // own Wi-Fi password, also the Bluetooth key
 static uint32_t lastPiHeard = 0;           // millis() of the last "hb" (0 = never)
+static String fwError;                     // why the last firmware download failed (shown to the Pi)
 
 // Wi-Fi state, run by updateWifi() (stored in NVS namespace "wifi")
 static String wifiMode = WIFI_MODE_DEFAULT; // auto | van | ap
@@ -662,6 +662,7 @@ static String infoJson() {
   j += ",\"sta\":" + String(staConnected() ? 1 : 0) + ",\"ip\":\"" + staIp() + "\"";
   j += ",\"ssid\":\"" + jsonEsc(staSsid) + "\",\"up\":" + String(millis() / 1000);
   j += ",\"pi_ago\":" + String(lastPiHeard ? (long)((millis() - lastPiHeard) / 1000) : -1L);
+  j += ",\"fw_err\":\"" + jsonEsc(fwError) + "\"";
   j += ",\"tn\":[";
   for (uint8_t i = 0; i < MAX_TEMPS; i++) {
     if (i) j += ',';
@@ -674,17 +675,12 @@ static portMUX_TYPE linkMux = portMUX_INITIALIZER_UNLOCKED;
 static String linkQueue[8];
 static uint8_t linkQHead = 0, linkQCount = 0;
 
-// OTA over Bluetooth
-static bool otaActive = false;
-static bool otaV2 = false;                 // chunks carry their offset
-static uint32_t otaSize = 0, otaGot = 0;
-static volatile uint32_t otaLastData = 0;
-static bool otaFailed = false;
-static uint32_t otaRestartAt = 0;
-static volatile bool otaEndRequested = false;   // finished in loop(): the check reads the whole image
-static volatile bool webOtaActive = false;      // an upload on the sensor's own page uses Update too
+// Firmware download from the Pi (fwget), run from loop()
+static String fwUrl, fwSsid, fwPass;       // set by the command, used by fwGet()
+static bool fwPending = false, fwBusy = false;
+static volatile bool webOtaActive = false; // an upload on the sensor's own page
 
-static bool otaBusy() { return otaActive || otaEndRequested || otaRestartAt; }
+static bool otaBusy() { return fwBusy || webOtaActive; }
 
 static void linkSetReply(const String &text) {
   if (linkReply) linkReply->setValue(text);
@@ -709,38 +705,12 @@ static void linkNotify(const String &text) {
   linkSetReply(text.length() > 500 ? text.substring(0, 500) : text);
 }
 
-// Handled right away in the Bluetooth task (ordering matters for the firmware data)
+// Handled right away in the Bluetooth task (the password check); the rest runs in loop()
 static String linkImmediate(const String &cmd) {
   if (cmd.startsWith("auth ")) {
     linkAuthed = cmd.substring(5) == apPassword;
     return linkAuthed ? "ok auth" : "denied: wrong password";
   }
-  if (!linkAuthed) return "denied: auth first";
-  if (cmd.startsWith("ota begin ") || cmd.startsWith("ota begin2 ")) {
-    if (webOtaActive) return "error ota begin: an upload on the sensor's own page is running";
-    bool v2 = cmd.startsWith("ota begin2 ");
-    String rest = cmd.substring(v2 ? 11 : 10);
-    int sp = rest.indexOf(' ');
-    otaSize = (uint32_t)(sp < 0 ? rest : rest.substring(0, sp)).toInt();
-    String md5 = sp < 0 ? String() : rest.substring(sp + 1);
-    if (otaActive) Update.abort();
-    otaGot = 0; otaFailed = false; otaV2 = v2; otaLastData = millis();
-    // a short connection interval (7.5-15 ms) makes the upload several times faster
-    if (linkServer) linkServer->requestConnParams(linkServer->getConnId(), 6, 12, 0, 400);
-    otaActive = otaSize > 0 && Update.begin(otaSize);
-    if (otaActive && md5.length() == 32) Update.setMD5(md5.c_str());
-    if (!otaActive) return String("error ota begin: ") + Update.errorString();
-    if (!v2) return "ok ota begin";
-    uint16_t mtu = linkServer ? linkServer->getPeerMTU(linkServer->getConnId()) : 23;
-    return "ok ota begin v2 mtu=" + String(mtu);
-  }
-  if (cmd == "ota end") {
-    if (!otaActive) return "error ota: not started";
-    otaEndRequested = true;                  // checked in loop(); read the reply until it is not "working"
-    return "working";
-  }
-  if (cmd == "ota abort") { if (otaActive) Update.abort(); otaActive = false; return "ok ota aborted"; }
-  if (cmd == "ota status") return "ota " + String(otaActive ? (otaFailed ? "failed" : "active") : "idle") + " " + String(otaGot) + "/" + String(otaSize);
   return String();
 }
 
@@ -749,13 +719,11 @@ class LinkServerCallbacks : public BLEServerCallbacks {
     linkConnected = true; linkAuthed = false;
     linkConnectedAt = millis();
     advRestart = true;                       // keep broadcasting the level while connected (after a moment)
-    // No connection-parameter request here: right at the start of a connection it made the
-    // Raspberry Pi's built-in Bluetooth drop the link. It is asked for when an update starts.
+    // No connection-parameter request: right at the start of a connection it made the
+    // Raspberry Pi's built-in Bluetooth drop the link.
   }
   void onDisconnect(BLEServer *s) override {
     linkConnected = false; linkAuthed = false;
-    // a running firmware upload waits OTA_IDLE_MS for the Pi to come back (v2), see linkPoll()
-    if (otaActive && !otaV2) { Update.abort(); otaActive = false; }
   }
 };
 
@@ -763,26 +731,6 @@ class LinkCmdCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *c) override {
     String v = c->getValue();
     if (v.length() < 1) return;
-    if (v[0] == 'D') {                       // firmware data, in order
-      if (!otaActive || !linkAuthed || otaFailed) return;
-      const uint8_t *data = (const uint8_t *)v.c_str() + 1;
-      size_t n = v.length() - 1;
-      if (otaV2) {                           // 'D' + offset + data: repeats are harmless
-        if (n < 4) return;
-        uint32_t off = data[0] | (data[1] << 8) | (data[2] << 16) | ((uint32_t)data[3] << 24);
-        data += 4; n -= 4;
-        if (off + n <= otaGot) return;       // already have it (repeated after an error)
-        if (off != otaGot) return;           // a gap: the Pi asks "ota status" and carries on from otaGot
-      }
-      if (otaGot == 0 && n >= 28 && data[27] != 0x3C) {   // first chunk: must be an app image
-        otaFailed = true;
-        linkSetReply("error ota: not an app image (FLASH-AT-0x0 file?)");
-        return;
-      }
-      if (Update.write((uint8_t *)data, n) != n) otaFailed = true;
-      else { otaGot += n; otaLastData = millis(); }
-      return;
-    }
     if (v[0] != 'C') return;
     String cmd = v.substring(1);
     cmd.trim();
@@ -798,30 +746,6 @@ static void handleCommand(String line);
 
 // Queued commands run here, in loop(), like serial commands
 static void linkPoll() {
-  if (otaActive && !linkConnected && millis() - otaLastData > OTA_IDLE_MS) {
-    Update.abort();                          // the Pi did not come back: keep the old firmware
-    otaActive = false;
-    Serial.println("Firmware upload abandoned (no data for 2 minutes), keeping the old firmware.");
-  }
-  if (otaEndRequested) {
-    otaEndRequested = false;
-    otaActive = false;
-    if (otaFailed || otaGot != otaSize) {
-      Update.abort();
-      linkSetReply("error ota: got " + String(otaGot) + " of " + String(otaSize) + " bytes");
-    } else if (!Update.end(true)) {
-      linkSetReply(String("error ota end: ") + Update.errorString());
-    } else {
-      linkSetReply("ok ota done, restarting");
-      otaRestartAt = millis() + 2000;        // after the Pi has read the answer
-      if (!otaRestartAt) otaRestartAt = 1;
-    }
-  }
-  if (otaRestartAt && (int32_t)(millis() - otaRestartAt) >= 0) {
-    Serial.println("Firmware updated over Bluetooth, restarting.");
-    delay(100);
-    ESP.restart();
-  }
   while (true) {
     String cmd;
     portENTER_CRITICAL(&linkMux);
@@ -999,6 +923,7 @@ static void printHelp() {
     "  wifi ssid <name>    van Wi-Fi name    (wifi ssid - clears it)\n"
     "  wifi pass <text>    van Wi-Fi password\n"
     "  info                state as JSON (used by the Pi)\n"
+    "  fwget <url>[\\t<wifi>\\t<password>]  download and install firmware over Wi-Fi\n"
     "  live                raw reading as JSON (the Pi's live view)\n"
     "  sim <mm> | <n>%     broadcast this level instead of the sensor (15 min)\n"
     "  sim off             back to the sensor\n"
@@ -1034,6 +959,21 @@ static void handleCommand(String line) {
     out->print("ok");
   } else if (cmd == "info") {
     out->print(infoJson());
+  } else if (cmd == "fwget") {
+    // url, then (separated by tabs) the van Wi-Fi to join for the download
+    int t1 = rest.indexOf('\t');
+    String url = t1 < 0 ? rest : rest.substring(0, t1);
+    String creds = t1 < 0 ? String() : rest.substring(t1 + 1);
+    int t2 = creds.indexOf('\t');
+    url.trim();
+    if (!url.startsWith("http://")) { out->print("error fwget: needs an http:// address"); return; }
+    fwUrl = url;
+    fwSsid = t2 < 0 ? creds : creds.substring(0, t2);
+    fwPass = t2 < 0 ? String() : creds.substring(t2 + 1);
+    if (fwSsid.length() == 0 && !staConnected()) { out->print("error fwget: no Wi-Fi to download over (set the van Wi-Fi on the Venus OS page)"); return; }
+    fwError = "";
+    fwPending = true;                     // runs in loop() once this reply has gone out
+    out->print("ok fwget: joining the Wi-Fi and downloading");
   } else if (cmd == "sim") {
     if (rest == "off" || rest.length() == 0) {
       bool was = simActive();
@@ -1624,7 +1564,7 @@ static bool wrongImage = false;
 static void handleUpdateDone() {
   bool ok = !Update.hasError() && !wrongImage;
   server.send(200, "text/plain", ok ? "Update OK. The sender restarts; reload the page in ~10 s."
-              : wrongImage ? (otaActive ? "Refused: an update from the Venus OS page is running. Nothing was changed."
+              : wrongImage ? (fwBusy ? "Refused: an update from the Venus OS page is running. Nothing was changed."
                                         : "Wrong file: this is the FLASH-AT-0x0 file for the USB flasher. Upload WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin here. Nothing was changed.")
                            : String("Update failed: ") + Update.errorString());
   if (ok) { delay(500); ESP.restart(); }
@@ -1635,7 +1575,7 @@ static void handleUpdateUpload() {
   if (u.status == UPLOAD_FILE_START) {
     Serial.printf("Firmware update: %s\n", u.filename.c_str());
     wrongImage = false;
-    if (otaActive) { wrongImage = true; Serial.println("Refused: an update from the Pi is running."); return; }
+    if (fwBusy) { wrongImage = true; Serial.println("Refused: an update from the Pi is running."); return; }
     webOtaActive = true;
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_WRITE) {
@@ -1649,11 +1589,42 @@ static void handleUpdateUpload() {
     if (Update.write(u.buf, u.currentSize) != u.currentSize) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_END) {
     if (!wrongImage && !Update.end(true)) Update.printError(Serial);
-    if (!otaActive || !wrongImage) webOtaActive = false;
+    webOtaActive = false;
   } else if (u.status == UPLOAD_FILE_ABORTED) {
     if (!wrongImage) Update.abort();
     webOtaActive = false;
   }
+}
+
+// Download and install the firmware the Pi offers (fwget). Blocks for the few
+// seconds it takes; Bluetooth keeps broadcasting the last reading meanwhile.
+static void fwGet() {
+  fwPending = false;
+  fwBusy = true;
+  Serial.printf("Firmware download from %s\n", fwUrl.c_str());
+  if (!staConnected()) {
+    WiFi.mode(apOn ? WIFI_AP_STA : WIFI_STA);
+    WiFi.begin(fwSsid.c_str(), fwPass.c_str());
+    for (uint32_t t0 = millis(); WiFi.status() != WL_CONNECTED && millis() - t0 < 25000; ) {
+      updateLed();
+      delay(50);
+    }
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    fwError = "could not join the Wi-Fi '" + fwSsid + "'";
+  } else {
+    WiFiClient client;
+    httpUpdate.rebootOnUpdate(true);    // restarts by itself when the new firmware is in
+    httpUpdate.onProgress([](int done, int total) {   // green/red while it loads
+      ledWrite(((done >> 14) & 1) ? 0 : STATUS_LED_MAX, ((done >> 14) & 1) ? STATUS_LED_MAX : 0, 0);
+    });
+    t_httpUpdate_return r = httpUpdate.update(client, fwUrl);
+    if (r == HTTP_UPDATE_NO_UPDATES) fwError = "the Pi had no file";
+    else fwError = "download failed: " + httpUpdate.getLastErrorString();
+  }
+  Serial.printf("Firmware download failed: %s\n", fwError.c_str());
+  staDirty = true;                      // back to the Wi-Fi the mode asks for
+  fwBusy = false;
 }
 
 static void webStart() {
@@ -1737,6 +1708,7 @@ void loop() {
   }
   pollSerial();
 #if USE_WIFI_AP
+  if (fwPending) fwGet();
   updateWifi();
   if (apOn) dns.processNextRequest();
   server.handleClient();
