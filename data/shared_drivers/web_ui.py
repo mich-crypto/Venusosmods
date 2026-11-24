@@ -1408,7 +1408,26 @@ class App(object):
             'services': self.service_states(), 'devices': ours, 'batteries': batteries,
             'serialbattery': bool(sb), 'starlink': self.starlink.summary(),
             'sender_update': self.sender_update_running(),
+            'bluetooth': self.bluetooth_state(),
         })
+
+    def bluetooth_state(self):
+        """'on', 'off' (adapter not powered: no sensor can be heard) or None (no BlueZ / not known).
+        Asked at most every 10 s."""
+        hit = getattr(self, '_bt', None)
+        if hit and time.time() - hit[0] < 10:
+            return hit[1]
+        state = None
+        try:
+            obj = self.bus.get_object('org.bluez', '/org/bluez/hci0', introspect=False)
+            powered = obj.Get('org.bluez.Adapter1', 'Powered', dbus_interface='org.freedesktop.DBus.Properties', timeout=2)
+            state = 'on' if powered else 'off'
+        except dbus.exceptions.DBusException as e:
+            state = 'missing' if 'UnknownObject' in str(e) or 'ServiceUnknown' in str(e) else None
+        except Exception:
+            state = None
+        self._bt = (time.time(), state)
+        return state
 
     # ------------------------------------------------------ driver config
 

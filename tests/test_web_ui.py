@@ -484,6 +484,26 @@ class StarlinkApiTests(AppTestCase):
         self.assertEqual((d['values']['/Hydro/Signal'], d['values']['/Hydro/Live']), (0.512, 1))
         self.assertNotIn('/Level', d['values'])                                           # only the live view's paths
 
+    def test_state_says_when_the_pi_bluetooth_is_off(self):
+        class Obj(object):
+            powered = False
+
+            def Get(inner, iface, prop, dbus_interface=None, timeout=None):
+                assert (iface, prop) == ('org.bluez.Adapter1', 'Powered')
+                return inner.powered
+        obj = Obj()
+
+        class Bus(object):
+            def get_object(inner, name, path, introspect=True):
+                assert (name, path) == ('org.bluez', '/org/bluez/hci0')
+                return obj
+        self.app._bus = Bus()
+        self.app.devices = lambda: ([], [])
+        self.assertEqual(body_of(self.get('/api/state'))['bluetooth'], 'off')
+        obj.powered = True
+        self.app._bt = None                                           # asked at most every 10 s
+        self.assertEqual(body_of(self.get('/api/state'))['bluetooth'], 'on')
+
     def test_a_failed_check_says_why(self):
         body_of(self.get('/api/sender_fw', query='refresh=1'))
         self.started[-1][1](1, b'curl: sh: curl: not found\nwget: wget: bad address \'raw.githubusercontent.com\'\n')
