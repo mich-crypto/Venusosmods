@@ -53,7 +53,7 @@ def ota_running(path=None):
         return pid
     except (OSError, ValueError, IndexError):
         return None
-WIFI_MODES = ('auto', 'van', 'ap')
+WIFI_MODES = ('auto', 'van', 'ap', 'off')
 
 
 def link_commands(password, wifi_mode=None, ssid=None, wifi_password=None):

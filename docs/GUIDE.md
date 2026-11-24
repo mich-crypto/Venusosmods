@@ -184,6 +184,12 @@ light** shows when its page is reachable.
 | Bluetooth only, own Wi-Fi as fallback (default) | Pi and sender talk over Bluetooth; own Wi-Fi only as above | lowest |
 | Join the van Wi-Fi | also joins your van Wi-Fi (*Van Wi-Fi name / password*); its page is then on the van network (link on the Water tab); firmware updates over Wi-Fi in seconds; own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
 | Own Wi-Fi always on | like before 2.7 | highest |
+| Wi-Fi off (firmware 3.4+) | no own Wi-Fi at all, not even after power-on or as fallback; only the **BOOT button** switches it on for 30 minutes | lowest |
+
+The **Turn sender Wi-Fi off / on** button on the Sender card switches between
+*Wi-Fi off* and *Bluetooth only, own Wi-Fi as fallback*. The sender follows at
+its next Bluetooth check-in (within a minute after the button), so the Pi must
+be receiving it.
 
 The Pi needs the **Sender password** (the password of the sender's own Wi-Fi,
 default `watertank`) to change settings and update the firmware. If you change

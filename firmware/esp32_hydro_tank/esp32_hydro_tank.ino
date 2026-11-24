@@ -166,6 +166,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 //   van   also joins the van Wi-Fi (wifi ssid / wifi pass); the own network only
 //         when neither the van Wi-Fi nor the Pi is there.
 //   ap    own network always on (uses the most energy).
+//   off   own network only after pressing BOOT (no start-up window, no fallback).
 // The own network is also on for BOOT_AP_MS after power-on and BUTTON_AP_MS
 // after pressing the BOOT button, and never switches off while a phone is on it.
 #define WIFI_MODE_DEFAULT    "auto"
@@ -188,7 +189,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          60     // ... this long (saves energy: the LED is off 98 % of the time)
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "3.3"
+#define FW_VERSION           "3.4"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -604,7 +605,7 @@ static void loadWifiSettings() {
   staPass = prefs.getString("pass", "");
   prefs.end();
   if (apPassword.length() < 8) apPassword = AP_PASSWORD_DEFAULT;
-  if (wifiMode != "auto" && wifiMode != "van" && wifiMode != "ap") wifiMode = WIFI_MODE_DEFAULT;
+  if (wifiMode != "auto" && wifiMode != "van" && wifiMode != "ap" && wifiMode != "off") wifiMode = WIFI_MODE_DEFAULT;
 }
 
 static void saveWifiSetting(const char *key, const String &value) {
@@ -953,7 +954,7 @@ static void printHelp() {
     "  log                 toggle the periodic status line\n"
     "  fast / fast off     test mode: no smoothing for 15 min (bench tests)\n"
     "  wifi                Wi-Fi state\n"
-    "  wifi mode <m>       auto (Bluetooth, own Wi-Fi as fallback) | van | ap\n"
+    "  wifi mode <m>       auto (Bluetooth, own Wi-Fi as fallback) | van | ap | off\n"
     "  wifi ssid <name>    van Wi-Fi name    (wifi ssid - clears it)\n"
     "  wifi pass <text>    van Wi-Fi password\n"
     "  info                state as JSON (used by the Pi)\n"
@@ -1008,7 +1009,7 @@ static void handleCommand(String line) {
     sub.toLowerCase();
     if (sub == "mode") {
       arg.toLowerCase(); arg.trim();
-      if (arg != "auto" && arg != "van" && arg != "ap") { out->println("wifi mode auto | van | ap"); return; }
+      if (arg != "auto" && arg != "van" && arg != "ap" && arg != "off") { out->println("wifi mode auto | van | ap | off"); return; }
       if (arg != wifiMode) { wifiMode = arg; saveWifiSetting("mode", arg); }
       out->printf("ok wifi mode %s\n", wifiMode.c_str());
     } else if (sub == "ssid") {
@@ -1328,7 +1329,7 @@ async function refresh(){
   $('blue').innerHTML='Bluetooth: '+(s.ble_adv?'<b>broadcasting</b> the level every 2 s':'<b style="color:var(--bad)">not broadcasting</b>')
     +(s.ble_conn?' · '+s.ble_conn+' connected':'')+' · Pi '+(s.pi_ago_s<0?'has not checked in yet':'checked in '+Math.round(s.pi_ago_s/60)+' min ago')
     +(s.ble_restarts?' · broadcast restarted '+s.ble_restarts+'×':'');
-  const modes={auto:'Bluetooth, own Wi-Fi only as fallback',van:'van Wi-Fi'+(s.sta_ip?' ('+s.sta_ip+')':' (not connected)'),ap:'own Wi-Fi always on'};
+  const modes={off:'Wi-Fi off (BOOT switches it on for 30 min)',auto:'Bluetooth, own Wi-Fi only as fallback',van:'van Wi-Fi'+(s.sta_ip?' ('+s.sta_ip+')':' (not connected)'),ap:'own Wi-Fi always on'};
   $('foot').textContent='Wi-Fi mode: '+(modes[s.wifi_mode]||s.wifi_mode)+' (set on the Venus OS page) · Pi '+(s.pi_ago_s<0?'not heard yet':'heard '+Math.round(s.pi_ago_s/60)+' min ago')+' · Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
  }catch(e){$('foot').textContent='No connection to the sender…'}
 }
@@ -1477,7 +1478,9 @@ static void updateWifi() {
   bool button = buttonUntil && (int32_t)(buttonUntil - now) > 0;
   bool wantSta = wifiMode == "van" && staSsid.length() > 0;
   bool staUp = staConnected();
-  bool wantAp = wifiMode == "ap" || now < BOOT_AP_MS || button || (!piRecent() && !staUp);
+  // off: only the BOOT button switches the own Wi-Fi on (no start-up window, no fallback)
+  bool wantAp = wifiMode == "off" ? button
+              : wifiMode == "ap" || now < BOOT_AP_MS || button || (!piRecent() && !staUp);
   if (apOn && !wantAp && (WiFi.softAPgetStationNum() > 0 || now - apOnSince < AP_MIN_ON_MS))
     wantAp = true;                         // a phone is on it, or it only just started
 
