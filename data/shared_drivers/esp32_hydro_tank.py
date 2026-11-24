@@ -10,10 +10,13 @@ and <service>_temp2 (probe 2, temperature2_service = yes), each with its own
 name (the tank's own /Temperature path is only shown by the GUI for Mopeka tanks).
 """
 
+import json
 import logging
+import time
 
 import esp32_hydro_protocol as proto
 import rawlog
+from gi.repository import GLib
 from venus_service import (BleDriver, TankDevice, TemperatureDevice, interpolate, parse_table,
                            FLUID_FRESH_WATER, TEMPERATURE_TYPES)
 
@@ -43,9 +46,26 @@ class Esp32HydroDriver(BleDriver):
             custom_name=config.get('custom_name', ''),
             timeout_s=timeout,
             extra_paths=('/Hydro/HeightMm', '/Hydro/Filling', '/Hydro/Draining',
-                         '/Hydro/Sloshing', '/Hydro/Fault', '/Hydro/Temperature2'))
+                         '/Hydro/Sloshing', '/Hydro/Fault', '/Hydro/Temperature2',
+                         # Bluetooth link (firmware 2.7+)
+                         '/Hydro/WifiMode', '/Hydro/AccessPoint', '/Hydro/WifiIp',
+                         '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac'))
         self.devices.append(self.tank)
         self.raw = rawlog.RawLog('water')
+
+        # Bluetooth link: check in every link_interval s (keeps the sender's own
+        # Wi-Fi off in auto mode), push the Wi-Fi settings, read firmware and state
+        self.link = config.getboolean('link', True)
+        self.link_interval = max(60, config.getint('link_interval', 300))
+        self.sender_password = config.get('sender_password', 'watertank') or 'watertank'
+        self.wifi_mode = config.get('wifi_mode', 'auto').strip().lower()
+        self.wifi_ssid = config.get('wifi_ssid', '')
+        self.wifi_password = config.get('wifi_password', '')
+        self.adapter = config.get('adapter', 'hci0')
+        self.seen_mac = self.mac
+        self.gatt = None
+        self._collector = None
+        self._expected = 0
 
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
         self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
@@ -64,10 +84,80 @@ class Esp32HydroDriver(BleDriver):
         self.devices.append(dev)
         return dev
 
+    # ------------------------------------------------------- Bluetooth link
+
+    def start(self):
+        if self.link:
+            GLib.timeout_add_seconds(20, self._first_link)
+
+    def _first_link(self):
+        self._link_tick()
+        GLib.timeout_add_seconds(self.link_interval, self._link_tick)
+        return False
+
+    def _link_tick(self):
+        if not self.seen_mac or (self.gatt is not None and self.gatt.busy):
+            return True
+        if self.gatt is None or self.gatt.mac != self.seen_mac.upper():
+            from ble_gatt import GattClient
+            self.gatt = GattClient(self.bus, self.seen_mac, proto.LINK_CMD_UUID, proto.LINK_REPLY_UUID,
+                                   self._on_link_notify, adapter=self.adapter, timeout_s=40,
+                                   scanner=getattr(self, 'scanner', None), connect_attempts=2)
+        frames = proto.link_commands(self.sender_password, self.wifi_mode, self.wifi_ssid, self.wifi_password)
+        self._collector = proto.ReplyCollector()
+        self._expected = len(frames) - 1          # auth is answered without a notification
+        self.gatt.exchange(frames, self._on_link_done)
+        return True
+
+    def _on_link_notify(self, data):
+        if self._collector is None:
+            return
+        replies = self._collector.feed(data)
+        if len(replies) >= self._expected and self.gatt is not None:
+            self.gatt.finish()
+
+    def _on_link_done(self, ok, error):
+        replies = self._collector.replies if self._collector else []
+        self._collector = None
+        if not ok and len(replies) < self._expected:
+            text = str(error or 'failed')
+            if 'not found' in text:
+                text = 'sender firmware without Bluetooth link (older than 2.7)'
+            log.info('link: %s', text)
+            self.tank['/Hydro/LinkStatus'] = text
+            return
+        if any(r.startswith('denied') for r in replies):
+            log.warning('link: sender refused the password - set sender_password = the sender\'s Wi-Fi password')
+            self.tank['/Hydro/LinkStatus'] = 'wrong sender password'
+            return
+        self.apply_info(replies[-1] if replies else '')
+
+    def apply_info(self, text):
+        """Publish what the sender reports (JSON from its 'info' command)."""
+        try:
+            info = json.loads(text)
+        except ValueError:
+            self.tank['/Hydro/LinkStatus'] = 'unexpected answer'
+            return
+        self.tank['/FirmwareVersion'] = info.get('fw')
+        self.tank['/Hydro/WifiMode'] = info.get('mode')
+        self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
+        self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
+        self.tank['/Hydro/TempNames'] = json.dumps(info.get('tn') or [])
+        self.tank['/Hydro/LinkStatus'] = 'ok'
+        self.tank['/Hydro/LinkTime'] = int(time.time())
+
+    def shutdown(self):
+        if self.gatt is not None:
+            self.gatt.close()
+
     def handle_advertisement(self, mac, manufacturer_data, rssi):
         r = proto.parse(manufacturer_data.get(proto.COMPANY_ID))
         if r is None or r.device_id != self.device_id:
             return
+        if mac != self.seen_mac or self.tank['/Hydro/Mac'] is None:
+            self.seen_mac = mac
+            self.tank['/Hydro/Mac'] = mac
         if r.sequence == self._last_seq:
             return  # same packet seen again, nothing new
         self._last_seq = r.sequence

@@ -72,6 +72,18 @@ temperature_type = generic
 temperature2_service = yes
 temperature2_name = Temperature 2
 temperature2_type = generic
+# Sender firmware 2.7+: the Pi checks in over Bluetooth every link_interval s,
+# sets the sender's Wi-Fi and reads its firmware version (Water tab).
+#   auto = Bluetooth only, the sender's own Wi-Fi starts when the Pi is silent 15 min
+#   van  = the sender also joins the van Wi-Fi (wifi_ssid / wifi_password)
+#   ap   = the sender's own Wi-Fi always on
+wifi_mode = auto
+#wifi_ssid = Camper
+#wifi_password = ...
+# The password of the sender's own Wi-Fi: also its Bluetooth key
+sender_password = watertank
+link = yes
+link_interval = 300
 
 [fridge]
 # Compressor fridge with the "Alpicool" Bluetooth controller. Run

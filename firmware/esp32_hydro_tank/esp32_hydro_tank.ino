@@ -36,6 +36,9 @@
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEAdvertising.h>
+#include <BLEServer.h>
+#include <BLE2902.h>
+#include <Update.h>
 #include <esp_arduino_version.h>
 #include <Preferences.h>
 
@@ -157,13 +160,31 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define AP_CHANNEL           6
 #define MDNS_NAME            "watertank"    // also reachable as http://watertank.local
 
+// ---- Wi-Fi modes (set from the Venus OS page over Bluetooth, or "wifi mode ..."):
+//   auto  Bluetooth only (saves energy). The own network starts by itself when
+//         the Pi has not checked in over Bluetooth for PI_SILENT_MS.
+//   van   also joins the van Wi-Fi (wifi ssid / wifi pass); the own network only
+//         when neither the van Wi-Fi nor the Pi is there.
+//   ap    own network always on (uses the most energy).
+// The own network is also on for BOOT_AP_MS after power-on and BUTTON_AP_MS
+// after pressing the BOOT button, and never switches off while a phone is on it.
+#define WIFI_MODE_DEFAULT    "auto"
+#define PI_SILENT_MS         (15UL * 60UL * 1000UL)
+#define BOOT_AP_MS           (10UL * 60UL * 1000UL)
+#define BUTTON_AP_MS         (30UL * 60UL * 1000UL)
+#define AP_MIN_ON_MS         (2UL * 60UL * 1000UL)  // no flapping
+#define PIN_BOOT_BUTTON      0
+
+// ---- Energy: 80 MHz is plenty for this job and saves ~10-15 mA against 240 MHz
+#define CPU_MHZ              80
+
 // ---- Status LED: the board's RGB LED (WS2812) breathes blue while the
 //      Wi-Fi page is up. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
 #define STATUS_LED_PIN       48     // -1 = no LED
 #define STATUS_LED_MAX       40     // peak brightness 0..255 (these LEDs are bright)
 #define BREATH_PERIOD_MS     3000   // one breath in and out
 
-#define FW_VERSION           "2.6"
+#define FW_VERSION           "2.7"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -530,18 +551,242 @@ static void updateAdvertisement() {
   advertising->setAdvertisementData(data);
 }
 
+// ------------------------------------------------------------ Bluetooth link
+//
+// Besides the broadcast, the sender takes short connections from the Pi:
+//   service 5f6d0001-...  write  5f6d0002-...  commands, first byte 'C' + text
+//                                               or 'D' + firmware data
+//                         read/notify 5f6d0003-...  replies, notified in chunks
+//                                               and ended with 0x04 (EOT)
+// The Pi checks in every few minutes ("hb"), which keeps the own Wi-Fi off in
+// auto mode, sets the Wi-Fi mode and reads "info". Everything except "auth"
+// and "info" needs "auth <password>" first (the own Wi-Fi password).
+// "ota begin <size> <md5>", 'D' chunks, "ota end" update the firmware; those
+// are answered at once (read the reply characteristic), the rest in loop().
+#define LINK_SERVICE_UUID    "5f6d0001-8d4b-4bd1-9a1c-7ad0a8e3c101"
+#define LINK_CMD_UUID        "5f6d0002-8d4b-4bd1-9a1c-7ad0a8e3c101"
+#define LINK_REPLY_UUID      "5f6d0003-8d4b-4bd1-9a1c-7ad0a8e3c101"
+
+static BLEServer *linkServer = nullptr;
+static BLECharacteristic *linkReply = nullptr;
+static volatile bool linkAuthed = false;
+static volatile bool linkConnected = false;
+static String apPassword;                  // own Wi-Fi password, also the Bluetooth key
+static uint32_t lastPiHeard = 0;           // millis() of the last "hb" (0 = never)
+
+// Wi-Fi state, run by updateWifi() (stored in NVS namespace "wifi")
+static String wifiMode = WIFI_MODE_DEFAULT; // auto | van | ap
+static String staSsid, staPass;             // van Wi-Fi
+static bool staDirty = false;               // van Wi-Fi settings changed: reconnect
+static bool apOn = false, staOn = false;
+static uint32_t apOnSince = 0, buttonUntil = 0;
+
+static bool piRecent() { return lastPiHeard && millis() - lastPiHeard < PI_SILENT_MS; }
+
+static void loadWifiSettings() {
+  prefs.begin("wifi", true);
+  apPassword = prefs.getString("appass", AP_PASSWORD_DEFAULT);
+  wifiMode = prefs.getString("mode", WIFI_MODE_DEFAULT);
+  staSsid = prefs.getString("ssid", "");
+  staPass = prefs.getString("pass", "");
+  prefs.end();
+  if (apPassword.length() < 8) apPassword = AP_PASSWORD_DEFAULT;
+  if (wifiMode != "auto" && wifiMode != "van" && wifiMode != "ap") wifiMode = WIFI_MODE_DEFAULT;
+}
+
+static void saveWifiSetting(const char *key, const String &value) {
+  prefs.begin("wifi", false);
+  prefs.putString(key, value);
+  prefs.end();
+}
+
+static String jsonEsc(String v) { v.replace("\\", "\\\\"); v.replace("\"", "\\\""); return v; }
+
+static String staIp();                       // in the Wi-Fi part
+static bool staConnected();
+
+// What the Pi reads: firmware, Wi-Fi state, probe names
+static String infoJson() {
+  String j = "{\"fw\":\"" FW_VERSION "\",\"id\":" + String(DEVICE_ID);
+  j += ",\"mode\":\"" + wifiMode + "\",\"ap\":" + String(apOn ? 1 : 0);
+  j += ",\"sta\":" + String(staConnected() ? 1 : 0) + ",\"ip\":\"" + staIp() + "\"";
+  j += ",\"ssid\":\"" + jsonEsc(staSsid) + "\",\"up\":" + String(millis() / 1000);
+  j += ",\"pi_ago\":" + String(lastPiHeard ? (long)((millis() - lastPiHeard) / 1000) : -1L);
+  j += ",\"tn\":[";
+  for (uint8_t i = 0; i < MAX_TEMPS; i++) {
+    if (i) j += ',';
+    j += "\"" + jsonEsc(tempPresent[i] ? tempName[i] : String()) + "\"";
+  }
+  j += "]}";
+  return j;
+}
+static portMUX_TYPE linkMux = portMUX_INITIALIZER_UNLOCKED;
+static String linkQueue[8];
+static uint8_t linkQHead = 0, linkQCount = 0;
+
+// OTA over Bluetooth
+static bool otaActive = false;
+static uint32_t otaSize = 0, otaGot = 0;
+static bool otaFailed = false;
+static uint32_t otaRestartAt = 0;
+static volatile bool otaEndRequested = false;   // finished in loop(): the check reads the whole image
+
+static void linkSetReply(const String &text) {
+  if (linkReply) linkReply->setValue(text);
+}
+
+// Reply to a queued command: notify in MTU-sized chunks, then EOT
+static void linkNotify(const String &text) {
+  if (!linkReply || !linkConnected) return;
+  size_t chunk = 20;
+  if (linkServer) {
+    uint16_t mtu = linkServer->getPeerMTU(linkServer->getConnId());
+    if (mtu > 23) chunk = min((size_t)(mtu - 3), (size_t)180);
+  }
+  for (size_t i = 0; i < text.length(); i += chunk) {
+    String part = text.substring(i, min(text.length(), i + chunk));
+    linkReply->setValue(part);
+    linkReply->notify();
+    delay(5);
+  }
+  linkReply->setValue(String("\x04"));
+  linkReply->notify();
+  linkSetReply(text.length() > 500 ? text.substring(0, 500) : text);
+}
+
+// Handled right away in the Bluetooth task (ordering matters for the firmware data)
+static String linkImmediate(const String &cmd) {
+  if (cmd.startsWith("auth ")) {
+    linkAuthed = cmd.substring(5) == apPassword;
+    return linkAuthed ? "ok auth" : "denied: wrong password";
+  }
+  if (!linkAuthed) return "denied: auth first";
+  if (cmd.startsWith("ota begin ")) {
+    String rest = cmd.substring(10);
+    int sp = rest.indexOf(' ');
+    otaSize = (uint32_t)(sp < 0 ? rest : rest.substring(0, sp)).toInt();
+    String md5 = sp < 0 ? String() : rest.substring(sp + 1);
+    if (otaActive) Update.abort();
+    otaGot = 0; otaFailed = false;
+    otaActive = otaSize > 0 && Update.begin(otaSize);
+    if (otaActive && md5.length() == 32) Update.setMD5(md5.c_str());
+    return otaActive ? "ok ota begin" : String("error ota begin: ") + Update.errorString();
+  }
+  if (cmd == "ota end") {
+    if (!otaActive) return "error ota: not started";
+    otaEndRequested = true;                  // checked in loop(); read the reply until it is not "working"
+    return "working";
+  }
+  if (cmd == "ota abort") { if (otaActive) Update.abort(); otaActive = false; return "ok ota aborted"; }
+  if (cmd == "ota status") return "ota " + String(otaActive ? "active" : "idle") + " " + String(otaGot) + "/" + String(otaSize);
+  return String();
+}
+
+class LinkServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *s) override { linkConnected = true; linkAuthed = false; }
+  void onDisconnect(BLEServer *s) override {
+    linkConnected = false; linkAuthed = false;
+    if (otaActive) { Update.abort(); otaActive = false; }
+  }
+};
+
+class LinkCmdCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+    String v = c->getValue();
+    if (v.length() < 1) return;
+    if (v[0] == 'D') {                       // firmware data, in order
+      if (!otaActive || !linkAuthed || otaFailed) return;
+      size_t n = v.length() - 1;
+      if (otaGot == 0 && n >= 28 && (uint8_t)v[28] != 0x3C) {   // first chunk: must be an app image
+        otaFailed = true;
+        linkSetReply("error ota: not an app image (FLASH-AT-0x0 file?)");
+        return;
+      }
+      if (Update.write((uint8_t *)v.c_str() + 1, n) != n) otaFailed = true;
+      else otaGot += n;
+      return;
+    }
+    if (v[0] != 'C') return;
+    String cmd = v.substring(1);
+    cmd.trim();
+    String now = linkImmediate(cmd);
+    if (now.length()) { linkSetReply(now); return; }
+    portENTER_CRITICAL(&linkMux);
+    if (linkQCount < 8) { linkQueue[(linkQHead + linkQCount) % 8] = cmd; linkQCount++; }
+    portEXIT_CRITICAL(&linkMux);
+  }
+};
+
+static void handleCommand(String line);
+
+// Queued commands run here, in loop(), like serial commands
+static void linkPoll() {
+  if (otaEndRequested) {
+    otaEndRequested = false;
+    otaActive = false;
+    if (otaFailed || otaGot != otaSize) {
+      Update.abort();
+      linkSetReply("error ota: got " + String(otaGot) + " of " + String(otaSize) + " bytes");
+    } else if (!Update.end(true)) {
+      linkSetReply(String("error ota end: ") + Update.errorString());
+    } else {
+      linkSetReply("ok ota done, restarting");
+      otaRestartAt = millis() + 2000;        // after the Pi has read the answer
+      if (!otaRestartAt) otaRestartAt = 1;
+    }
+  }
+  if (otaRestartAt && (int32_t)(millis() - otaRestartAt) >= 0) {
+    Serial.println("Firmware updated over Bluetooth, restarting.");
+    delay(100);
+    ESP.restart();
+  }
+  while (true) {
+    String cmd;
+    portENTER_CRITICAL(&linkMux);
+    bool have = linkQCount > 0;
+    if (have) { cmd = linkQueue[linkQHead]; linkQHead = (linkQHead + 1) % 8; linkQCount--; }
+    portEXIT_CRITICAL(&linkMux);
+    if (!have) return;
+    StringOut reply;
+    if (!linkAuthed && cmd != "info") {
+      reply.print("denied: auth first");
+    } else {
+      out = &reply;
+      handleCommand(cmd);
+      out = &Serial;
+    }
+    if (reply.text.length() == 0) reply.text = "ok";
+    linkNotify(reply.text);
+  }
+}
+
 static void bleStart() {
   BLEDevice::init(ADV_NAME);
+  BLEDevice::setMTU(517);
+  linkServer = BLEDevice::createServer();
+  linkServer->setCallbacks(new LinkServerCallbacks());
+  linkServer->advertiseOnDisconnect(true);
+  BLEService *svc = linkServer->createService(LINK_SERVICE_UUID);
+  BLECharacteristic *cmd = svc->createCharacteristic(LINK_CMD_UUID, BLECharacteristic::PROPERTY_WRITE);
+  cmd->setCallbacks(new LinkCmdCallbacks());
+  linkReply = svc->createCharacteristic(LINK_REPLY_UUID,
+                                        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+#if defined(CONFIG_BLUEDROID_ENABLED)
+  linkReply->addDescriptor(new BLE2902());
+#endif
+  linkReply->setValue(String("ready"));
+  svc->start();
   advertising = BLEDevice::getAdvertising();
 
   uint16_t interval = ADV_INTERVAL_MS * 1000 / 625;  // 0.625 ms units
   advertising->setMinInterval(interval);
   advertising->setMaxInterval(interval + interval / 5);
   advertising->setScanResponse(false);
+  // Connectable, so the Pi can check in; the broadcast data stays the same
 #if defined(CONFIG_NIMBLE_ENABLED)
-  advertising->setAdvertisementType(BLE_GAP_CONN_MODE_NON);  // broadcast only
+  advertising->setAdvertisementType(BLE_GAP_CONN_MODE_UND);
 #else
-  advertising->setAdvertisementType(ADV_TYPE_NONCONN_IND);
+  advertising->setAdvertisementType(ADV_TYPE_IND);
 #endif
 
   updateAdvertisement();
@@ -667,6 +912,11 @@ static void printHelp() {
     "  status              current reading and active table\n"
     "  log                 toggle the periodic status line\n"
     "  fast / fast off     test mode: no smoothing for 15 min (bench tests)\n"
+    "  wifi                Wi-Fi state\n"
+    "  wifi mode <m>       auto (Bluetooth, own Wi-Fi as fallback) | van | ap\n"
+    "  wifi ssid <name>    van Wi-Fi name    (wifi ssid - clears it)\n"
+    "  wifi pass <text>    van Wi-Fi password\n"
+    "  info                state as JSON (used by the Pi)\n"
     "  zero                tank EMPTY: make the current height read 0 mm\n"
     "  zero <mm>           set the zero offset by hand\n"
     "  cal start           tank EMPTY: start a new table with 0 L at the current height\n"
@@ -693,6 +943,34 @@ static void handleCommand(String line) {
 
   if (cmd == "help" || cmd == "?") {
     printHelp();
+  } else if (cmd == "hb") {
+    lastPiHeard = millis();
+    if (!lastPiHeard) lastPiHeard = 1;
+    out->print("ok");
+  } else if (cmd == "info") {
+    out->print(infoJson());
+  } else if (cmd == "wifi") {
+    int sp = rest.indexOf(' ');
+    String sub = sp < 0 ? rest : rest.substring(0, sp);
+    String arg = sp < 0 ? String() : rest.substring(sp + 1);
+    sub.toLowerCase();
+    if (sub == "mode") {
+      arg.toLowerCase(); arg.trim();
+      if (arg != "auto" && arg != "van" && arg != "ap") { out->println("wifi mode auto | van | ap"); return; }
+      if (arg != wifiMode) { wifiMode = arg; saveWifiSetting("mode", arg); }
+      out->printf("ok wifi mode %s\n", wifiMode.c_str());
+    } else if (sub == "ssid") {
+      if (arg == "-") arg = "";
+      if (arg.length() > 32) { out->println("ssid too long"); return; }
+      if (arg != staSsid) { staSsid = arg; saveWifiSetting("ssid", arg); staDirty = true; }
+      out->println("ok wifi ssid");
+    } else if (sub == "pass") {
+      if (arg.length() > 63) { out->println("password too long"); return; }
+      if (arg != staPass) { staPass = arg; saveWifiSetting("pass", arg); staDirty = true; }
+      out->println("ok wifi pass");
+    } else {
+      out->println(infoJson());
+    }
   } else if (cmd == "fast") {
     if (rest == "off") {
       fastUntil = 0;
@@ -854,7 +1132,6 @@ static void updateLed() {
 
 static WebServer server(80);
 static DNSServer dns;        // answers every name with our address: phones then open the page by themselves
-static String apPassword;
 
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -990,7 +1267,8 @@ async function refresh(){
   $('chips').innerHTML=c;
   $('tbl').innerHTML=tab(s.table);
   $('calbox').innerHTML=s.cal_active?'<p class="mut">Measured so far ('+s.cal_points.length+' points):</p>'+tab(s.cal_points):'';
-  $('foot').textContent='Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
+  const modes={auto:'Bluetooth, own Wi-Fi only as fallback',van:'van Wi-Fi'+(s.sta_ip?' ('+s.sta_ip+')':' (not connected)'),ap:'own Wi-Fi always on'};
+  $('foot').textContent='Wi-Fi mode: '+(modes[s.wifi_mode]||s.wifi_mode)+' (set on the Venus OS page) · Pi '+(s.pi_ago_s<0?'not heard yet':'heard '+Math.round(s.pi_ago_s/60)+' min ago')+' · Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
  }catch(e){$('foot').textContent='No connection to the sender…'}
 }
 function tab(p){if(!p||!p.length)return'';let h='<table><tr><th>#</th><th>height mm</th><th>litres</th></tr>';p.forEach((x,i)=>h+='<tr><td>'+i+'</td><td>'+x[0].toFixed(1)+'</td><td>'+x[1].toFixed(1)+'</td></tr>');return h+'</table>'}
@@ -1054,6 +1332,8 @@ static void handleStatus() {
   j += "\"device_id\":" + String(DEVICE_ID) + ",";
   j += "\"mac\":\"" + String(BLEDevice::getAddress().toString().c_str()) + "\",";
   j += "\"uptime_s\":" + String(millis() / 1000) + ",";
+  j += "\"wifi_mode\":\"" + wifiMode + "\",\"pi_ago_s\":" + String(lastPiHeard ? (long)((millis() - lastPiHeard) / 1000) : -1L) + ",";
+  j += "\"sta_ip\":\"" + staIp() + "\",\"ap_on\":" + String(apOn ? "true" : "false") + ",";
   jsonNum(j, "signal", lastSignal, 3);
   j += INPUT_CURRENT_LOOP ? "\"signal_unit\":\"mA\"," : "\"signal_unit\":\"V\",";
   jsonNum(j, "height_mm", height);
@@ -1102,14 +1382,65 @@ static void handleCmd() {
   server.send(200, "text/plain; charset=utf-8", reply.text);
 }
 
+static bool staConnected() { return staOn && WiFi.status() == WL_CONNECTED; }
+static String staIp() { return staConnected() ? WiFi.localIP().toString() : String(); }
+
 static void startAp() {
   String ssid = String(AP_SSID_PREFIX) + DEVICE_ID;
-  WiFi.mode(WIFI_AP);
-  // Modem sleep must stay on while Bluetooth runs too (the default).
   bool ok = WiFi.softAP(ssid.c_str(), apPassword.c_str(), AP_CHANNEL);
-  webUp = ok;
-  Serial.printf("Wi-Fi %s '%s', page http://%s\n", ok ? "network" : "FAILED to start",
+  if (ok) {
+    dns.setErrorReplyCode(DNSReplyCode::NoError);
+    dns.start(53, "*", WiFi.softAPIP());
+  }
+  Serial.printf("Own Wi-Fi %s '%s', page http://%s\n", ok ? "on:" : "FAILED to start",
                 ssid.c_str(), WiFi.softAPIP().toString().c_str());
+}
+
+// Decide every second which Wi-Fi is on (see "Wi-Fi modes" at the top)
+static void updateWifi() {
+  static uint32_t last = 0;
+  static bool mdnsUp = false;
+  uint32_t now = millis();
+  if (now - last < 1000) return;
+  last = now;
+
+  if (digitalRead(PIN_BOOT_BUTTON) == LOW) {
+    if (!buttonUntil || (int32_t)(buttonUntil - now) < (int32_t)(BUTTON_AP_MS - 5000))
+      Serial.println("BOOT pressed: own Wi-Fi on for 30 minutes.");
+    buttonUntil = now + BUTTON_AP_MS;
+    if (!buttonUntil) buttonUntil = 1;
+  }
+  bool button = buttonUntil && (int32_t)(buttonUntil - now) > 0;
+  bool wantSta = wifiMode == "van" && staSsid.length() > 0;
+  bool staUp = staConnected();
+  bool wantAp = wifiMode == "ap" || now < BOOT_AP_MS || button || (!piRecent() && !staUp);
+  if (apOn && !wantAp && (WiFi.softAPgetStationNum() > 0 || now - apOnSince < AP_MIN_ON_MS))
+    wantAp = true;                         // a phone is on it, or it only just started
+
+  if (wantAp != apOn || wantSta != staOn || staDirty) {
+    wifi_mode_t m = wantAp && wantSta ? WIFI_AP_STA : wantAp ? WIFI_AP : wantSta ? WIFI_STA : WIFI_OFF;
+    if (!wantAp && apOn) { dns.stop(); WiFi.softAPdisconnect(true); Serial.println("Own Wi-Fi off (the Pi or the van Wi-Fi is there)."); }
+    if ((!wantSta || staDirty) && staOn) WiFi.disconnect(false);
+    WiFi.mode(m);
+    if (wantAp && !apOn) { startAp(); apOnSince = now; }
+    if (wantSta && (!staOn || staDirty)) {
+      WiFi.setAutoReconnect(true);
+      WiFi.begin(staSsid.c_str(), staPass.c_str());
+      Serial.printf("Joining the van Wi-Fi '%s'\n", staSsid.c_str());
+    }
+    apOn = wantAp; staOn = wantSta; staDirty = false;
+    if (m == WIFI_OFF && mdnsUp) { MDNS.end(); mdnsUp = false; }
+  }
+  if (!mdnsUp && (apOn || staConnected()) && MDNS.begin(MDNS_NAME)) {
+    MDNS.addService("http", "tcp", 80);
+    mdnsUp = true;
+  }
+  static bool wasStaUp = false;
+  if (staConnected() != wasStaUp) {
+    wasStaUp = staConnected();
+    if (wasStaUp) Serial.printf("Van Wi-Fi connected: http://%s\n", WiFi.localIP().toString().c_str());
+  }
+  webUp = apOn || staConnected();
 }
 
 static void handlePassword() {
@@ -1121,12 +1452,11 @@ static void handlePassword() {
   prefs.begin("wifi", false);
   prefs.putString("appass", p);
   prefs.end();
-  server.send(200, "text/plain", "Saved. The Wi-Fi restarts now: join it again with the new password.");
+  server.send(200, "text/plain", "Saved. The Wi-Fi restarts now: join it again with the new password. "
+                                 "Enter the same password as 'Sender password' on the Venus OS page.");
   delay(500);
   apPassword = p;
-  webUp = false;
-  WiFi.softAPdisconnect(true);
-  startAp();
+  if (apOn) { dns.stop(); WiFi.softAPdisconnect(false); startAp(); }
 }
 
 // The full image for the browser flasher starts with the bootloader, which
@@ -1163,11 +1493,8 @@ static void handleUpdateUpload() {
 }
 
 static void webStart() {
-  prefs.begin("wifi", true);
-  apPassword = prefs.getString("appass", AP_PASSWORD_DEFAULT);
-  prefs.end();
-  if (apPassword.length() < 8) apPassword = AP_PASSWORD_DEFAULT;
-  startAp();
+  pinMode(PIN_BOOT_BUTTON, INPUT_PULLUP);
+  updateWifi();                            // own Wi-Fi on: the first minutes after power-on
 
   server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", PAGE); });
   server.on("/api/status", HTTP_GET, handleStatus);
@@ -1178,23 +1505,26 @@ static void webStart() {
   // connectivitycheck.gstatic.com/generate_204, ...). The DNS server sends them here and
   // this redirect makes the phone show its "sign in to network" window with our page.
   server.onNotFound([]() {
-    server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/");
+    String host = server.hostHeader();
+    String self = staConnected() && host == WiFi.localIP().toString() ? host : WiFi.softAPIP().toString();
+    server.sendHeader("Location", "http://" + self + "/");
     server.send(302, "text/plain", "");
   });
   server.begin();
-  dns.setErrorReplyCode(DNSReplyCode::NoError);
-  dns.start(53, "*", WiFi.softAPIP());
-  if (MDNS.begin(MDNS_NAME)) MDNS.addService("http", "tcp", 80);
   Serial.printf("Web page: http://%s or http://%s.local (also opens by itself on most phones)\n",
                 WiFi.softAPIP().toString().c_str(), MDNS_NAME);
   if (!webUp) Serial.println("Web page not reachable: the Wi-Fi network did not start (LED stays off).");
 }
 
+#else
+static bool staConnected() { return false; }
+static String staIp() { return String(); }
 #endif  // USE_WIFI_AP
 
 // ------------------------------------------------------------ setup / loop
 
 void setup() {
+  setCpuFrequencyMhz(CPU_MHZ);
   Serial.begin(115200);
   ledWrite(0, 0, 0);                    // off until the web page runs
   delay(500);
@@ -1209,6 +1539,7 @@ void setup() {
   for (int i = 0; i < 8; i++) { sampleLevel(); delay(20); }
   updateTemperature();
 
+  loadWifiSettings();                   // before Bluetooth: the password is its key too
   bleStart();
 #if USE_WIFI_AP
   webStart();
@@ -1225,9 +1556,11 @@ void loop() {
   if (now - tAdv >= ADV_UPDATE_MS)       { tAdv = now; updateAdvertisement(); }
   pollSerial();
 #if USE_WIFI_AP
-  dns.processNextRequest();
+  updateWifi();
+  if (apOn) dns.processNextRequest();
   server.handleClient();
 #endif
+  linkPoll();
   updateLed();
 
   delay(5);

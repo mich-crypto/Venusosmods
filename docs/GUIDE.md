@@ -164,8 +164,32 @@ Note the **MAC** for later (optional in config.ini).
 
 ### 3.6 The sender's own Wi-Fi page (works without Venus OS)
 
-The sender opens its own Wi-Fi network, so you can check and calibrate it
-even when the Pi is off or Venus OS doesn't work:
+The sender has its own Wi-Fi network with a web page, for when the Pi is off
+or Venus OS doesn't work. To save energy it is **not on all the time**
+(firmware 2.7+). It switches on by itself:
+
+* for the first **10 minutes after power-on**,
+* for **30 minutes after pressing the BOOT button** on the ESP32,
+* whenever the **Pi has not checked in over Bluetooth for 15 minutes**
+  (the fallback: Venus OS down, Pi off, Bluetooth broken),
+* always, if *Sender Wi-Fi* on the Venus OS page is set to *Own Wi-Fi always on*.
+
+It never switches off while a phone is connected to it. The **blue breathing
+light** shows when its page is reachable.
+
+**Sender Wi-Fi** (Venus OS page → Water → Settings):
+
+| Setting | What it does | Energy |
+|---|---|---|
+| Bluetooth only, own Wi-Fi as fallback (default) | Pi and sender talk over Bluetooth; own Wi-Fi only as above | lowest |
+| Join the van Wi-Fi | also joins your van Wi-Fi (*Van Wi-Fi name / password*); its page is then on the van network (link on the Water tab); firmware updates over Wi-Fi in seconds; own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
+| Own Wi-Fi always on | like before 2.7 | highest |
+
+The Pi needs the **Sender password** (the password of the sender's own Wi-Fi,
+default `watertank`) to change settings and update the firmware. If you change
+the Wi-Fi password on the sender's page, enter the same one there.
+
+To use the page:
 
 1. On your phone, join the Wi-Fi **Watertank-1** (password **watertank**).
    The phone may say "no internet": stay connected (*Use without internet*).
@@ -188,9 +212,10 @@ at once and the page updates 4 times a second. Handy on the bench with a
 potentiometer on GPIO4 (outer legs 3V3 and GND, middle leg GPIO4; never 5 V).
 It switches itself off after 15 minutes and at a restart.
 
-**Status light:** the board's RGB LED **breathes blue** once the Wi-Fi
-network and the page are up. It stays off while starting, and also if the
-Wi-Fi could not start (the Serial Monitor then says why). Some boards have the
+**Status light:** the board's RGB LED **breathes blue** while the sender's
+page is reachable (own Wi-Fi on, or connected to the van Wi-Fi). Off = Wi-Fi
+off to save energy (Bluetooth still works), still starting, or the Wi-Fi could
+not start (the Serial Monitor then says why). Press BOOT to switch it on. Some boards have the
 LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
 `STATUS_LED_MAX` sets how bright it gets.
 
@@ -574,11 +599,18 @@ if you forget it. Open the address in Safari and add it to the home screen.
   service open-meteo.com), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
+* **Water → Sender** – the sender's firmware (installed and latest), its
+  Wi-Fi state and when the Pi last reached it over Bluetooth, and **Update
+  sender firmware**: downloads the latest from GitHub and sends it over
+  Bluetooth (a few minutes; the level pauses meanwhile) or over the van Wi-Fi
+  (seconds). The sender checks the file and keeps its old firmware if anything
+  goes wrong. Needs sender firmware 2.7+ once (USB or its own page).
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
-  services). The page checks for a new version by itself every few hours; when
-  there is one, a banner on every tab says so (*Show update* / *Later*) and the
-  Update tab gets a dot.
+  services). The page checks for a new version by itself every few hours, also
+  for new water sender firmware; when there is one, a banner on every tab says
+  so (*Show update* / *Later*) and the Update tab gets a dot. The Update tab
+  also has the sender card.
 * **Debug** – two views for troubleshooting. **Raw data**: what the sensors really send. *Gas* shows
   every Mopeka advertisement with its raw bytes (`data=`), the decoded
   distance, temperature, battery and echo quality, and the level that was

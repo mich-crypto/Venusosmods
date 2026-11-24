@@ -202,6 +202,16 @@ SCHEMA = {
             F('device_id', 'int', 'Sender ID', 'Must match DEVICE_ID in the ESP32 firmware.',
               min=0, max=255),
             F('mac', 'mac', 'Sender address', 'Optional; the ID is enough.'),
+            F('wifi_mode', 'select', 'Sender Wi-Fi', 'Bluetooth only saves the most energy; the sender\'s own '
+              'Wi-Fi then starts by itself when the Pi has not been heard for 15 minutes (or after pressing '
+              'its BOOT button). Needs sender firmware 2.7 or newer.',
+              options=[['auto', 'Bluetooth only, own Wi-Fi as fallback'], ['van', 'Join the van Wi-Fi'],
+                       ['ap', 'Own Wi-Fi always on']], default='auto'),
+            F('wifi_ssid', 'text', 'Van Wi-Fi name', 'Only for "Join the van Wi-Fi".'),
+            F('wifi_password', 'secret', 'Van Wi-Fi password', 'Only for "Join the van Wi-Fi".'),
+            F('sender_password', 'secret', 'Sender password', 'The password of the sender\'s own Wi-Fi '
+              '(default watertank). The Pi needs it to change settings and update the firmware.',
+              default='watertank'),
             F('temperature_service', 'bool', 'Publish temperature 1',
               'Probe 1 as its own temperature sensor in Venus OS (needs a DS18B20).', options=YES_NO, default='no'),
             F('temperature_name', 'text', 'Name of temperature 1', 'Shown in Venus OS and VRM.', default='Temperature 1'),
@@ -216,6 +226,10 @@ SCHEMA = {
               advanced=True, default='20'),
             F('temperature2_instance', 'int', 'Temperature 2 VRM instance', '', min=0, max=999,
               advanced=True, default='21'),
+            F('link', 'bool', 'Bluetooth link', 'Check in with the sender, push the Wi-Fi settings and read its '
+              'firmware version.', options=YES_NO, default='yes', advanced=True),
+            F('link_interval', 'int', 'Check-in every', 'Seconds. The sender\'s own Wi-Fi starts after 15 '
+              'minutes without a check-in.', unit='s', min=60, max=840, default='300', advanced=True),
             F('level_table', 'text', 'Calibration table', 'height_mm:litres pairs made by the Calibrate button. Replaces the '
               'sender\'s own table; clear it to go back to that one.', advanced=True),
             F('capacity_l', 'float', 'Tank size', 'Litres; set by the Calibrate button.', unit='L', min=0, max=100000, advanced=True),

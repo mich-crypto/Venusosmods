@@ -300,7 +300,7 @@ function ago(sec) {
 function renderTabs() {
   const nav = clear($('#tabs'));
   for (const [id, label] of TABS) {
-    const dot = id === 'update' && S.upd && S.upd.available && S.upd.installed;
+    const dot = id === 'update' && (S.upd && S.upd.available && S.upd.installed || senderUpdate());
     nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label, dot ? h('span', { class: 'upd-dot', title: 'update available' }) : null));
   }
 }
@@ -685,7 +685,7 @@ async function gasHistoryCard() {
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
-  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name'] },
+  esp32: { title: 'Water tank', what: 'water tank sender', add: flowWater, simple: ['wifi_mode', 'wifi_ssid', 'wifi_password', 'sender_password', 'temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name'] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
 
@@ -788,6 +788,7 @@ async function tabDevice(kind) {
   if (!canEdit()) main.append(lockedNotice());
   main.append(deviceHeader(kind, section));
   if (kind === 'fridge') main.append(fridgeControls());
+  if (kind === 'esp32') main.append(senderCard());
   if (kind === 'mopeka') { const g = await gasHistoryCard(); if (g) main.append(g); const b = await mopekaBatteryCard(); if (b) main.append(b); }
 
   const form = { section, fields: {} };
@@ -2233,27 +2234,88 @@ async function slSettings(box) {
 // The page asks the Pi on load and every 30 min; the Pi asks GitHub at most every 6 h
 // (or when "Check now" is pressed). A new version shows a banner on every tab.
 async function checkUpdate(tries) {
-  const r = await api('/api/update_check');
+  const [r, f] = await Promise.all([api('/api/update_check'), api('/api/sender_fw')]);
+  if (f.ok) S.senderFw = f.data;
   if (!r.ok) return;
   S.upd = r.data;
-  if (r.data.checking && (tries || 0) < 6) { setTimeout(() => checkUpdate((tries || 0) + 1), 3000); return; }
+  if ((r.data.checking || (f.ok && f.data.checking)) && (tries || 0) < 6) { setTimeout(() => checkUpdate((tries || 0) + 1), 3000); return; }
   renderTabs();
   renderUpdateBanner();
 }
 
+// ------------------------------------------------------- ESP32 water sender
+// "2.10" > "2.9": compare dotted numbers
+function cmpVersion(a, b) {
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; }
+  return 0;
+}
+function senderInstalled() {
+  const dev = S.state && deviceOf(S.state, 'water');
+  return dev ? dev.values['/FirmwareVersion'] : null;
+}
+function senderUpdate() {
+  const inst = senderInstalled(), latest = S.senderFw && S.senderFw.latest;
+  return !!(inst && latest && cmpVersion(latest, inst) > 0);
+}
+
+function senderCard() {
+  const dev = deviceOf(S.state, 'water'), v = dev ? dev.values : {};
+  const inst = v['/FirmwareVersion'], latest = S.senderFw && S.senderFw.latest, newer = senderUpdate();
+  const link = v['/Hydro/LinkStatus'], when = v['/Hydro/LinkTime'];
+  const modes = { auto: 'Bluetooth only, own Wi-Fi as fallback', van: 'van Wi-Fi', ap: 'own Wi-Fi always on' };
+  const body = h('div', {});
+  const card = h('div', { class: 'card' }, h('h3', {}, 'Sender ', newer ? h('span', { class: 'chip warn' }, 'firmware update available') : null),
+    h('div', { class: 'stats' },
+      stat('Firmware', inst || '–', latest ? 'latest ' + latest : '', true),
+      stat('Wi-Fi', v['/Hydro/WifiMode'] ? (modes[v['/Hydro/WifiMode']] || v['/Hydro/WifiMode']) : '–',
+        v['/Hydro/WifiMode'] == null ? '' : (v['/Hydro/AccessPoint'] ? 'own Wi-Fi on' : 'own Wi-Fi off') + (v['/Hydro/WifiIp'] ? ' · ' + v['/Hydro/WifiIp'] : ''), true),
+      stat('Bluetooth link', link || 'not checked yet', when ? ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago' : '', true)),
+    v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sender page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
+    link && link.indexOf('older than 2.7') >= 0 ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Update the sender once over USB or its own page (firmware 2.7 or newer); after that it updates from here.') : null,
+    h('div', { class: 'row', style: 'margin-top:10px' },
+      h('button', { type: 'button', class: 'btn small' + (newer ? ' primary' : ''), disabled: !canEdit() || !inst,
+        onclick: () => confirmThen('Update the sender firmware' + (latest ? ' to ' + latest : '') + '? Over Bluetooth this takes a few minutes; the water level pauses meanwhile. If it fails, the sender keeps its old firmware.', async () => {
+          const x = await api('/api/sender_update', {});
+          toast(x.ok ? x.data.message : x.data.error, !x.ok);
+          if (x.ok) watchSenderUpdate(body);
+        }) }, newer ? 'Update sender firmware' : 'Reinstall sender firmware'),
+      h('span', { class: 'muted' }, 'Wi-Fi settings and the sender password are in Settings below.')),
+    body);
+  return card;
+}
+
+async function watchSenderUpdate(body) {
+  const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:30vh;margin-top:8px' }, 'starting…');
+  clear(body).append(pre);
+  for (let i = 0; i < 600; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const x = await api('/api/sender_update_log');
+    if (!x.ok) continue;
+    pre.textContent = x.data.text || '(no output yet)';
+    pre.scrollTop = pre.scrollHeight;
+    if (!x.data.running) { toast(x.data.code === 0 ? 'Sender updated. The new version shows after its next check-in.' : 'Sender update failed, see the log.', x.data.code !== 0); return; }
+  }
+}
+
 function renderUpdateBanner() {
-  const box = clear($('#updbanner')), d = S.upd;
-  if (!d || !d.available || !d.installed || S.tab === 'update' || S.updHidden === d.latest) return;
+  const box = clear($('#updbanner')), d = S.upd || {};
+  const mods = d.available && d.installed, sender = senderUpdate();
+  const key = (mods ? d.latest : '') + '|' + (sender ? S.senderFw.latest : '');
+  if (!(mods || sender) || S.tab === 'update' || S.updHidden === key) return;
+  const title = mods && sender ? 'New versions of Venus OS mods and the water sender firmware are available'
+    : mods ? 'A new version of Venus OS mods is available' : 'New water sender firmware ' + S.senderFw.latest + ' is available (installed ' + senderInstalled() + ')';
   box.append(h('div', { class: 'banner warn upd-banner' },
-    h('div', { style: 'flex:1;min-width:0' }, h('b', {}, 'A new version of Venus OS mods is available'),
-      d.message ? h('div', { class: 'muted' }, (d.date ? d.date.slice(0, 10) + ' · ' : '') + d.message) : null),
+    h('div', { style: 'flex:1;min-width:0' }, h('b', {}, title),
+      mods && d.message ? h('div', { class: 'muted' }, (d.date ? d.date.slice(0, 10) + ' · ' : '') + d.message) : null),
     h('div', { class: 'row', style: 'margin:0' },
       h('button', { type: 'button', class: 'btn small primary', onclick: () => selectTab('update') }, 'Show update'),
-      h('button', { type: 'button', class: 'btn small', onclick: () => { S.updHidden = d.latest; renderUpdateBanner(); } }, 'Later'))));
+      h('button', { type: 'button', class: 'btn small', onclick: () => { S.updHidden = key; renderUpdateBanner(); } }, 'Later'))));
 }
 
 async function tabUpdate(main) {
   main.append(await updatePanel());
+  if (deviceOf(S.state, 'water')) main.append(senderCard());
   main.append(h('div', { class: 'muted' }, 'The page looks for a new version by itself (every few hours) and shows a banner on every tab when there is one. '
     + 'Updating downloads the latest version from GitHub and restarts the services; your settings in config.ini are kept.'));
 }

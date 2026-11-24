@@ -28,6 +28,42 @@ payload little-endian, 16 bytes (18 with a second temperature probe):
 
 import struct
 
+# Bluetooth link (firmware 2.7+): short GATT connections for the check-in,
+# Wi-Fi settings and firmware updates. Write: b'C' + command text or b'D' +
+# firmware data. Reply: read, or notified in chunks ended by EOT (0x04).
+LINK_SERVICE_UUID = '5f6d0001-8d4b-4bd1-9a1c-7ad0a8e3c101'
+LINK_CMD_UUID = '5f6d0002-8d4b-4bd1-9a1c-7ad0a8e3c101'
+LINK_REPLY_UUID = '5f6d0003-8d4b-4bd1-9a1c-7ad0a8e3c101'
+EOT = b'\x04'
+WIFI_MODES = ('auto', 'van', 'ap')
+
+
+def link_commands(password, wifi_mode=None, ssid=None, wifi_password=None):
+    """The frames of one check-in: auth, heartbeat, Wi-Fi settings, info."""
+    frames = [b'Cauth ' + password.encode('utf-8'), b'Chb']
+    if wifi_mode in WIFI_MODES:
+        frames.append(b'Cwifi mode ' + wifi_mode.encode())
+        if wifi_mode == 'van':
+            frames.append(b'Cwifi ssid ' + (ssid or '-').encode('utf-8'))
+            frames.append(b'Cwifi pass ' + (wifi_password or '').encode('utf-8'))
+    frames.append(b'Cinfo')
+    return frames
+
+
+class ReplyCollector(object):
+    """Joins notified chunks into replies (each ended by EOT)."""
+
+    def __init__(self):
+        self.buf = b''
+        self.replies = []
+
+    def feed(self, data):
+        self.buf += data
+        while EOT in self.buf:
+            part, self.buf = self.buf.split(EOT, 1)
+            self.replies.append(part.decode('utf-8', 'replace'))
+        return self.replies
+
 COMPANY_ID = 0xFFFF
 MAGIC = b'VH'
 VERSION = 1
