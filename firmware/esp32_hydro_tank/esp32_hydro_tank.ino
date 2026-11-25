@@ -1838,9 +1838,16 @@ function rename(n){const v=prompt('Name for temperature '+n+' (up to 32 characte
 async function setPw(){const p=$('pw').value;if(p.length<8||p.length>63){alert('8 to 63 characters');return}
  const r=await fetch('/api/password',{method:'POST',body:new URLSearchParams({p})});alert(await r.text())}
 async function upd(){const f=$('fw').files[0];if(!f)return;const d=new FormData();d.append('fw',f);
- $('outp').textContent='Uploading '+f.name+' …';busy=true;
- try{const r=await fetch('/update',{method:'POST',body:d});$('outp').textContent=await r.text()}catch(e){$('outp').textContent='Failed: '+e}
- busy=false;setTimeout(refresh,8000)}
+ const was=S?S.version:'',o=$('outp');o.textContent='Uploading '+f.name+' … keep this page open and stay on this Wi-Fi.';busy=true;
+ try{const r=await fetch('/update',{method:'POST',body:d});o.textContent=await r.text()}
+ catch(e){
+  // the connection broke: either the sensor restarted with the new firmware before answering, or the upload broke off
+  o.textContent='The connection broke off ('+e.message+'). Waiting for the sensor to answer…';
+  for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,3000));
+   try{const s=await (await fetch('/api/status',{cache:'no-store'})).json();
+    o.textContent=s.version!==was?'Update OK: the sensor now runs v'+s.version+'.':'The upload did not finish: the sensor still runs v'+s.version+' (nothing was changed). Try again close to the sensor, with mobile data off.';break}catch(e2){}}
+ }
+ busy=false;setTimeout(refresh,1000)}
 // Wi-Fi: mode switch, known networks (tap to connect), scan to add one
 const WMODES=[['ap','AP only'],['van','Wi-Fi network'],['auto','Bluetooth only']];
 const WHELP={ap:'Own network “Watertank” always on. Uses the most energy.',van:'Joins a network below; the page is then reachable in that network too. If it is not there and the Pi is silent, the own network comes on.',auto:'Saves energy: Wi-Fi off. The own network comes on by itself when the Pi has not been heard for 15 min, or for 30 min after pressing BOOT.'};
