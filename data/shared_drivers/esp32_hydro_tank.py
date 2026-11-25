@@ -99,6 +99,10 @@ class Esp32HydroDriver(BleDriver):
         self._last_cmd = ''
         self.ota = None                # a firmware upload over Bluetooth, see _ota_step
         self.live_until = 0            # monotonic end of the live view (0 = off)
+        self._last_adv = None          # monotonic time of the sensor's last broadcast
+        self._last_temp = None         # probe 1, from the last broadcast
+        self._silent_kicks = 0         # scan restarts since the broadcasts stopped
+        self._last_power_cycle = None
 
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
         self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
@@ -128,7 +132,35 @@ class Esp32HydroDriver(BleDriver):
     def _first_link(self):
         self._link_tick()
         GLib.timeout_add_seconds(self.link_interval, self._link_tick)
+        GLib.timeout_add_seconds(self.SCAN_WATCH_S, self._scan_watch)
         return False
+
+    # The sensor broadcasts every 2 s. When nothing arrives although the scan is said to run,
+    # the Pi's Bluetooth is stuck (seen on the built-in radio after long connections): restart the
+    # scan, and if that does not help power-cycle the adapter (at most every 10 minutes).
+    SCAN_WATCH_S = 30
+    SILENT_S = 60
+
+    def _scan_watch(self):
+        scanner = getattr(self, 'scanner', None)
+        if scanner is None or self._last_adv is None:
+            return True
+        if self.live_until or self.ota or (self.gatt is not None and self.gatt.busy):
+            return True                        # the live connection itself carries the data
+        silent = monotonic_s() - self._last_adv
+        if silent < self.SILENT_S:
+            self._silent_kicks = 0
+            return True
+        self._silent_kicks += 1
+        recent = self._last_power_cycle is not None and monotonic_s() - self._last_power_cycle < 600
+        if self._silent_kicks % 3 == 0 and not recent:
+            self._last_power_cycle = monotonic_s()
+            log.warning('no broadcast from the sensor for %d s: power-cycling the Bluetooth adapter', silent)
+            scanner.restart(power_cycle=True)
+        elif self._silent_kicks <= 3 or self._silent_kicks % 10 == 0:
+            log.warning('no broadcast from the sensor for %d s: restarting the Bluetooth scan', silent)
+            scanner.restart()
+        return True
 
     def _writable_paths(self, svc):
         svc.add_path('/Hydro/Live', 0, writeable=True, onchangecallback=self._on_live_set)
@@ -388,6 +420,25 @@ class Esp32HydroDriver(BleDriver):
         t['/Hydro/LiveHeightMm'] = d.get('h')
         t['/Hydro/LiveLitres'] = d.get('l')
         t['/Hydro/LiveTime'] = time.time()
+        self._publish_live(d)
+
+    def _publish_live(self, d):
+        """While the live view holds the connection the Pi hears no broadcasts: the live reading
+        keeps the tank (level, litres) current and connected instead."""
+        h, litres = d.get('h'), d.get('l')
+        if h is None or litres is None or d.get('fault'):
+            return
+        cap_l = self.tank.capacity_m3 * 1000.0 if self.tank.capacity_m3 else None
+        if self.level_table and self.capacity_l:
+            litres, cap_l = max(0.0, interpolate(self.level_table, h)), self.capacity_l
+        if not cap_l:
+            return
+        self.tank.publish(level=min(100.0, 100.0 * litres / cap_l), remaining_m3=litres / 1000.0,
+                          capacity_m3=cap_l / 1000.0, temperature=self._last_temp,
+                          raw_value=int(round(h)), raw_unit='mm', extra={'/Hydro/HeightMm': int(round(h))})
+        for dev in (self.temp, self.temp2):
+            if dev is not None and dev['/Temperature'] is not None:
+                dev.mark_seen()
 
     def _on_link_notify(self, data):
         if self._collector is None:
@@ -472,6 +523,8 @@ class Esp32HydroDriver(BleDriver):
         if mac != self.seen_mac or self.tank['/Hydro/Mac'] is None:
             self.seen_mac = mac
             self.tank['/Hydro/Mac'] = mac
+        self._last_adv = monotonic_s()
+        self._last_temp = r.temperature
         if r.sequence == self._last_seq:
             return  # same packet seen again, nothing new
         self._last_seq = r.sequence

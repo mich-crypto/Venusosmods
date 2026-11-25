@@ -162,6 +162,35 @@ class LiveViewTests(unittest.TestCase):
         frames, keep = d.gatt.sent[-1]
         self.assertEqual((frames[-1], keep, s['/Hydro/Live'], d.live_until), (b'Cfast off', False, 0, 0))
 
+    def test_live_reading_keeps_the_tank_connected(self):
+        # while the live connection is open the Pi hears no broadcasts: the live reading carries the level
+        d = self.driver()
+        d.tank.capacity_m3 = 0.1
+        d._on_live_set('/Hydro/Live', 1)
+        d._live_poll()
+        d._on_link_notify(b'ok\x04Test mode on\x04{"s":0.512,"u":"V","raw":310.4,"h":305.2,"l":15.1,"fault":0,"fast":899}\x04')
+        s = d.tank.service
+        self.assertEqual((s['/Connected'], s['/Level'], s['/Hydro/HeightMm']), (1, 15.1, 305))
+
+    def test_silent_scan_is_restarted_then_the_adapter_power_cycled(self):
+        import venus_service
+        d = self.driver()
+        calls = []
+        d.scanner = type('S', (), {'restart': lambda inner, power_cycle=False: calls.append(power_cycle)})()
+        d.gatt.busy = False
+        d._scan_watch()
+        self.assertEqual(calls, [])                                        # never heard: nothing to restart
+        d._last_adv = venus_service.monotonic_s() - 10
+        d._scan_watch()
+        self.assertEqual(calls, [])                                        # broadcasts arrive
+        d._last_adv = venus_service.monotonic_s() - 120
+        for _ in range(3):
+            d._scan_watch()
+        self.assertEqual(calls, [False, False, True])
+        d.live_until = venus_service.monotonic_s() + 60
+        d._scan_watch()
+        self.assertEqual(len(calls), 3)                                    # not while live holds the connection
+
     def test_live_view_needs_a_sender(self):
         d = Esp32HydroDriver('s', section(''))
         self.assertFalse(d._on_live_set('/Hydro/Live', 1))                 # nothing received yet
