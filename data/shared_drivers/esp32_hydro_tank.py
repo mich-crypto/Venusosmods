@@ -62,7 +62,7 @@ class Esp32HydroDriver(BleDriver):
                          '/Hydro/Sloshing', '/Hydro/Fault', '/Hydro/Temperature2',
                          # Bluetooth link (firmware 2.7+)
                          '/Hydro/WifiMode', '/Hydro/AccessPoint', '/Hydro/WifiIp',
-                         '/Hydro/WifiSsid', '/Hydro/WifiKnown',
+                         '/Hydro/WifiSsid', '/Hydro/WifiKnown', '/Hydro/Uptime',
                          '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac',
                          # live view: raw reading over the Bluetooth link
                          '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
@@ -536,10 +536,10 @@ class Esp32HydroDriver(BleDriver):
             return
         if mode == 'command':
             sent = getattr(self.gatt, 'frames_sent', 2) if self.gatt is not None else 0
-            if not ok and not replies and sent < 2 and self._cmd_tries < 3:
+            if not ok and not replies and sent < 2 and self._cmd_tries < 2:
                 # the connection broke before the command went out: the sensor never got it, try again
                 self._cmd_tries += 1
-                self.link_log.write('retry', 'command not delivered (%s), try %d of 3 in 3 s' % (error, self._cmd_tries + 1))
+                self.link_log.write('retry', 'command not delivered (%s), try %d of 3 in 3 s' % (error, self._cmd_tries + 1))   # 3 tries in all
                 self._command = self._last_cmd
                 GLib.timeout_add_seconds(3, self._send_command)
                 return
@@ -605,6 +605,7 @@ class Esp32HydroDriver(BleDriver):
         self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
         self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
         self.tank['/Hydro/WifiSsid'] = info.get('ssid') or ''
+        self.tank['/Hydro/Uptime'] = info.get('up')       # seconds since the sensor started: a restart shows
         if 'kn' in info:
             self.tank['/Hydro/WifiKnown'] = json.dumps(info.get('kn') or [])
         self.tank['/Hydro/TempNames'] = json.dumps(info.get('tn') or [])
