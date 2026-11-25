@@ -2015,10 +2015,15 @@ class App(object):
         if action == 'enable':
             if not was_linked:
                 os.symlink(os.path.join(self.init_dir, name), self.link(name))
+            # A supervise process left over from "Turn off" still remembers "down" and would keep
+            # the driver stopped: tell it to run. (If none runs, svscan starts one within 5 s, up.)
+            subprocess.run(['svc', '-u', self.link(name), self.link(name) + '/log'], timeout=5,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             lines = [l for l in lines if l != ''] + [line]
         else:
             if was_linked:
-                subprocess.run(['svc', '-d', self.link(name), self.link(name) + '/log'], timeout=5)
+                # -d stop, -x let its supervise exit too, so a later "Turn on" starts fresh
+                subprocess.run(['svc', '-dx', self.link(name), self.link(name) + '/log'], timeout=5)
                 os.remove(self.link(name))
         with open(self.rc_local, 'w') as f:
             f.write('\n'.join(lines).rstrip('\n') + '\n')

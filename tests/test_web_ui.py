@@ -1083,7 +1083,7 @@ class SetupGuideTests(AppTestCase):
         self.assertIn('0.194:13.9', sec['level_curve'])                           # the bottle's shape came with the preset
         self.assertTrue(os.path.islink(os.path.join(self.svc, 'mopeka_standard')))
         self.assertIn('mopeka_standard', open(self.rc).read())
-        self.assertEqual(self.svc_calls(), [])                                    # new service: svscan starts it, nothing to restart
+        self.assertEqual([c for c in self.svc_calls() if c.startswith('svc -t')], [])   # new service: started, not restarted
         r = self.post('/api/device_add', {'kind': 'gas', 'mac': 'AA:BB:CC:DD:EE:09'})                # a replacement sensor
         self.assertTrue(body_of(r)['restarted'])
         self.assertEqual(ct.parse_ini(self.config_text())['mopeka_standard']['mac'], 'AA:BB:CC:DD:EE:09')
@@ -1238,7 +1238,9 @@ class ServiceTests(AppTestCase):
         self.assertFalse(os.path.lexists(link))
         with open(self.rc) as f:
             self.assertNotIn('esp32_hydro', f.read())
-        self.assertIn('svc -d %s %s/log' % (link, link), self.svc_calls())
+        self.assertIn('svc -dx %s %s/log' % (link, link), self.svc_calls())    # its supervise exits too
+        self.post('/api/service', {'name': 'esp32_hydro', 'action': 'enable'})
+        self.assertIn('svc -u %s %s/log' % (link, link), self.svc_calls())     # and "on" really starts it
 
     def test_cannot_switch_off_the_page_itself_or_unknown(self):
         self.assertEqual(self.post('/api/service', {'name': 'web_ui', 'action': 'disable'}).status, 400)
