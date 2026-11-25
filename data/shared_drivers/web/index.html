@@ -965,15 +965,47 @@ async function tabHeater(main) {
         h('div', { class: 'muted' }, 'room' + (t ? (t.heat ? ' · heating to ' + f(t.set) + ' °C' : ' · heating off') : ''))),
       h('button', { type: 'button', class: 'btn', title: 'Heating ' + (t && t.heat ? 'off' : 'on'), 'aria-label': 'Heating ' + (t && t.heat ? 'off' : 'on'), disabled: !canEdit() || !live,
         style: 'width:68px;height:68px;border-radius:50%;padding:0;font-size:1.8rem;' + (t && t.heat ? 'background:#e8590c;border-color:#e8590c;color:#fff' : ''),
-        onclick: () => heaterCmd('truma set heat=' + (t && t.heat ? 'off' : 'on'), 'Heating ' + (t && t.heat ? 'off' : 'on') + '…') }, '⏻')),
+        onclick: () => heaterCmd('truma set heat=' + (t && t.heat ? 'off' : 'on') + ' room=' + S.heatSet + ' fan=' + (t && t.fan || 'eco'), 'Heating ' + (t && t.heat ? 'off' : 'on') + '…') }, '⏻')),
     h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('span', { class: 'muted' }, 'Room set point'),
       h('div', { class: 'row', style: 'gap:8px;align-items:center;margin:0' }, round('colder', () => step(-1)), setEl, round('warmer', () => step(1)))),
+    h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('span', { class: 'muted' }, 'Heating fan'),
+      h('div', { class: 'seg', role: 'radiogroup', style: 'margin:0' }, [['eco', 'Eco'], ['high', 'High']].map(([m, l]) =>
+        h('button', { type: 'button', role: 'radio', 'aria-checked': !!(t && t.fan === m), class: 'segbtn' + (t && t.fan === m ? ' on' : ''), disabled: !canEdit() || !live,
+          onclick: () => heaterCmd('truma set heat=' + (t && t.heat ? 'on' : 'off') + ' room=' + S.heatSet + ' fan=' + m, 'Fan ' + l + '…') }, l)))),
     h('div', { class: 'muted', style: 'margin-top:10px' }, 'Hot water' + (t && t.wt != null ? ' · ' + f(t.wt) + ' °C' : '')),
     h('div', { class: 'seg', role: 'radiogroup', style: 'display:flex' }, [['off', 'Off'], ['eco', 'Eco 40°'], ['hot', 'Hot 60°'], ['boost', 'Boost']].map(([m, l]) =>
       h('button', { type: 'button', role: 'radio', 'aria-checked': !!(t && t.water === m), class: 'segbtn' + (t && t.water === m ? ' on' : ''), style: 'flex:1', disabled: !canEdit() || !live,
         onclick: () => heaterCmd('truma set water=' + m) }, l))),
-    h('div', { class: 'muted', style: 'margin-top:6px' }, (t && t.pend ? 'A change is on its way to the heater. ' : '') + (t && t.ago >= 0 ? 'Last report ' + ago(t.ago) + ' ago. ' : '') + 'Also on the Venus OS switch pane ("Truma heater").'),
+    t ? h('div', { class: 'muted', style: 'margin-top:8px' }, [{ off: 'Off', on: 'On', starting: 'Starting', warning: 'Warning', error: 'Error' }[t.op] || t.op,
+      t.burn ? { gas: 'gas burning', el: 'electric heating', mix: 'gas + electric' }[t.burn] : '', t.v != null ? 'heater supply ' + Number(t.v).toFixed(1) + ' V' : '',
+      t.vent && t.vent !== 'Off' ? 'panel: ' + t.vent : ''].filter(Boolean).join(' · ')) : null,
+    h('div', { class: 'muted', style: 'margin-top:6px' }, (t && t.pend ? 'A change is on its way to the heater (the CP plus takes it when it next asks, up to a minute). ' : '') + (t && t.ago >= 0 ? 'Last report ' + ago(t.ago) + ' ago. ' : '') + 'Also on the Venus OS switch pane ("Truma heater").'),
     h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => heaterCmd('truma', 'Asking the heater…') }, 'Refresh now'))));
+  // timer: start and stop with its own room temperature and hot water (the CP plus runs it)
+  const tm = (t && t.tmr) || {};
+  const ts = h('input', { type: 'time', value: tm.start || '', disabled: !canEdit() || !live });
+  const te = h('input', { type: 'time', value: tm.stop || '', disabled: !canEdit() || !live });
+  const tr = h('input', { type: 'number', min: 5, max: 30, step: 1, value: tm.room != null ? tm.room : '', placeholder: 'room °C', style: 'width:100px', disabled: !canEdit() || !live });
+  const tw = h('select', { disabled: !canEdit() || !live }, ['off', 'eco', 'hot', 'boost'].map(m => h('option', { value: m, selected: tm.water === m }, 'hot water ' + m)));
+  main.append(h('details', { class: 'card' }, h('summary', {}, h('b', {}, 'Timer'), tm.on ? h('span', { class: 'chip ok', style: 'margin-left:8px' }, 'on ' + tm.start + '–' + tm.stop) : null),
+    h('div', { class: 'muted', style: 'margin:6px 0' }, 'The CP plus heats between start and stop with these settings, every day, also without the Pi.'),
+    h('div', { class: 'row' }, h('span', { class: 'muted' }, 'from'), ts, h('span', { class: 'muted' }, 'to'), te),
+    h('div', { class: 'row' }, tr, tw),
+    h('div', { class: 'row' },
+      h('button', { type: 'button', class: 'btn small primary', disabled: !canEdit() || !live, onclick: () => {
+        if (!ts.value || !te.value) { toast('Enter the start and stop time', true); return; }
+        heaterCmd('truma set timer=on tstart=' + ts.value + ' tstop=' + te.value + (tr.value ? ' troom=' + tr.value : '') + ' twater=' + tw.value, 'Timer on…');
+      } }, 'Timer on'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !live, onclick: () => heaterCmd('truma set timer=off', 'Timer off…') }, 'Timer off'))));
+  // Combi E: energy source and electric power
+  main.append(h('details', { class: 'card' }, h('summary', {}, h('b', {}, 'Combi E: gas / electric'), t && t.energy && t.energy !== 'gas' ? h('span', { class: 'chip', style: 'margin-left:8px' }, t.energy + (t.elw ? ' ' + t.elw + ' W' : '')) : null),
+    h('div', { class: 'muted', style: 'margin:6px 0' }, 'Only for a Combi E, which can also heat on 230 V. With the plain gas Combi leave it on Gas.'),
+    h('div', { class: 'seg', role: 'radiogroup', style: 'display:flex' }, [['gas', 'Gas'], ['mix', 'Mix'], ['electricity', 'Electric']].map(([m, l]) =>
+      h('button', { type: 'button', role: 'radio', 'aria-checked': !!(t && t.energy === m), class: 'segbtn' + (t && t.energy === m ? ' on' : ''), style: 'flex:1', disabled: !canEdit() || !live,
+        onclick: () => heaterCmd('truma set energy=' + m + ' power=' + (m === 'gas' ? 0 : (t && t.elw) || 900)) }, l))),
+    h('div', { class: 'seg', role: 'radiogroup', style: 'display:flex' }, [0, 900, 1800].map(w =>
+      h('button', { type: 'button', role: 'radio', 'aria-checked': !!(t && t.elw === w), class: 'segbtn' + (t && t.elw === w ? ' on' : ''), style: 'flex:1', disabled: !canEdit() || !live,
+        onclick: () => heaterCmd('truma set energy=' + (w ? (t && t.energy !== 'gas' ? t.energy : 'mix') : 'gas') + ' power=' + w) }, w + ' W')))));
   main.append(h('details', { class: 'card', open: !!(t && t.sim) || !live }, h('summary', {}, h('b', {}, 'Simulation')),
     h('div', { class: 'muted', style: 'margin:6px 0' }, 'Without the heater, the sensor can play one: the room warms toward the set point, the boiler heats up, and you can show a warning or error code. Venus OS and VRM show it like the real heater.'),
     h('div', { class: 'row' },
