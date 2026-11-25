@@ -626,13 +626,18 @@ class WifiTransportTests(unittest.TestCase):
         self.host = '127.0.0.1:%d' % self.server.server_address[1]
 
     def tearDown(self):
-        self.server.shutdown()
+        try:
+            self.server.shutdown()
+        except Exception:
+            pass
 
     def run_loop(self, until, seconds=8):
         """A tiny main loop: runs the timers the driver and run_async set, until until() or time is up."""
         import esp32_hydro_tank
         import starlink_hub
-        timers = []
+        if not hasattr(self, '_timers'):
+            self._timers = []                  # kept across calls: the driver's repeating timers live on
+        timers = self._timers
 
         class Loop(object):
             @staticmethod
@@ -697,6 +702,28 @@ class WifiTransportTests(unittest.TestCase):
         self.run_loop(lambda: s.get('/Hydro/OtaProgress') == 100)
         self.assertEqual(s['/Hydro/CommandResult'], 'ok ota done, restarting')
         self.assertIn(bytes(image), self.uploads[0])                        # the whole file in one multipart body
+
+    def test_auto_learns_the_address_uses_wifi_and_falls_back_to_bluetooth(self):
+        d = Esp32HydroDriver('s', section('device_id = 1\n'))             # default: connection = auto
+        d.ip_file = os.path.join(tempfile.mkdtemp(), 'ip')                 # no address known yet
+        d.sensor_host = ''
+        self.assertEqual((d.conn_mode, d.transport, d.USES_SCANNER), ('auto', 'bluetooth', True))
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        self._pending_start = [lambda: d.apply_info('{"fw":"4.12","mode":"van","ip":"%s","ssid":"Moss"}' % self.host)]
+        self.run_loop(lambda: d.transport == 'wifi')                       # address from a Bluetooth check-in
+        self.assertEqual(d.sensor_host, self.host)
+        self.assertEqual(d.transport, 'wifi')
+        self.assertEqual(d.tank.service['/Hydro/Transport'], 'wifi')
+        self.assertEqual(d.tank.service['/Level'], 15.1)
+        self.assertEqual(type(d._client()).__name__, 'WifiClient')           # commands go over Wi-Fi too
+        before = d.tank.service['/Level']
+        d.handle_advertisement('AA:BB:CC:DD:EE:01', {proto.COMPANY_ID: proto.build(1, 90.0, 90.0, 100.0, 600)}, -60)
+        self.assertEqual(d.tank.service['/Level'], before)                  # one source: Bluetooth not published
+        self.server.shutdown()                                             # the sensor leaves the network
+        self.server.server_close()
+        self.run_loop(lambda: d.transport == 'bluetooth', 25)
+        self.assertEqual(d.transport, 'bluetooth')                         # Bluetooth takes over
+        self.assertEqual(d.tank.service['/Hydro/Transport'], 'bluetooth')
 
     def test_sensor_not_answering(self):
         d = Esp32HydroDriver('s', section('connection = wifi\nsensor_host = 127.0.0.1:9\n'))

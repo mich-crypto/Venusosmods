@@ -211,12 +211,13 @@ SCHEMA = {
             F('wifi_ssid', 'text', 'Wi-Fi network name', 'For "Wi-Fi network", and for firmware updates from '
               'this page: the sensor joins it for a moment to download the update.'),
             F('wifi_password', 'secret', 'Wi-Fi network password', 'The password of that network.'),
-            F('connection', 'select', 'Connection to the sensor', 'Wi-Fi network: the Pi reads the sensor over the '
-              'network (more stable, Bluetooth not used); needs the sensor on the same network as the Pi and '
-              'sensor firmware 4.12 or newer.', options=[['bluetooth', 'Bluetooth'], ['wifi', 'Wi-Fi network']],
-              default='bluetooth'),
-            F('sensor_host', 'text', 'Sensor address', 'For "Wi-Fi network": the sensor\'s IP address, e.g. '
-              '192.168.0.110 (best fixed in the router). Empty: the last address it reported.'),
+            F('connection', 'select', 'Connection to the sensor', 'Automatic: over the Wi-Fi network when the sensor '
+              'is on the same network as the Pi (more stable), Bluetooth as fallback. The Pi learns the sensor\'s '
+              'address by itself. Wi-Fi only: Bluetooth is not used at all.',
+              options=[['auto', 'Automatic: Wi-Fi, Bluetooth as fallback'], ['wifi', 'Wi-Fi network only'],
+                       ['bluetooth', 'Bluetooth only']], default='auto'),
+            F('sensor_host', 'text', 'Sensor address', 'Optional: the sensor\'s IP address, e.g. 192.168.0.110. '
+              'Empty: the address it reports itself.'),
             F('sender_password', 'secret', 'Sensor password', 'The password of the sensor\'s own Wi-Fi '
               '(default watertank). The Pi needs it to change settings and update the firmware.',
               default='watertank'),
