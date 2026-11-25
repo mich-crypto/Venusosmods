@@ -296,6 +296,13 @@ class CommandTests(unittest.TestCase):
         d.gatt.done(False, 'StartNotify failed: Not Connected')
         self.assertEqual(d._command, 'reboot')                             # queued again
         self.assertIsNone(d.tank.service['/Hydro/CommandResult'])
+        d._send_command()
+        d.gatt.frames_sent = 0
+        d.gatt.done(False, 'device not known to BlueZ yet')                # second try
+        d._send_command()
+        d.gatt.done(False, 'device not known to BlueZ yet')                # third and last try
+        self.assertIsNone(d._command)
+        self.assertIn('device not known', d.tank.service['/Hydro/CommandResult'])
 
     def test_sensor_log_lines_and_hourly_stats_go_to_the_persistent_log(self):
         import rawlog

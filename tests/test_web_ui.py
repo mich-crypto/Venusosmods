@@ -647,6 +647,35 @@ class StarlinkApiTests(AppTestCase):
         self.assertEqual(log['state'], 'done')
         self.assertIn('now runs firmware 4.1', log['text'])
 
+    def test_reinstalling_the_same_version_finishes_too(self):
+        sent = self.sensor_ready()
+        self.values['/Hydro/Uptime'] = 5000
+        self.post('/api/sender_update', {})
+        image = bytearray(200000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(self.app.FW_FILE, 'wb') as f:
+            f.write(image)
+        self.started[-1][1](0, b'')
+        self.values.update({'/Hydro/LinkTime': time.time() + 1})          # checked in, same version, not restarted
+        self.assertEqual(body_of(self.get('/api/sender_update_log'))['state'], 'sent')
+        self.values.update({'/Hydro/Uptime': 0, '/Hydro/LinkTime': time.time() + 2})   # restarted: installed again
+        log = body_of(self.get('/api/sender_update_log'))
+        self.assertEqual(log['state'], 'done')
+        self.assertIn('installed again', log['text'])
+
+    def test_cancelling_a_wifi_update_sends_nothing_over_bluetooth(self):
+        sent = self.sensor_ready()
+        self.post('/api/sender_update', {})
+        image = bytearray(200000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(self.app.FW_FILE, 'wb') as f:
+            f.write(image)
+        self.started[-1][1](0, b'')
+        n = len(sent)
+        self.assertTrue(body_of(self.post('/api/sender_update_cancel', {}))['ok'])
+        self.assertEqual(len(sent), n)
+        self.assertFalse(body_of(self.get('/api/state'))['sender_update'])
+
     def test_sensor_update_reports_the_sensor_error(self):
         sent = self.sensor_ready()
         self.post('/api/sender_update', {})

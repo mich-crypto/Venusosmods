@@ -1445,9 +1445,13 @@ class App(object):
             self.fw_log('Sensor: %s. It keeps its old firmware.' % err)
             return
         now_v = values.get('/FirmwareVersion')
-        if now_v and now_v != job['from_version'] and (values.get('/Hydro/LinkTime') or 0) > job.get('sent', 0):
+        fresh = (values.get('/Hydro/LinkTime') or 0) > job.get('sent', 0)
+        up = values.get('/Hydro/Uptime')
+        # a new version, or the same one installed again: then the sensor has restarted since the command
+        restarted = isinstance(up, (int, float)) and up < time.time() - job.get('sent', 0) and not err
+        if now_v and fresh and (now_v != job['from_version'] or restarted):
             job['state'] = 'done'
-            self.fw_log('Done: the sensor now runs firmware %s.' % now_v)
+            self.fw_log('Done: the sensor now runs firmware %s%s.' % (now_v, '' if now_v != job['from_version'] else ' (installed again)'))
             return
         if time.time() - job.get('sent', 0) > (self.FW_OFFER_S if job['via'] == 'wifi' else 1800):
             job['state'] = 'failed'
@@ -1597,8 +1601,12 @@ class App(object):
         if not job or not self.sender_update_running():
             return jsonr({'ok': True, 'message': 'No update is running.'})
         job['state'] = 'failed'
-        self.fw_log('Cancelled on the page. The sensor keeps its old firmware.')
-        self._driver_ota_cancel(job)
+        if job['via'] == 'bluetooth':
+            self.fw_log('Cancelled on the page. The sensor keeps its old firmware.')
+            self._driver_ota_cancel(job)
+        else:
+            # a download over Wi-Fi can't be stopped from here: it ends by itself within a few minutes
+            self.fw_log('Cancelled on the page. If the sensor was already downloading, it may still finish and restart.')
         return jsonr({'ok': True, 'message': 'Update cancelled. The sensor keeps its old firmware.'})
 
     def api_sender_update_log(self, req):
