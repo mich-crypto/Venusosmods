@@ -2533,7 +2533,7 @@ async function checkUpdate(tries) {
   if (f.ok) S.senderFw = f.data;
   if (!r.ok) return;
   S.upd = r.data;
-  if ((r.data.checking || (f.ok && f.data.checking)) && (tries || 0) < 6) { setTimeout(() => checkUpdate((tries || 0) + 1), 3000); return; }
+  if ((r.data.checking || (f.ok && f.data.checking)) && (tries || 0) < 12) { setTimeout(() => checkUpdate((tries || 0) + 1), 3000); return; }   // up to 36 s: the Pi waits 25 s for GitHub
   renderTabs();
   renderUpdateBanner();
 }

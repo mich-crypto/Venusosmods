@@ -1204,7 +1204,7 @@ class App(object):
         info = self.update_info or {}
         stale = time.time() - info.get('checked', 0) > 6 * 3600
         if (req.query.get('refresh') == '1' or stale) and not info.get('checking'):
-            self.update_info = info = dict(info, checking=True)
+            self.update_info = info = dict(info, checking=True, error=None)   # an old error is not shown while checking again
 
             def got(rc, out):
                 raw = out.decode('utf-8', 'replace')
