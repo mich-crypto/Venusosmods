@@ -582,6 +582,9 @@ function refreshDeviceTop() {
   box.replaceChildren(deviceHeader(S.devTop.kind, S.devTop.section));
   const sw = $('#sensorwifi');
   if (sw && !sw.contains(document.activeElement)) drawSensorWifi(sw);
+  // the Firmware card (status, help banners) follows the sensor too, except while an update log runs in it
+  const fc = $('#sendercard');
+  if (fc && !S.fwWatching && !fc.contains(document.activeElement)) fc.replaceChildren(senderCard());
 }
 
 async function svcRestart(name) { await post('/api/restart', { target: name }); await refreshState(); }
@@ -1057,7 +1060,7 @@ async function tabDevice(kind) {
   if (!canEdit() && S.state.password_set) {
     main.append(lockedNotice());
     // the settings need the password; what the sender reports is public (from /api/state)
-    if (kind === 'esp32' && deviceOf(S.state, 'water')) main.append(liveCard(), senderCard());
+    if (kind === 'esp32' && deviceOf(S.state, 'water')) main.append(liveCard(), h('div', { id: 'sendercard' }, senderCard()));
     return;
   }
   const r = await loadDriver();
@@ -1069,7 +1072,7 @@ async function tabDevice(kind) {
   S.devTop = { kind, section };
   main.append(h('div', { id: 'devlive' }, deviceHeader(kind, section)));
   if (kind === 'fridge') main.append(fridgeControls());
-  if (kind === 'esp32') main.append(liveCard(), senderCard());
+  if (kind === 'esp32') main.append(liveCard(), h('div', { id: 'sendercard' }, senderCard()));
   if (kind === 'mopeka') { const g = await gasHistoryCard(); if (g) main.append(g); const b = await mopekaBatteryCard(); if (b) main.append(b); }
 
   const form = { section, fields: {} };
@@ -2851,6 +2854,10 @@ function cancelSenderUpdate() {
 }
 
 async function watchSenderUpdate(body) {
+  S.fwWatching = true;
+  try { await watchUpdateLog(body); } finally { S.fwWatching = false; }
+}
+async function watchUpdateLog(body) {
   const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:30vh;margin-top:8px' }, 'starting…');
   clear(body).append(pre, h('div', { class: 'row', style: 'margin-top:6px' },
     h('button', { type: 'button', class: 'btn small', onclick: cancelSenderUpdate }, 'Cancel update')));
