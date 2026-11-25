@@ -303,6 +303,15 @@ sensor started). The log is kept across reboots in `/data/log/venusosmods/link.l
 *Download* the whole file. The sensor's own page has the same log under
 *Debug log*, and `dlog` in its Terminal.
 
+**The Pi hears nothing over Bluetooth until a reboot**: check the power supply first.
+`dmesg | grep -iE "voltage|hci0"` on the Pi showing `Under-voltage detected!` and then
+`Bluetooth: hci0: Frame reassembly failed` means the supply dips below about 4.63 V and
+garbles the line between the Pi and its built-in Bluetooth chip; after that only a
+reboot resets the chip. Use a proper supply (official Raspberry Pi adapter, or a 12→5 V
+converter of 3 A or more set to 5.1–5.2 V) with a short, thick cable, and don't power
+the water level sensor from the Pi's USB. The water driver records these kernel lines
+in the Connection log the moment it stops hearing anything.
+
 **Bluetooth scan stuck** (the log says "device not known to BlueZ" over and over
 until a reboot): the water driver looks at all Bluetooth devices, not only the
 sensor. If others (gas sensor, fridge, Victron, phones) are still heard, the sensor

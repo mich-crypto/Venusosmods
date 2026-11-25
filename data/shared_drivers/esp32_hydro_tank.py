@@ -166,6 +166,8 @@ class Esp32HydroDriver(BleDriver):
                 log.info('no broadcast from the sensor for %d s, other Bluetooth devices are heard: '
                          'sensor off or out of range', silent)
             return True
+        if self._silent_kicks == 1:
+            self._snapshot('nothing heard for %d s' % silent)
         if self._silent_kicks <= 3 or self._silent_kicks % 10 == 0:
             log.warning('nothing heard over Bluetooth for %d s: restarting this driver\'s scan', silent)
             self.link_log.write('scan', 'nothing heard for %d s: scan restarted' % silent)
@@ -351,6 +353,29 @@ class Esp32HydroDriver(BleDriver):
         if self._quiet_live() and not ('fail' in text or 'error' in text or 'disconnected' in text):
             return
         self.link_log.write('step', '%s %s' % (self._mode or '-', text))
+
+    # What the system looks like the moment the Pi stops hearing anything: the long-term log
+    # then shows it even when nobody was at the Pi (each command at most a few seconds).
+    SNAPSHOT_CMDS = (
+        ('chip', ['hciconfig', '{a}']),
+        ('bluez', ['bluetoothctl', 'show']),
+        # "Under-voltage detected" right before "hci0: Frame reassembly failed": a weak power supply
+        # garbles the serial line to the Bluetooth chip, which then hears nothing until a reboot
+        ('kernel', ['sh', '-c', 'dmesg | grep -iE "bluetooth|hci|brcm|uart|serial|voltage" | tail -15']),
+        ('procs', ['sh', '-c', 'ps | grep -iE "blue|ble|hci|vesmart|esp32|mopeka|fridge" | grep -v grep']),
+    )
+
+    def _snapshot(self, why):
+        self.link_log.write('diag', '---- %s: system state ----' % why)
+        for name, argv in self.SNAPSHOT_CMDS:
+            argv = [x.replace('{a}', self.adapter) for x in argv]
+            try:
+                out = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     timeout=5).stdout.decode('utf-8', 'replace')
+            except (OSError, subprocess.SubprocessError) as e:
+                out = 'not available: %s' % e
+            for line in [x.rstrip() for x in out.splitlines() if x.strip()][:20]:
+                self.link_log.write('diag', '%-6s %s' % (name, line[:200]))
 
     @staticmethod
     def _new_stats():
