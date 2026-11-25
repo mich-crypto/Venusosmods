@@ -172,24 +172,38 @@ class LiveViewTests(unittest.TestCase):
         s = d.tank.service
         self.assertEqual((s['/Connected'], s['/Level'], s['/Hydro/HeightMm']), (1, 15.1, 305))
 
-    def test_silent_scan_is_restarted_then_the_adapter_power_cycled(self):
+    def test_silent_sensor_with_other_devices_heard_touches_nothing(self):
         import venus_service
         d = self.driver()
         calls = []
-        d.scanner = type('S', (), {'restart': lambda inner, power_cycle=False: calls.append(power_cycle)})()
-        d.gatt.busy = False
+
+        class Scanner(object):
+            others = True
+
+            def heard_any_within(inner, s):
+                return inner.others
+
+            def restart(inner):
+                calls.append('restart')
+
+            def power_cycle_if_dead(inner):
+                calls.append('power')
+                return 'connected to the fridge'
+        d.scanner = Scanner()
         d._scan_watch()
-        self.assertEqual(calls, [])                                        # never heard: nothing to restart
-        d._last_adv = venus_service.monotonic_s() - 10
-        d._scan_watch()
-        self.assertEqual(calls, [])                                        # broadcasts arrive
+        self.assertEqual(calls, [])                                        # never heard: nothing to do
         d._last_adv = venus_service.monotonic_s() - 120
-        for _ in range(3):
+        for _ in range(6):
             d._scan_watch()
-        self.assertEqual(calls, [False, False, True])
+        self.assertEqual(calls, [])                                        # others heard: sensor off / out of range
+        d.scanner.others = False                                           # nothing at all heard: the scan is dead
+        d._silent_kicks = 0
+        for _ in range(6):
+            d._scan_watch()
+        self.assertEqual(calls, ['restart', 'restart', 'restart', 'power'])  # own scan first, adapter last (guarded)
         d.live_until = venus_service.monotonic_s() + 60
         d._scan_watch()
-        self.assertEqual(len(calls), 3)                                    # not while live holds the connection
+        self.assertEqual(len(calls), 4)                                    # not while live holds the connection
 
     def test_live_view_needs_a_sender(self):
         d = Esp32HydroDriver('s', section(''))

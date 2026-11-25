@@ -510,7 +510,7 @@ class StuckAdapterTests(unittest.TestCase):
     def make(self, discovering_after_restart):
         import ble_scanner
         test = self
-        state = {'powered': True, 'discovering': False, 'starts': 0, 'stops': 0, 'sets': []}
+        state = {'powered': True, 'discovering': False, 'starts': 0, 'stops': 0, 'sets': [], 'objects': {}}
 
         class Adapter(object):
             def Get(self, iface, prop):
@@ -532,10 +532,17 @@ class StuckAdapterTests(unittest.TestCase):
             def StopDiscovery(self):
                 state['stops'] += 1
 
+            def GetManagedObjects(self):
+                return state['objects']
+
         bus = types.SimpleNamespace(get_object=lambda *a: Adapter(), add_signal_receiver=lambda *a, **k: None)
         previous = ble_scanner.dbus.Interface
         ble_scanner.dbus.Interface = lambda obj, iface: obj
         self.addCleanup(lambda: setattr(ble_scanner.dbus, 'Interface', previous))
+        import tempfile
+        orig_reset = ble_scanner.RESET_FILE
+        ble_scanner.RESET_FILE = os.path.join(tempfile.mkdtemp(), 'reset')
+        self.addCleanup(lambda: setattr(ble_scanner, 'RESET_FILE', orig_reset))
         sc = ble_scanner.BlueZScanner(bus, lambda *a: None)
         sc._adapter_path = '/org/bluez/hci0'
         return sc, state
@@ -555,6 +562,20 @@ class StuckAdapterTests(unittest.TestCase):
         sc._power_on()
         self.assertEqual(st['sets'][-1], ('Powered', True))
         self.assertEqual(sc._stuck, 0)
+
+    def test_shared_adapter_is_left_alone_while_others_use_it(self):
+        import time as _time
+        sc, st = self.make(discovering_after_restart=False)
+        sc.last_any = _time.monotonic() - 20                    # the gas sensor is still heard
+        self.assertIn('other devices are heard', sc.power_cycle_if_dead())
+        sc.last_any = None
+        st['objects'] = {'/org/bluez/hci0/dev_AA': {'org.bluez.Device1': {'Connected': True, 'Address': 'AA:BB'}}}
+        self.assertIn('connected to AA:BB', sc.power_cycle_if_dead())   # e.g. the fridge
+        st['objects'] = {}
+        self.assertIsNone(sc.power_cycle_if_dead())               # dead and nobody using it
+        self.assertEqual(st['sets'], [('Powered', False)])
+        self.assertIn('less than 30 min', sc.power_cycle_if_dead())  # once per 30 min, for all drivers
+        self.assertEqual(st['sets'], [('Powered', False)])
 
     def test_own_session_is_not_a_problem(self):
         sc, st = self.make(discovering_after_restart=True)

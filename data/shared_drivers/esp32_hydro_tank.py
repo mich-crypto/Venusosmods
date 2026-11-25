@@ -102,7 +102,6 @@ class Esp32HydroDriver(BleDriver):
         self._last_adv = None          # monotonic time of the sensor's last broadcast
         self._last_temp = None         # probe 1, from the last broadcast
         self._silent_kicks = 0         # scan restarts since the broadcasts stopped
-        self._last_power_cycle = None
 
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
         self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
@@ -135,9 +134,11 @@ class Esp32HydroDriver(BleDriver):
         GLib.timeout_add_seconds(self.SCAN_WATCH_S, self._scan_watch)
         return False
 
-    # The sensor broadcasts every 2 s. When nothing arrives although the scan is said to run,
-    # the Pi's Bluetooth is stuck (seen on the built-in radio after long connections): restart the
-    # scan, and if that does not help power-cycle the adapter (at most every 10 minutes).
+    # The sensor broadcasts every 2 s. If nothing arrives, look first at the other Bluetooth
+    # devices (gas sensor, fridge, Victron, phones): if they are heard, the scan works and the
+    # sensor is off or out of range, so nothing is touched. Only if nothing at all is heard is
+    # this driver's own scan session restarted (the others keep theirs), and as a last resort
+    # the shared adapter power-cycled: see BlueZScanner.power_cycle_if_dead for its safeguards.
     SCAN_WATCH_S = 30
     SILENT_S = 60
 
@@ -152,14 +153,18 @@ class Esp32HydroDriver(BleDriver):
             self._silent_kicks = 0
             return True
         self._silent_kicks += 1
-        recent = self._last_power_cycle is not None and monotonic_s() - self._last_power_cycle < 600
-        if self._silent_kicks % 3 == 0 and not recent:
-            self._last_power_cycle = monotonic_s()
-            log.warning('no broadcast from the sensor for %d s: power-cycling the Bluetooth adapter', silent)
-            scanner.restart(power_cycle=True)
-        elif self._silent_kicks <= 3 or self._silent_kicks % 10 == 0:
-            log.warning('no broadcast from the sensor for %d s: restarting the Bluetooth scan', silent)
+        if scanner.heard_any_within(self.SILENT_S):
+            if self._silent_kicks == 1:
+                log.info('no broadcast from the sensor for %d s, other Bluetooth devices are heard: '
+                         'sensor off or out of range', silent)
+            return True
+        if self._silent_kicks <= 3 or self._silent_kicks % 10 == 0:
+            log.warning('nothing heard over Bluetooth for %d s: restarting this driver\'s scan', silent)
             scanner.restart()
+        if self._silent_kicks >= 6:            # 3 minutes without any device
+            why = scanner.power_cycle_if_dead()
+            if why and self._silent_kicks == 6:
+                log.warning('Bluetooth adapter not reset: %s', why)
         return True
 
     def _writable_paths(self, svc):

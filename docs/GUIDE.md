@@ -287,6 +287,15 @@ Check from both ends:
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
 
+**Bluetooth scan stuck** (the log says "device not known to BlueZ" over and over
+until a reboot): the water driver looks at all Bluetooth devices, not only the
+sensor. If others (gas sensor, fridge, Victron, phones) are still heard, the sensor
+is off or out of range and nothing is touched. Only when nothing at all has been
+heard for 60 s does it restart its own scan (the other drivers keep theirs). It
+switches the shared adapter off and on only after 3 minutes of total silence,
+when no device is connected (e.g. the fridge), and at most once per 30 minutes
+for all drivers together.
+
 **"Connected" but a red Bluetooth light** on the Water tab ("the Pi can't connect to the sensor"): the
 readings arrive (the sensor broadcasts, the Pi listens), but the short
 connection for settings and updates fails. Sensor firmware 4.0 or newer fixes
