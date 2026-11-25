@@ -201,6 +201,8 @@ class LiveViewTests(unittest.TestCase):
         for _ in range(6):
             d._scan_watch()
         self.assertEqual(calls, ['restart', 'restart', 'restart', 'power'])  # own scan first, adapter last (guarded)
+        import rawlog
+        self.assertIn('Bluetooth adapter not reset: connected to the fridge', '\n'.join(rawlog.read_tail('link')))   # why, in the log
         d.live_until = venus_service.monotonic_s() + 60
         d._scan_watch()
         self.assertEqual(len(calls), 4)                                    # not while live holds the connection
