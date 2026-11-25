@@ -87,6 +87,8 @@
 //      Used until you store a measured table with "cal save" (or paste the
 //      output of the "table" command here). The last entry is 100 %.
 struct TankPoint { float mm; float litres; };
+#define BUILTIN_TANK_NAME    "Wheel-arch tank 100 L"   // name of DEFAULT_TABLE on the page
+#define MAX_TANKS            4      // measured tanks kept in flash besides the built-in one
 // Wheel-arch tank from docs/tank/tank-drawing.jpg, computed with
 // tools/tank_wheelarch.py and scaled to its nominal 100 L. Heights from the
 // inner floor of the leg, where the sensor lies.
@@ -189,7 +191,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.3"
+#define FW_VERSION           "4.4"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -624,6 +626,8 @@ static String fwError;                     // why the last firmware download fai
 // Wi-Fi state, run by updateWifi() (stored in NVS namespace "wifi")
 static String wifiMode = WIFI_MODE_DEFAULT; // auto | van | ap
 static String staSsid, staPass;             // van Wi-Fi
+#define MAX_KNOWN 6                         // Wi-Fi networks remembered (name + password), newest first
+static String knownSsid[MAX_KNOWN], knownPass[MAX_KNOWN];
 static bool staDirty = false;               // van Wi-Fi settings changed: reconnect
 static bool apOn = false, staOn = false;
 static uint32_t apOnSince = 0, buttonUntil = 0;
@@ -639,15 +643,55 @@ static void loadWifiSettings() {
   wifiMode = prefs.getString("mode", WIFI_MODE_DEFAULT);
   staSsid = prefs.getString("ssid", "");
   staPass = prefs.getString("pass", "");
+  for (uint8_t i = 0; i < MAX_KNOWN; i++) {
+    knownSsid[i] = prefs.getString(("k" + String(i)).c_str(), "");
+    knownPass[i] = prefs.getString(("q" + String(i)).c_str(), "");
+  }
   prefs.end();
   if (apPassword.length() < 8) apPassword = AP_PASSWORD_DEFAULT;
   if (wifiMode != "auto" && wifiMode != "van" && wifiMode != "ap" && wifiMode != "off") wifiMode = WIFI_MODE_DEFAULT;
+  if (staSsid.length() && knownIndex(staSsid) < 0) rememberNetwork(staSsid, staPass);   // set before 4.4
 }
 
 static void saveWifiSetting(const char *key, const String &value) {
   prefs.begin("wifi", false);
   prefs.putString(key, value);
   prefs.end();
+}
+
+static int knownIndex(const String &ssid) {
+  if (!ssid.length()) return -1;
+  for (uint8_t i = 0; i < MAX_KNOWN; i++) if (knownSsid[i] == ssid) return i;
+  return -1;
+}
+
+static void saveKnown() {
+  prefs.begin("wifi", false);
+  for (uint8_t i = 0; i < MAX_KNOWN; i++) {
+    prefs.putString(("k" + String(i)).c_str(), knownSsid[i]);
+    prefs.putString(("q" + String(i)).c_str(), knownPass[i]);
+  }
+  prefs.end();
+}
+
+// Put a network at the top of the known list (the oldest drops out when full)
+static void rememberNetwork(const String &ssid, const String &pass) {
+  if (!ssid.length()) return;
+  int at = knownIndex(ssid);
+  if (at == 0 && knownPass[0] == pass) return;
+  int from = at < 0 ? MAX_KNOWN - 1 : at;
+  for (int i = from; i > 0; i--) { knownSsid[i] = knownSsid[i - 1]; knownPass[i] = knownPass[i - 1]; }
+  knownSsid[0] = ssid; knownPass[0] = pass;
+  saveKnown();
+}
+
+static bool forgetNetwork(const String &ssid) {
+  int at = knownIndex(ssid);
+  if (at < 0) return false;
+  for (int i = at; i < MAX_KNOWN - 1; i++) { knownSsid[i] = knownSsid[i + 1]; knownPass[i] = knownPass[i + 1]; }
+  knownSsid[MAX_KNOWN - 1] = ""; knownPass[MAX_KNOWN - 1] = "";
+  saveKnown();
+  return true;
 }
 
 static String jsonEsc(String v) { v.replace("\\", "\\\\"); v.replace("\"", "\\\""); return v; }
@@ -838,10 +882,15 @@ static void bleStart() {
 
 // ------------------------------------------------------------- calibration
 //
-// Stored in flash (NVS namespace "tank"):
-//   zero  float   offset added to the measured height
-//   n     uint    number of table points
-//   pts   blob    TankPoint[n]
+// Stored in flash:
+//   NVS "tank":  zero  float   offset added to the measured height
+//                sel   char    active tank: -1 = built-in table, 0.. = saved slot
+//   NVS "tanks": nm<i> string  name of saved tank i (empty = free slot)
+//                pt<i> blob    its TankPoint[], from "cal save"
+// (4.3 and older kept one table as "n"/"pts" in "tank"; it becomes the first saved tank.)
+static int8_t activeTank = -1;
+static String tankNames[MAX_TANKS];
+static float tankCaps[MAX_TANKS];
 
 static void loadDefaults() {
   tablePoints = sizeof(DEFAULT_TABLE) / sizeof(DEFAULT_TABLE[0]);
@@ -856,23 +905,82 @@ static bool tableValid(const TankPoint *t, size_t n) {
   return t[n - 1].litres > 0;
 }
 
+// Read saved tank i into t; returns the number of points (0 = none / broken)
+static size_t readTank(int i, TankPoint *t) {
+  prefs.begin("tanks", true);
+  size_t bytes = prefs.isKey(("pt" + String(i)).c_str()) ? prefs.getBytesLength(("pt" + String(i)).c_str()) : 0;
+  size_t n = bytes / sizeof(TankPoint);
+  if (n < 2 || n > MAX_POINTS || prefs.getBytes(("pt" + String(i)).c_str(), t, n * sizeof(TankPoint)) != n * sizeof(TankPoint)) n = 0;
+  prefs.end();
+  return n && tableValid(t, n) ? n : 0;
+}
+
+static void writeTank(int i, const String &name, const TankPoint *t, size_t n) {
+  prefs.begin("tanks", false);
+  if (n) { prefs.putString(("nm" + String(i)).c_str(), name); prefs.putBytes(("pt" + String(i)).c_str(), t, n * sizeof(TankPoint)); }
+  else { prefs.remove(("nm" + String(i)).c_str()); prefs.remove(("pt" + String(i)).c_str()); }
+  prefs.end();
+}
+
+// Names and capacities of the saved tanks, for the page
+static void loadTankList() {
+  TankPoint t[MAX_POINTS];
+  for (int i = 0; i < MAX_TANKS; i++) {
+    size_t n = readTank(i, t);
+    prefs.begin("tanks", true);
+    tankNames[i] = n ? prefs.getString(("nm" + String(i)).c_str(), "") : String();
+    prefs.end();
+    if (n && !tankNames[i].length()) tankNames[i] = "Tank " + String(i + 1);
+    tankCaps[i] = n ? t[n - 1].litres : 0;
+  }
+}
+
+static void saveActiveTank() {
+  prefs.begin("tank", false);
+  prefs.putChar("sel", activeTank);
+  prefs.end();
+}
+
+// Make tank i (-1 = built-in) the one that converts height to litres
+static bool useTank(int i) {
+  if (i < 0) {
+    tablePoints = sizeof(DEFAULT_TABLE) / sizeof(DEFAULT_TABLE[0]);
+    memcpy(table, DEFAULT_TABLE, sizeof(DEFAULT_TABLE));
+  } else {
+    TankPoint t[MAX_POINTS];
+    size_t n = i < MAX_TANKS ? readTank(i, t) : 0;
+    if (!n) return false;
+    memcpy(table, t, n * sizeof(TankPoint));
+    tablePoints = n;
+  }
+  activeTank = i;
+  return true;
+}
+
+static String activeTankName() { return activeTank < 0 ? String(BUILTIN_TANK_NAME) : tankNames[activeTank]; }
+
 static void loadCalibration() {
   loadDefaults();
-  prefs.begin("tank", true);
+  prefs.begin("tank", false);
   zeroOffsetMm = prefs.getFloat("zero", ZERO_OFFSET_MM);
+  int8_t sel = prefs.getChar("sel", -1);
+  // the one table of 4.3 and older -> first free slot
   size_t n = prefs.getUInt("n", 0);
-  TankPoint stored[MAX_POINTS];
-  if (n >= 2 && n <= MAX_POINTS &&
-      prefs.getBytes("pts", stored, n * sizeof(TankPoint)) == n * sizeof(TankPoint) &&
-      tableValid(stored, n)) {
-    memcpy(table, stored, n * sizeof(TankPoint));
-    tablePoints = n;
-    Serial.printf("Loaded calibration: %u points, %.1f L, zero offset %.1f mm\n",
-                  (unsigned)n, capacityL(), zeroOffsetMm);
-  } else {
-    Serial.println("Using the default tank table from the sketch (no calibration stored)");
-  }
+  TankPoint old[MAX_POINTS];
+  bool migrate = n >= 2 && n <= MAX_POINTS &&
+                 prefs.getBytes("pts", old, n * sizeof(TankPoint)) == n * sizeof(TankPoint) && tableValid(old, n);
+  if (prefs.isKey("n")) { prefs.remove("n"); prefs.remove("pts"); }
   prefs.end();
+  loadTankList();
+  if (migrate) {
+    for (int i = 0; i < MAX_TANKS; i++)
+      if (!tankNames[i].length()) { writeTank(i, "My calibration", old, n); sel = i; break; }
+    loadTankList();
+    prefs.begin("tank", false); prefs.putChar("sel", sel); prefs.end();
+  }
+  if (!useTank(sel)) useTank(-1);
+  Serial.printf("Tank: %s, %u points, %.1f L, zero offset %.1f mm\n",
+                activeTankName().c_str(), (unsigned)tablePoints, capacityL(), zeroOffsetMm);
 }
 
 static void saveZero() {
@@ -881,12 +989,6 @@ static void saveZero() {
   prefs.end();
 }
 
-static void saveTable() {
-  prefs.begin("tank", false);
-  prefs.putUInt("n", tablePoints);
-  prefs.putBytes("pts", table, tablePoints * sizeof(TankPoint));
-  prefs.end();
-}
 
 // Average the unfiltered height over a few seconds while the water is calm.
 // Blocks the loop; BLE keeps advertising the last payload meanwhile.
@@ -957,6 +1059,9 @@ static void printHelp() {
     "  wifi mode <m>       auto (Bluetooth, own Wi-Fi as fallback) | van | ap | off\n"
     "  wifi ssid <name>    van Wi-Fi name    (wifi ssid - clears it)\n"
     "  wifi pass <text>    van Wi-Fi password\n"
+    "  wifi join <name>[TAB<password>]  join a network (a known one needs no password)\n"
+    "  wifi known          remembered networks\n"
+    "  wifi forget <name>  remove a remembered network\n"
     "  info                state as JSON (used by the Pi)\n"
     "  fwget <url>[\\t<wifi>\\t<password>]  download and install firmware over Wi-Fi\n"
     "  ota begin|status|end|abort   firmware over Bluetooth (used by the Pi)\n"
@@ -970,12 +1075,15 @@ static void printHelp() {
     "  cal point <mm> <L>  add a point by hand (heights include the zero offset)\n"
     "  cal undo            remove the last point\n"
     "  cal show            show the table being measured\n"
-    "  cal save            use and store the new table (last point = 100 %)\n"
+    "  cal save [name]     store the new table as a tank and use it (last point = 100 %)\n"
     "  cal cancel          discard the table being measured\n"
     "  table               print the active table as code for the sketch\n"
     "  temps               list the temperature probes\n"
     "  name <n> <text>     name temperature probe n (1, 2)\n"
-    "  reset               forget stored calibration, use the sketch defaults");
+    "  tank                list the tanks (* = in use)\n"
+    "  tank use <n>        use tank n (0 = built-in)\n"
+    "  tank rename <n> <name> | tank delete <n>\n"
+    "  reset               built-in tank and zero offset 0 (saved tanks are kept)");
 }
 
 static void handleCommand(String line) {
@@ -1092,12 +1200,40 @@ static void handleCommand(String line) {
     } else if (sub == "ssid") {
       if (arg == "-") arg = "";
       if (arg.length() > 32) { out->println("ssid too long"); return; }
-      if (arg != staSsid) { staSsid = arg; saveWifiSetting("ssid", arg); staDirty = true; }
+      if (arg != staSsid) {
+        staSsid = arg; saveWifiSetting("ssid", arg); staDirty = true;
+        int k = knownIndex(arg);                 // a known network brings its password along
+        staPass = k < 0 ? String() : knownPass[k];
+        saveWifiSetting("pass", staPass);
+      }
       out->println("ok wifi ssid");
     } else if (sub == "pass") {
       if (arg.length() > 63) { out->println("password too long"); return; }
+      if (arg.length() == 0 && knownIndex(staSsid) >= 0) arg = knownPass[knownIndex(staSsid)];  // empty: keep the known one
       if (arg != staPass) { staPass = arg; saveWifiSetting("pass", arg); staDirty = true; }
+      rememberNetwork(staSsid, staPass);
       out->println("ok wifi pass");
+    } else if (sub == "join") {
+      // join <name>[TAB<password>]: without a password the remembered one is used
+      int t = arg.indexOf('\t');
+      String ssid = t < 0 ? arg : arg.substring(0, t);
+      String pass = t < 0 ? String() : arg.substring(t + 1);
+      ssid.trim();
+      if (!ssid.length() || ssid.length() > 32 || pass.length() > 63) { out->println("Usage: wifi join <name>[TAB<password>]"); return; }
+      if (t < 0 && knownIndex(ssid) >= 0) pass = knownPass[knownIndex(ssid)];
+      staSsid = ssid; staPass = pass;
+      saveWifiSetting("ssid", ssid); saveWifiSetting("pass", pass);
+      rememberNetwork(ssid, pass);
+      if (wifiMode != "van") { wifiMode = "van"; saveWifiSetting("mode", "van"); }
+      staDirty = true;
+      out->printf("ok joining '%s'\n", ssid.c_str());
+    } else if (sub == "forget") {
+      if (!forgetNetwork(arg)) { out->printf("'%s' is not a known network\n", arg.c_str()); return; }
+      if (arg == staSsid) { staSsid = ""; staPass = ""; saveWifiSetting("ssid", ""); saveWifiSetting("pass", ""); staDirty = true; }
+      out->printf("ok forgot '%s'\n", arg.c_str());
+    } else if (sub == "known") {
+      for (uint8_t i = 0; i < MAX_KNOWN; i++)
+        if (knownSsid[i].length()) out->printf("  %s%s\n", knownSsid[i].c_str(), knownSsid[i] == staSsid ? "   (selected)" : "");
     } else {
       out->println(infoJson());
     }
@@ -1163,16 +1299,24 @@ static void handleCommand(String line) {
       printTable(calPts, calCount);
       out->printf("  total so far: %.1f L\n", calTotal);
     } else if (sub == "save") {
+      // save [name]: stored as a new tank (or over the saved tank with that name) and used from now on
       if (!tableValid(calPts, calCount)) {
         out->println("Need at least 2 points with rising height and litres.");
         return;
       }
-      memcpy(table, calPts, calCount * sizeof(TankPoint));
-      tablePoints = calCount;
-      saveTable();
+      String name = arg.length() ? arg.substring(0, 32) : String();
+      int slot = -1;
+      for (int i = 0; i < MAX_TANKS && name.length(); i++) if (tankNames[i] == name) slot = i;
+      for (int i = 0; i < MAX_TANKS && slot < 0; i++) if (!tankNames[i].length()) slot = i;
+      if (slot < 0) { out->printf("All %d tank places are used: delete one first (tank delete <n>).\n", MAX_TANKS); return; }
+      if (!name.length()) name = "Tank " + String(slot + 1);
+      writeTank(slot, name, calPts, calCount);
+      loadTankList();
+      useTank(slot);
+      saveActiveTank();
+      emaHeight = NAN;
       calActive = false;
-      out->printf("Saved %u points, capacity %.1f L.\n", (unsigned)tablePoints, capacityL());
-      printAsCode();
+      out->printf("Saved as tank %d '%s': %u points, %.1f L. It is in use now.\n", slot + 1, name.c_str(), (unsigned)tablePoints, capacityL());
     } else if (sub == "cancel") {
       calActive = false;
       calCount = 0;
@@ -1197,13 +1341,52 @@ static void handleCommand(String line) {
       out->printf("Probe %d is now '%s'.\n", i, tempName[i - 1].c_str());
   } else if (cmd == "table") {
     printAsCode();
+  } else if (cmd == "tank") {
+    // tank [list] | use <n> | rename <n> <name> | delete <n>    (0 = built-in, 1.. = saved)
+    int sp = rest.indexOf(' ');
+    String sub = sp < 0 ? rest : rest.substring(0, sp);
+    String arg = sp < 0 ? String() : rest.substring(sp + 1);
+    arg.trim(); sub.toLowerCase();
+    int sp2 = arg.indexOf(' ');
+    int n = (sp2 < 0 ? arg : arg.substring(0, sp2)).toInt();
+    String txt = sp2 < 0 ? String() : arg.substring(sp2 + 1);
+    txt.trim();
+    bool saved = n >= 1 && n <= MAX_TANKS && tankNames[n - 1].length();
+    if (sub == "use") {
+      if (arg != "0" && !saved) { out->println("Usage: tank use <n>   (0 = built-in, see: tank)"); return; }
+      useTank(n - 1);
+      saveActiveTank();
+      emaHeight = NAN;
+      out->printf("Using tank %d '%s' (%.1f L).\n", n, activeTankName().c_str(), capacityL());
+    } else if (sub == "rename") {
+      if (!saved || !txt.length()) { out->println("Usage: tank rename <n> <name>   (saved tanks only)"); return; }
+      TankPoint t[MAX_POINTS];
+      size_t k = readTank(n - 1, t);
+      writeTank(n - 1, txt.substring(0, 32), t, k);
+      loadTankList();
+      out->printf("Tank %d is now '%s'.\n", n, tankNames[n - 1].c_str());
+    } else if (sub == "delete") {
+      if (!saved) { out->println("Usage: tank delete <n>   (saved tanks only)"); return; }
+      writeTank(n - 1, "", nullptr, 0);
+      String was = tankNames[n - 1];
+      loadTankList();
+      if (activeTank == n - 1) { useTank(-1); saveActiveTank(); emaHeight = NAN; }
+      out->printf("Deleted tank %d '%s'. In use: %s.\n", n, was.c_str(), activeTankName().c_str());
+    } else {
+      out->printf("  %s0  %-24s %6.1f L  built-in\n", activeTank < 0 ? "*" : " ", BUILTIN_TANK_NAME,
+                  DEFAULT_TABLE[sizeof(DEFAULT_TABLE) / sizeof(DEFAULT_TABLE[0]) - 1].litres);
+      for (int i = 0; i < MAX_TANKS; i++)
+        if (tankNames[i].length())
+          out->printf("  %s%d  %-24s %6.1f L\n", activeTank == i ? "*" : " ", i + 1, tankNames[i].c_str(), tankCaps[i]);
+      out->println("tank use <n> | rename <n> <name> | delete <n>");
+    }
   } else if (cmd == "reset") {
-    prefs.begin("tank", false);
-    prefs.clear();
-    prefs.end();
-    loadDefaults();
+    useTank(-1);
+    saveActiveTank();
+    zeroOffsetMm = ZERO_OFFSET_MM;
+    saveZero();
     emaHeight = NAN;
-    out->println("Stored calibration erased, using sketch defaults.");
+    out->println("Built-in tank and zero offset back to the defaults. Saved tanks are kept (tank delete <n>).");
   } else {
     out->printf("Unknown command '%s' - type help\n", cmd.c_str());
   }
@@ -1278,30 +1461,50 @@ static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Water tank</title>
 <style>
-:root{--bg:#fff;--fg:#111;--mut:#666;--line:#ddd;--card:#f6f6f6;--acc:#111;--accfg:#fff;--bad:#c62828;--ok:#2e7d32;--water:#3b82d6;--tank-empty:#fff;--tank-line:#222;--tank-text:#444}
-@media(prefers-color-scheme:dark){:root{--bg:#000;--fg:#eee;--mut:#999;--line:#333;--card:#111;--acc:#eee;--accfg:#000;--bad:#ef5350;--ok:#66bb6a;--water:#3b82d6;--tank-empty:#000;--tank-line:#ddd;--tank-text:#bbb}}
+:root{--bg:#fff;--fg:#111;--mut:#666;--line:#ddd;--card:#f6f6f6;--acc:#111;--accfg:#fff;--bad:#c62828;--ok:#2e7d32;--bt:#1e6fe8;--wf:#2e9d4a;--warn:#d89a00;--water:#3b82d6;--tank-empty:#fff;--tank-line:#222;--tank-text:#444}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--fg:#eee;--mut:#999;--line:#333;--card:#111;--acc:#eee;--accfg:#000;--bad:#ef5350;--ok:#66bb6a;--bt:#4d94ff;--wf:#4cc26c;--warn:#f0b400;--water:#3b82d6;--tank-empty:#000;--tank-line:#ddd;--tank-text:#bbb}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 -apple-system,system-ui,sans-serif}
-main{max-width:560px;margin:0 auto;padding:16px}h1{font-size:20px;margin:4px 0 12px}h2{font-size:16px;margin:0 0 8px}
+main{max-width:560px;margin:0 auto;padding:16px}h1{font-size:20px;margin:0}h2{font-size:16px;margin:0 0 8px}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 12px}
+.stat{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+.pill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:13px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--mut);flex:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
 .big{font-size:44px;font-weight:700;line-height:1}.mut{color:var(--mut);font-size:14px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}.grid b{display:block;font-size:18px}
 .chip{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:13px;margin:6px 4px 0 0}
 .chip.bad{color:var(--bad);border-color:var(--bad)}
-button,input{font:inherit;border-radius:8px;border:1px solid var(--line);padding:9px 12px;background:var(--bg);color:var(--fg)}
+button,input,select{font:inherit;border-radius:8px;border:1px solid var(--line);padding:9px 12px;background:var(--bg);color:var(--fg)}
 button{cursor:pointer}button.p{background:var(--acc);color:var(--accfg);border-color:var(--acc)}button:disabled{opacity:.5}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:6px 0;flex-wrap:wrap}
-.seg button{border:0;border-radius:0;border-right:1px solid var(--line);padding:8px 12px}.seg button:last-child{border-right:0}
-.seg button.on{background:var(--acc);color:var(--accfg);font-weight:600}.row input{flex:1;min-width:0}
+.icon{width:40px;height:40px;border-radius:50%;padding:0;font-weight:700;flex:none;line-height:1}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.row input{flex:1;min-width:0}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:6px 0}
+.seg button{flex:1;border:0;border-radius:0;border-right:1px solid var(--line);padding:8px 6px}.seg button:last-child{border-right:0}
+.seg button.on{background:var(--acc);color:var(--accfg);font-weight:600}
+.list{border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:6px 0}
+.item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);background:var(--bg);flex-wrap:wrap}
+.item:last-child{border-bottom:0}.item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item button{padding:5px 10px}.item.pick{cursor:pointer}
+.lbl{font-size:13px;font-weight:600;color:var(--mut);margin-top:10px}
 pre{white-space:pre-wrap;font:13px/1.35 ui-monospace,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;max-height:260px;overflow:auto;margin:8px 0 0}
+code{font:13px ui-monospace,Menlo,monospace}
 table{border-collapse:collapse;width:100%;font-size:14px}td,th{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line)}
 details summary{cursor:pointer;font-weight:600}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);width:calc(100% - 32px);max-width:520px;padding:16px}
+dialog::backdrop{background:rgba(0,0,0,.55)}ol{padding-left:20px;margin:6px 0}ol li{margin:3px 0}
 </style></head><body><main>
-<h1>Water tank <span class="mut" id="ver"></span></h1>
+<header><h1>Water tank <span class="mut" id="ver"></span></h1>
+ <div class="stat">
+  <span class="pill" id="btp"><i class="dot" id="btd"></i><span id="btt">–</span></span>
+  <span class="pill" id="wfp"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M2.5 9a14 14 0 0 1 19 0M6 12.5a9 9 0 0 1 12 0M9.4 16a4 4 0 0 1 5.2 0" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="12" cy="19.3" r="1.7" fill="currentColor"/></svg><span id="wft">–</span></span>
+ </div></header>
 
 <div class="card">
- <div class="big"><span id="lit">–</span> L</div>
- <div class="mut">of <span id="cap">–</span> L · <span id="lvl">–</span> %</div>
+ <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+  <div><div class="big"><span id="lit">–</span> L</div>
+   <div class="mut">of <span id="cap">–</span> L · <span id="lvl">–</span> %</div></div>
+  <button class="icon" onclick="openDlg('zdlg')" title="Set zero (tank empty)" aria-label="Set zero (tank empty)">→0</button>
+ </div>
  <div id="tank" style="margin:12px 0"></div>
  <div class="grid">
   <div><span class="mut">Water height</span><b><span id="h">–</span> mm</b></div>
@@ -1309,8 +1512,14 @@ details summary{cursor:pointer;font-weight:600}
   <div><span class="mut">Zero offset</span><b><span id="z">–</span> mm</b></div>
  </div>
  <div id="chips"></div>
- <div class="mut" id="blue" style="margin-top:8px"></div>
  <div class="row"><button id="fastbtn" onclick="cmd(fastOn?'fast off':'fast')">Test mode: fast reading</button></div>
+</div>
+
+<div class="card">
+ <h2>Tank</h2>
+ <div class="row"><select id="tsel" style="flex:1;min-width:0" onchange="cmd('tank use '+this.value)" aria-label="Tank in use"></select></div>
+ <div class="row"><button class="p" id="calbtn" onclick="openDlg('caldlg')">Calibrate the tank</button><button id="trn" onclick="tankRename()">Rename</button><button id="tdel" onclick="tankDel()">Delete</button></div>
+ <details><summary class="mut">Table in use</summary><div id="tbl"></div></details>
 </div>
 
 <div class="card" id="tcard" style="display:none">
@@ -1320,63 +1529,71 @@ details summary{cursor:pointer;font-weight:600}
 </div>
 
 <div class="card">
- <h2>Wi-Fi of this sensor</h2>
+ <h2>Wi-Fi settings</h2>
  <div class="seg" id="wmode"></div>
  <div class="mut" id="whelp"></div>
  <div id="wnet">
-  <div class="row"><select id="wlist" style="flex:1;min-width:0"><option value="">Pick a network…</option></select><button onclick="wscan()">Scan</button></div>
-  <div class="row"><input id="wssid" placeholder="Wi-Fi network name" autocomplete="off"></div>
-  <div class="row"><input id="wpass" type="password" placeholder="password (empty = keep the saved one)" autocomplete="off"></div>
+  <div class="lbl">Known networks</div>
+  <div id="wknown"></div>
+  <div class="row"><button onclick="wscan()" id="wscanb">Scan for other networks</button></div>
+  <div id="wscan"></div>
+  <details style="margin-top:6px"><summary class="mut">Hidden network</summary>
+   <div class="row"><input id="hssid" placeholder="network name" autocomplete="off" autocapitalize="off"></div>
+   <div class="row"><input id="hpass" type="password" placeholder="password" autocomplete="off"><button onclick="wjoin($('hssid').value.trim(),$('hpass').value)">Connect</button></div></details>
  </div>
- <div class="row"><button class="p" onclick="wsave()">Save Wi-Fi</button></div>
- <div class="mut" id="wstate"></div>
- <div class="mut">The Venus OS page can change this too: the last change wins. Network name and password are also used for firmware updates over Wi-Fi.</div>
+ <div class="mut" id="wstate" style="margin-top:8px"></div>
+ <details style="margin-top:8px"><summary class="mut">Password of the own network (AP)</summary>
+  <div class="mut">8 to 63 characters. Also the sensor password on the Venus OS page. Join the network again afterwards.</div>
+  <div class="row"><input id="pw" type="text" autocomplete="off" placeholder="new password"><button onclick="setPw()">Save</button></div></details>
 </div>
 
 <div class="card">
- <h2>Simulate a level (test)</h2>
- <div class="mut">Sends this level over Bluetooth instead of the sensor, at once. The stopwatch shows how long Venus OS takes to show it. Ends by itself after 15 minutes.</div>
- <div class="row"><button onclick="cmd('sim 0%')">0 %</button><button onclick="cmd('sim 25%')">25 %</button><button onclick="cmd('sim 50%')">50 %</button><button onclick="cmd('sim 75%')">75 %</button><button onclick="cmd('sim 100%')">100 %</button></div>
- <div class="row"><input id="simmm" type="number" inputmode="decimal" placeholder="height in mm"><button onclick="const v=$('simmm').value;if(v!=='')cmd('sim '+v)">Simulate</button><button onclick="cmd('sim off')">Stop</button></div>
- <div id="simbox" class="mut"></div>
+ <h2>Terminal</h2>
+ <pre id="outp">Type a command, or pick one from the list.</pre>
+ <form class="row" onsubmit="event.preventDefault();cmd($('con').value.trim())"><input id="con" placeholder="command, e.g. status" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="p">Send</button></form>
+ <button onclick="cmdsToggle()" id="cmdsb">Show commands</button>
+ <div id="cmds" class="list" hidden></div>
 </div>
-
-<div class="card">
- <h2>1. Zero (tank empty)</h2>
- <div class="mut">Park level, empty the tank, wait until the water is calm, then press the button. The height then reads 0 mm.</div>
- <div class="row"><button class="p" onclick="cmd('zero')">Tank is empty: set zero</button></div>
-</div>
-
-<div class="card">
- <h2>2. Measure the tank (optional)</h2>
- <div class="mut">Only needed if the litres don't match. Start with the tank empty, pour in a known amount, wait ~30 s, type how much you poured in this step and press Record. Repeat until full, then Save.</div>
- <div class="row"><button onclick="cmd('cal start')">Start (tank empty)</button></div>
- <div class="row"><input id="add" type="number" inputmode="decimal" placeholder="litres poured in this step"><button class="p" onclick="addPt()">Record</button></div>
- <div class="row"><button onclick="cmd('cal undo')">Undo last</button><button class="p" onclick="cmd('cal save')">Save table</button><button onclick="cmd('cal cancel')">Cancel</button></div>
- <div id="calbox"></div>
-</div>
-
-<div class="card">
- <h2>Reply</h2>
- <pre id="outp">Measurements take about 5 seconds.</pre>
-</div>
-
-<div class="card"><details><summary>Active tank table</summary><div id="tbl"></div>
- <div class="row"><button onclick="if(confirm('Forget the stored calibration and use the built-in table?'))cmd('reset')">Back to built-in table</button></div></details></div>
-
-<div class="card"><details><summary>Console (serial commands)</summary>
- <div class="row"><input id="con" placeholder="e.g. status, help, cal point 300 15"><button onclick="cmd(document.getElementById('con').value)">Send</button></div></details></div>
-
-<div class="card"><details><summary>Wi-Fi password</summary>
- <div class="mut">8 to 63 characters. You'll have to join the network again with the new password.</div>
- <div class="row"><input id="pw" type="text" autocomplete="off" placeholder="new password"><button onclick="setPw()">Save</button></div></details></div>
 
 <div class="card"><details><summary>Firmware update</summary>
- <div class="mut">Choose the <b>WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin</b> file (not the FLASH-AT-0x0 one). Your calibration is kept.</div>
+ <div class="mut">Choose the <b>WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin</b> file (not the FLASH-AT-0x0 one). Calibration and settings are kept.</div>
  <div class="row"><input id="fw" type="file" accept=".bin"><button onclick="upd()">Upload</button></div></details></div>
 
 <div class="mut" id="foot"></div>
-</main><script>
+</main>
+
+<dialog id="zdlg">
+ <h2>Set zero</h2>
+ <div class="mut">Park level, empty the tank and wait until the water is calm. The height measured now becomes 0 mm (takes about 5 s).</div>
+ <div class="row"><button class="p" onclick="cmd('zero')">Tank is empty: set zero</button><button onclick="$('zdlg').close()">Close</button></div>
+ <pre class="dout" hidden></pre>
+</dialog>
+
+<dialog id="caldlg">
+ <h2>Calibrate the tank</h2>
+ <div id="calintro">
+  <div class="mut">Measures how many litres fit at each height, so the reading matches your tank. Saved as a new tank in the list; the old one stays.</div>
+  <ol class="mut">
+   <li>Park level, empty the tank, let the water calm down.</li>
+   <li>Press <b>Start</b>: the empty level becomes 0 L.</li>
+   <li>Pour in a known amount (e.g. a 10 L bucket), wait ~30 s, type the litres of this step and press <b>Record</b>.</li>
+   <li>Repeat until full. Smaller steps where the tank shape changes make it more accurate.</li>
+   <li>Give it a name and press <b>Save tank</b>. It is used right away.</li>
+  </ol>
+  <div class="row"><button class="p" onclick="cmd('cal start')">Start: tank is empty</button><button onclick="$('caldlg').close()">Close</button></div>
+ </div>
+ <div id="calrun" hidden>
+  <div class="mut">So far <b id="caltot">0</b> L in <span id="calnp">0</span> points. Pour in the next amount, wait ~30 s, then:</div>
+  <div class="row"><input id="add" type="number" inputmode="decimal" placeholder="litres poured in this step"><button class="p" onclick="addPt()">Record</button></div>
+  <div id="calbox"></div>
+  <div class="row"><button onclick="cmd('cal undo')">Undo last</button><button onclick="if(confirm('Throw the measured points away?'))cmd('cal cancel')">Cancel calibration</button></div>
+  <div class="lbl">Tank full?</div>
+  <div class="row"><input id="calname" placeholder="name, e.g. Wheel-arch measured" maxlength="32"><button class="p" onclick="calSave()">Save tank</button></div>
+  <div class="row"><button onclick="$('caldlg').close()">Close (continue later)</button></div>
+ </div>
+ <pre class="dout" hidden></pre>
+</dialog>
+<script>
 const $=id=>document.getElementById(id);
 // Front view of the wheel-arch tank (docs/tank/tank-drawing.jpg), mm, floor of the leg = 0.
 // Water is drawn to the height the sender measures; the shape clips it.
@@ -1406,81 +1623,141 @@ function tankSvg(hmm, litres, cap, id) {
   s += '<text x="-28" y="-30" text-anchor="end" style="fill:var(--tank-text);font-size:36px">mm</text></svg>';
   return s;
 }
-let busy=false;
+let busy=false,fastOn=false,S=null,wview=null,scanRes=null,wpick=null;
 function f1(x){return x==null?'–':x.toFixed(1)}
+function esc(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c])}
+function ago(t){return t<60?t+' s':t<3600?Math.round(t/60)+' min':(t/3600).toFixed(1)+' h'}
+function tab(p){if(!p||!p.length)return'';let h='<table><tr><th>#</th><th>height mm</th><th>litres</th></tr>';p.forEach((x,i)=>h+='<tr><td>'+i+'</td><td>'+x[0].toFixed(1)+'</td><td>'+x[1].toFixed(1)+'</td></tr>');return h+'</table>'}
+function openDlg(id){const d=$(id);d.querySelector('.dout').hidden=true;d.showModal()}
 async function refresh(){
  if(busy)return;
  try{
-  const s=await (await fetch('/api/status')).json();
+  const s=await (await fetch('/api/status')).json();S=s;
   $('ver').textContent='v'+s.version;
   $('lit').textContent=f1(s.litres);$('cap').textContent=f1(s.capacity);$('lvl').textContent=f1(s.level);
   $('tank').innerHTML=tankSvg(s.height_mm,s.litres,s.capacity,'tc');
   $('h').textContent=f1(s.height_mm);$('z').textContent=f1(s.zero_mm);
-  $('tcard').style.display=s.temp_probe?'':'none';
-  renderTemps(s.temps||[]);
   $('sig').textContent=s.signal==null?'–':s.signal.toFixed(3)+' '+s.signal_unit;
   let c='';
   if(s.fault)c+='<span class="chip bad">Sensor fault – check wiring</span>';
   if(s.sloshing)c+='<span class="chip">Water moving</span>';
   if(s.filling)c+='<span class="chip">Filling</span>';
   if(s.draining)c+='<span class="chip">Draining</span>';
-  c+='<span class="chip">'+(s.custom_table?'Your calibration':'Built-in table')+'</span>';
-  simAt=s.sim_mm!=null?Date.now()-s.sim_ms:null;
-  if(!wtouched){wmode=s.wifi_mode;wdraw();if(document.activeElement!==$('wssid')&&!$('wssid').value)$('wssid').value=s.sta_ssid||''}
-  $('wstate').textContent=s.sta_ip?'Connected to “'+s.sta_ssid+'”: http://'+s.sta_ip:(s.wifi_mode==='van'?'Not connected to “'+(s.sta_ssid||'')+'” (yet).':'')+(s.ap_on?' Own Wi-Fi is on.':'');
-  if(s.sim_mm!=null)c+='<span class="chip bad">SIMULATION: '+s.sim_mm.toFixed(0)+' mm, not the sensor</span>';
+  if(s.sim_mm!=null)c+='<span class="chip bad">SIMULATION: '+s.sim_mm.toFixed(0)+' mm, not the sensor (sim off)</span>';
   fastOn=s.fast_s>0;
   if(fastOn)c+='<span class="chip bad">Test mode: no smoothing, '+Math.ceil(s.fast_s/60)+' min left</span>';
   $('fastbtn').textContent=fastOn?'Back to normal smoothing':'Test mode: fast reading (15 min)';
   $('chips').innerHTML=c;
-  $('tbl').innerHTML=tab(s.table);
-  $('calbox').innerHTML=s.cal_active?'<p class="mut">Measured so far ('+s.cal_points.length+' points):</p>'+tab(s.cal_points):'';
-  $('blue').innerHTML='Bluetooth: '+(s.ble_adv?'<b>broadcasting</b> the level every 2 s':'<b style="color:var(--bad)">not broadcasting</b>')
-    +(s.ble_conn?' · '+s.ble_conn+' connected':'')+' · Pi '+(s.pi_ago_s<0?'has not checked in yet':'checked in '+Math.round(s.pi_ago_s/60)+' min ago')
-    +(s.ble_restarts?' · broadcast restarted '+s.ble_restarts+'×':'');
-  const modes={off:'Wi-Fi off (BOOT switches it on for 30 min)',auto:'Bluetooth, own Wi-Fi only as fallback',van:'van Wi-Fi'+(s.sta_ip?' ('+s.sta_ip+')':' (not connected)'),ap:'own Wi-Fi always on'};
-  $('foot').textContent='Wi-Fi on because: '+(s.wifi_reason||'–')+' · mode: '+(modes[s.wifi_mode]||s.wifi_mode)+' (set on the Venus OS page) · Pi '+(s.pi_ago_s<0?'not heard yet':'heard '+Math.round(s.pi_ago_s/60)+' min ago')+' · Bluetooth '+s.mac+' · sender id '+s.device_id+' · up '+Math.round(s.uptime_s/60)+' min';
- }catch(e){$('foot').textContent='No connection to the sender…'}
+  $('tcard').style.display=s.temp_probe?'':'none';
+  renderTemps(s.temps||[]);
+  header(s);tanks(s);wifi(s);
+  $('foot').textContent=(s.ap_on&&s.wifi_reason?'Own Wi-Fi on because: '+s.wifi_reason+' · ':'')+'Bluetooth '+s.mac+' · sensor id '+s.device_id+' · up '+ago(s.uptime_s);
+ }catch(e){$('foot').textContent='No connection to the sensor…'}
 }
-function tab(p){if(!p||!p.length)return'';let h='<table><tr><th>#</th><th>height mm</th><th>litres</th></tr>';p.forEach((x,i)=>h+='<tr><td>'+i+'</td><td>'+x[0].toFixed(1)+'</td><td>'+x[1].toFixed(1)+'</td></tr>');return h+'</table>'}
+// top right: Bluetooth light + when the Pi last checked in, Wi-Fi symbol + network
+function header(s){
+ const p=s.pi_ago_s,ok=p>=0&&p<900;
+ $('btd').style.background=!s.ble_adv?'var(--bad)':ok?'var(--bt)':'var(--warn)';
+ $('btt').textContent='Pi '+(p<0?'–':ago(p));
+ $('btp').title='Bluetooth '+(s.ble_adv?'broadcasting':'NOT broadcasting')+' · the Pi '+(p<0?'has not checked in yet':'checked in '+ago(p)+' ago')+(s.ble_conn?' · connected now':'');
+ const w=$('wfp');
+ w.style.color=s.sta_ip||s.ap_on?'var(--wf)':'var(--mut)';
+ $('wft').textContent=s.sta_ip?s.sta_ssid+(s.ap_on?' + AP':''):s.ap_on?'AP on':s.wifi_mode==='van'&&s.sta_ssid?'joining…':'off';
+ w.title=(s.sta_ip?'Connected to “'+s.sta_ssid+'” ('+s.sta_ip+')':'Not connected to a Wi-Fi network')+' · own network (AP) '+(s.ap_on?'on':'off');
+}
+// tank list, calibration dialog
+let tkey='';
+function tanks(s){
+ const k=JSON.stringify(s.tanks)+s.tank;
+ if(k!==tkey&&document.activeElement!==$('tsel')){tkey=k;
+  $('tsel').innerHTML=(s.tanks||[]).map(t=>'<option value="'+t.n+'"'+(t.n===s.tank?' selected':'')+'>'+esc(t.name)+' · '+t.cap.toFixed(0)+' L'+(t.n?'':' (built-in)')+'</option>').join('')}
+ $('trn').disabled=$('tdel').disabled=!s.tank;
+ $('tbl').innerHTML=tab(s.table);
+ const n=(s.cal_points||[]).length;
+ $('calbtn').textContent=s.cal_active?'Continue calibration ('+n+' points)':'Calibrate the tank';
+ $('calintro').hidden=!!s.cal_active;$('calrun').hidden=!s.cal_active;
+ $('caltot').textContent=n?s.cal_points[n-1][1].toFixed(1):'0';$('calnp').textContent=n;
+ $('calbox').innerHTML=tab(s.cal_points);
+}
+function tankRename(){const t=(S.tanks||[]).find(x=>x.n===S.tank);const v=prompt('New name for “'+(t?t.name:'')+'” (up to 32 characters)',t?t.name:'');if(v&&v.trim())cmd('tank rename '+S.tank+' '+v.trim())}
+function tankDel(){const t=(S.tanks||[]).find(x=>x.n===S.tank);if(t&&confirm('Delete the tank “'+t.name+'”? The built-in tank is used then.'))cmd('tank delete '+S.tank)}
+function addPt(){const v=parseFloat($('add').value);if(!(v>0)){alert('Type the litres you poured in this step');return}cmd('cal add '+v);$('add').value=''}
+function calSave(){const v=$('calname').value.trim();cmd('cal save'+(v?' '+v:''));$('calname').value=''}
 async function cmd(c,shown){
- if(!c)return;busy=true;const lbl=shown||c;$('outp').textContent='> '+lbl+'\n…';
- document.querySelectorAll('button').forEach(b=>b.disabled=true);
- try{const r=await fetch('/api/cmd',{method:'POST',body:new URLSearchParams({c})});$('outp').textContent='> '+lbl+'\n'+await r.text()}
- catch(e){$('outp').textContent='Failed: '+e}
- document.querySelectorAll('button').forEach(b=>b.disabled=false);busy=false;refresh();
+ if(!c)return'';busy=true;const lbl=shown||c,o=$('outp');let r='';o.textContent='> '+lbl+'\n…';
+ const d=document.querySelector('dialog[open] .dout');if(d){d.hidden=false;d.textContent=o.textContent}
+ document.querySelectorAll('button,select').forEach(b=>b.disabled=true);
+ try{const x=await fetch('/api/cmd',{method:'POST',body:new URLSearchParams({c})});r=await x.text();o.textContent='> '+lbl+'\n'+r}
+ catch(e){o.textContent='Failed: '+e}
+ if(d)d.textContent=o.textContent;
+ document.querySelectorAll('button,select').forEach(b=>b.disabled=false);busy=false;await refresh();return r;
 }
 let tempsKey='';
 function renderTemps(t){
- $('tnote').textContent=t.length?'Warm one probe in your hand to see which is which.':'No probe found. Check the wiring (probe 1 data on GPIO5, probe 2 on GPIO6, 4.7 kΩ to 3V3 on each). The sender looks again every 30 s.';
+ $('tnote').textContent=t.length?'':'No probe found. Check the wiring (probe 1 data on GPIO5, probe 2 on GPIO6, 4.7 kΩ to 3V3 on each). The sensor looks again every 30 s.';
  const key=t.map(x=>x.addr+x.name).join();
  if(key!==tempsKey){tempsKey=key;
   $('temps').innerHTML=t.map(x=>'<div class="row" style="align-items:center"><div style="flex:1;min-width:0"><span class="mut">'+x.n+' · '+esc(x.name)+(x.pin!=null?' · GPIO'+x.pin:'')+'</span><b style="display:block;font-size:22px" id="tv'+x.n+'">–</b></div><button onclick="rename('+x.n+')">Rename</button></div>').join('');}
  t.forEach(x=>{const e=$('tv'+x.n);if(e)e.textContent=x.c==null?'no reading':x.c.toFixed(1)+' °C'});
 }
-function esc(v){return String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c])}
 function rename(n){const v=prompt('Name for temperature '+n+' (up to 32 characters)');if(v&&v.trim())cmd('name '+n+' '+v.trim().replace(/["\\]/g,''))}
-function addPt(){const v=parseFloat($('add').value);if(!(v>0)){alert('Type the litres you poured in this step');return}cmd('cal add '+v);$('add').value=''}
 async function setPw(){const p=$('pw').value;if(p.length<8||p.length>63){alert('8 to 63 characters');return}
  const r=await fetch('/api/password',{method:'POST',body:new URLSearchParams({p})});alert(await r.text())}
 async function upd(){const f=$('fw').files[0];if(!f)return;const d=new FormData();d.append('fw',f);
  $('outp').textContent='Uploading '+f.name+' …';busy=true;
  try{const r=await fetch('/update',{method:'POST',body:d});$('outp').textContent=await r.text()}catch(e){$('outp').textContent='Failed: '+e}
  busy=false;setTimeout(refresh,8000)}
-let fastOn=false,simAt=null,wmode=null,wtouched=false;
-// Wi-Fi card: the switch, the network list from a scan, save as serial commands
-const WMODES=[['ap','AP on'],['van','Wi-Fi network'],['auto','Bluetooth only']];
-const WHELP={ap:'The own Wi-Fi "Watertank" is always on (uses the most energy).',van:'Joins the Wi-Fi network below; the page is then also reachable in that network.',auto:'Saves energy: Wi-Fi off. It comes on by itself when the Pi has not been heard over Bluetooth for 15 minutes, or for 30 minutes after pressing BOOT.'};
-function wdraw(){const cur=wmode==='off'?'auto':wmode;$('wmode').innerHTML=WMODES.map(([v,l])=>'<button class="'+(cur===v?'on':'')+'" onclick="wmode=\''+v+'\';wtouched=true;wdraw()">'+l+'</button>').join('');$('whelp').textContent=WHELP[cur]||''}
-async function wscan(){const b=$('wlist');b.innerHTML='<option>Scanning… (a few seconds)</option>';
- try{const r=await (await fetch('/api/wifiscan')).json();b.innerHTML='<option value="">Pick a network…</option>'+r.map(n=>'<option value="'+esc(n.s)+'">'+esc(n.s)+'  '+n.r+' dBm</option>').join('')}
- catch(e){b.innerHTML='<option value="">Scan failed</option>'}}
-async function wsave(){const ss=$('wssid').value.trim(),pw=$('wpass').value;
- if(wmode==='van'&&!ss){alert('Enter the Wi-Fi network name');return}
- if(ss)await cmd('wifi ssid '+ss);if(pw)await cmd('wifi pass '+pw,'wifi pass ********');await cmd('wifi mode '+(wmode||'auto'));$('wpass').value='';wtouched=false}
-// stopwatch since the simulated level went out
-setInterval(()=>{const b=$('simbox');if(!b)return;b.innerHTML=simAt==null?'':'<b style="font-size:26px;color:var(--fg)">'+((Date.now()-simAt)/1000).toFixed(1)+' s</b> since the simulated level was sent'},100);
-$('wlist').addEventListener('change',()=>{if($('wlist').value){$('wssid').value=$('wlist').value;$('wpass').focus()}});
+// Wi-Fi: mode switch, known networks (tap to connect), scan to add one
+const WMODES=[['ap','AP only'],['van','Wi-Fi network'],['auto','Bluetooth only']];
+const WHELP={ap:'Own network “Watertank” always on. Uses the most energy.',van:'Joins a network below; the page is then reachable in that network too. If it is not there and the Pi is silent, the own network comes on.',auto:'Saves energy: Wi-Fi off. The own network comes on by itself when the Pi has not been heard for 15 min, or for 30 min after pressing BOOT.'};
+function viaSta(){return S&&S.sta_ip&&location.hostname===S.sta_ip}
+function setMode(v){
+ if(v==='van'){if(S.sta_ssid)cmd('wifi mode van');else{wview='van';wifi(S)}return}
+ wview=null;
+ if(viaSta()&&!confirm('You are on this page through “'+S.sta_ssid+'”. It will be gone from that network; use the own network Watertank instead. Continue?'))return;
+ cmd('wifi mode '+v);
+}
+let wkey='';
+function wifi(s){
+ const cur=wview||(s.wifi_mode==='off'?'auto':s.wifi_mode);
+ const k=JSON.stringify([cur,s.known,s.sta_ssid,s.sta_ip,s.wifi_mode,scanRes,wpick]);
+ $('wstate').textContent=(s.sta_ip?'Connected to “'+s.sta_ssid+'”: http://'+s.sta_ip+'. ':s.wifi_mode==='van'&&s.sta_ssid?'Joining “'+s.sta_ssid+'”… ':'')+'Own network (AP) '+(s.ap_on?'on.':'off.');
+ if(k===wkey||(document.activeElement&&document.activeElement.closest('#wnet input')))return;wkey=k;
+ $('wmode').innerHTML=WMODES.map(([v,l])=>'<button class="'+(cur===v?'on':'')+'" onclick="setMode(\''+v+'\')">'+l+'</button>').join('');
+ $('whelp').textContent=WHELP[cur]||'';
+ $('wnet').hidden=cur!=='van';
+ const kn=s.known||[];
+ $('wknown').innerHTML=kn.length?'<div class="list">'+kn.map((n,i)=>{
+   const sel=n===s.sta_ssid&&s.wifi_mode==='van',st=sel?(s.sta_ip?'<b style="color:var(--wf)">Connected</b>':'<span class="mut">joining…</span>'):'<button class="p" onclick="wjoin(S.known['+i+'])">Connect</button>';
+   return '<div class="item"><span class="nm">'+esc(n)+'</span>'+st+'<button onclick="wforget('+i+')" title="Forget" aria-label="Forget '+esc(n)+'">✕</button></div>'}).join('')+'</div>'
+  :'<div class="mut">None saved yet: scan and pick your network.</div>';
+ if(scanRes==null){$('wscan').innerHTML='';return}
+ const other=scanRes.filter(x=>kn.indexOf(x.s)<0);
+ $('wscan').innerHTML=!scanRes.length?'<div class="mut">No networks found.</div>':!other.length?'<div class="mut">Only known networks around.</div>':'<div class="list">'+other.map(x=>{
+   const i=scanRes.indexOf(x),bars=x.r>-60?'strong':x.r>-75?'good':'weak';
+   return '<div class="item pick" onclick="if(wpick!=='+i+'){wpick='+i+';wkey=\'\';wifi(S);const e=$(\'wp'+i+'\');if(e)e.focus()}"><span class="nm">'+esc(x.s)+'</span><span class="mut">'+bars+' · '+x.r+' dBm'+(wpick===i?'':' ›')+'</span>'+
+    (wpick===i?'<div class="row" style="width:100%;margin:4px 0 0"><input id="wp'+i+'" type="password" placeholder="password (empty if open)" autocomplete="off" onkeydown="if(event.key===\'Enter\')wjoin(scanRes['+i+'].s,this.value)"><button class="p" onclick="event.stopPropagation();wjoin(scanRes['+i+'].s,$(\'wp'+i+'\').value)">Connect</button></div>':'')+'</div>'}).join('')+'</div>';
+}
+async function wscan(){$('wscanb').textContent='Scanning… (a few seconds)';$('wscanb').disabled=true;
+ try{scanRes=await (await fetch('/api/wifiscan')).json()}catch(e){scanRes=[]}
+ $('wscanb').textContent='Scan again';$('wscanb').disabled=false;wpick=null;wkey='';wifi(S)}
+async function wjoin(name,pw){
+ if(!name){alert('Enter the network name');return}
+ if(viaSta()&&name!==S.sta_ssid&&!confirm('You are on this page through “'+S.sta_ssid+'”. It moves to “'+name+'”. Continue?'))return;
+ wview=null;wpick=null;
+ await cmd('wifi join '+name+(pw==null?'':'\t'+pw),'wifi join '+name);
+ $('hpass').value='';
+}
+function wforget(i){const n=S.known[i];if(confirm('Forget “'+n+'”?'))cmd('wifi forget '+n)}
+// terminal: list of commands, a tap puts one in the input line
+const CMDS=[['status','reading and table in use'],['help','all commands with details'],['temps','temperature probes'],['name 1 Fresh water','name probe 1'],
+ ['zero','tank empty: height becomes 0 mm'],['tank','list the tanks'],['tank use 0','use the built-in tank'],['cal start','calibration: start with the tank empty'],
+ ['cal add 10','calibration: 10 L poured in'],['cal undo','calibration: remove the last point'],['cal show','calibration: points so far'],['cal save My tank','calibration: save as a tank and use it'],
+ ['cal cancel','calibration: throw away'],['table','table in use, as code for the sketch'],['wifi','Wi-Fi state'],['wifi known','remembered networks'],
+ ['wifi mode auto','Wi-Fi mode: auto | van | ap | off'],['fast','test mode: no smoothing for 15 min'],['fast off','normal smoothing'],['sim 50%','broadcast a fake level for 15 min'],
+ ['sim off','back to the real sensor'],['live','raw reading as JSON'],['info','state as JSON (what the Pi reads)'],['log','serial log on / off']];
+function cmdsToggle(){const l=$('cmds');l.hidden=!l.hidden;$('cmdsb').textContent=l.hidden?'Show commands':'Hide commands';
+ if(!l.innerHTML)l.innerHTML=CMDS.map((c,i)=>'<div class="item pick" onclick="$(\'con\').value=CMDS['+i+'][0];$(\'con\').focus()"><code class="nm" style="flex:none">'+esc(c[0])+'</code><span class="mut nm">'+esc(c[1])+'</span></div>').join('')}
 // 4 updates a second in test mode, every 2 s otherwise
 function loop(){refresh().finally(()=>setTimeout(loop,fastOn?250:2000))}
 loop();
@@ -1501,12 +1778,6 @@ static void jsonPoints(String &j, const char *key, const TankPoint *t, size_t n)
   j += "],";
 }
 
-static bool customTable() {
-  prefs.begin("tank", true);
-  bool c = prefs.getUInt("n", 0) >= 2;
-  prefs.end();
-  return c;
-}
 
 static void handleStatus() {
   lastWebUse = millis();
@@ -1555,7 +1826,15 @@ static void handleStatus() {
   j += String("\"sloshing\":") + (sloshing ? "true" : "false") + ",";
   j += String("\"filling\":") + (filling ? "true" : "false") + ",";
   j += String("\"draining\":") + (draining ? "true" : "false") + ",";
-  j += String("\"custom_table\":") + (customTable() ? "true" : "false") + ",";
+  j += "\"tank\":" + String(activeTank + 1) + ",\"tanks\":[{\"n\":0,\"name\":\"" BUILTIN_TANK_NAME "\",\"cap\":" +
+       String(DEFAULT_TABLE[sizeof(DEFAULT_TABLE) / sizeof(DEFAULT_TABLE[0]) - 1].litres, 1) + "}";
+  for (int i = 0; i < MAX_TANKS; i++)
+    if (tankNames[i].length()) j += ",{\"n\":" + String(i + 1) + ",\"name\":\"" + jsonEsc(tankNames[i]) + "\",\"cap\":" + String(tankCaps[i], 1) + "}";
+  j += "],\"known\":[";
+  bool firstK = true;
+  for (uint8_t i = 0; i < MAX_KNOWN; i++)
+    if (knownSsid[i].length()) { if (!firstK) j += ','; firstK = false; j += "\"" + jsonEsc(knownSsid[i]) + "\""; }
+  j += "],";
   j += String("\"cal_active\":") + (calActive ? "true" : "false") + ",";
   jsonPoints(j, "cal_points", calPts, calActive ? calCount : 0);
   jsonPoints(j, "table", table, tablePoints);
