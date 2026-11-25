@@ -647,7 +647,7 @@ function fieldRow(form, f, section) {
       p >= 60 && f.key === 'poll_interval' ? (p / 60) + ' min' : p))) : null;
   const box = h('div', { class: 'field' }, h('label', {}, f.label),
     f.unit ? h('div', { class: 'with-unit' }, input, h('span', { class: 'unit' }, f.unit)) : input,
-    chips, f.help ? h('div', { class: 'help' }, f.help) : null, err);
+    chips, f.help && !CLEAN_TABS.includes(S.tab) ? h('div', { class: 'help' }, f.help) : null, err);
   form.fields[f.key] = { input, orig, err, def: f };
   return box;
 }
@@ -912,7 +912,7 @@ async function heaterSetupCard(main) {
   const on = truthy(section.values.heater || '');
   main.append(h('div', { class: 'card' }, h('h3', {}, 'Truma heater: setup'),
     ...['heater', 'heater_name'].map(k => byKey[k]).filter(Boolean).map(row),
-    on ? null : h('div', { class: 'muted', style: 'margin-top:6px' }, 'Switch it on and save: the heater then appears here and in Venus OS. Until the sensor is wired to the heater you can try everything with the simulation.')));
+    null));
   return { form, byKey, row, on };
 }
 
@@ -1011,7 +1011,6 @@ async function tabHeater(main) {
   const tw = h('select', { disabled: !canEdit() || !live }, ['off', 'eco', 'hot', 'boost'].map(m => h('option', { value: m, selected: tm.water === m }, 'hot water ' + m)));
   const more = h('div', {});
   more.append(h('h4', { class: 'group' }, 'Timer', tm.on ? h('span', { class: 'chip ok', style: 'margin-left:8px' }, tm.start + '–' + tm.stop) : null),
-    h('div', { class: 'muted' }, 'The CP plus heats between start and stop with these settings, every day, also without the Pi.'),
     h('div', { class: 'row' }, h('span', { class: 'muted' }, 'from'), ts, h('span', { class: 'muted' }, 'to'), te),
     h('div', { class: 'row' }, tr, tw),
     h('div', { class: 'row' },
@@ -1021,7 +1020,6 @@ async function tabHeater(main) {
       } }, 'Timer on'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !live, onclick: () => heaterCmd('truma set timer=off', 'Timer off…') }, 'Timer off')),
     h('h4', { class: 'group' }, 'Simulation'),
-    h('div', { class: 'muted' }, 'Without the heater, the sensor can play one: the room warms toward the set point, the boiler heats up, and you can show a warning or error code. Venus OS and VRM show it like the real heater.'),
     h('div', { class: 'row' },
       h('button', { type: 'button', class: 'btn small primary', disabled: !canEdit() || !!(t && t.sim), onclick: () => heaterCmd('truma sim on', 'Starting the simulated heater…') }, 'Start simulation'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err W42', 'Warning W 42…') }, 'Warning W 42'),
@@ -1036,8 +1034,7 @@ async function tabHeater(main) {
   if (setup) {
     const { byKey, row } = setup;
     holder.append(h('h4', { class: 'group' }, 'Automations'),
-      ...['heater_frost_guard', 'heater_frost_c'].map(k => byKey[k]).filter(Boolean).map(row),
-      h('div', { class: 'muted', style: 'margin-top:6px' }, 'The frost guard uses the heater\'s room temperature: below the limit with the heating off, it switches the heating on at 2 °C above the limit.'));
+      ...['heater_frost_guard', 'heater_frost_c'].map(k => byKey[k]).filter(Boolean).map(row));
     // the setup card came as its own card: flatten it into this fold
     holder.querySelectorAll(':scope > .card').forEach(c => { c.classList.remove('card'); });
     more.append(...holder.childNodes);
@@ -1067,6 +1064,8 @@ const DEV = {
 };
 
 // a yes/no setting as a switch; the hidden select keeps the save bar working
+// tabs kept clean: settings without their explanation lines
+const CLEAN_TABS = ['water', 'heater'];
 function toggleRow(form, f, section) {
   const raw = section.values[f.key] || f.default || '';
   const orig = raw === '' ? '' : (truthy(raw) ? 'yes' : 'no');
@@ -1075,7 +1074,7 @@ function toggleRow(form, f, section) {
   const box = h('input', { type: 'checkbox', checked: orig === 'yes', disabled: !canEdit() });
   box.addEventListener('change', () => { select.value = box.checked ? 'yes' : 'no'; updateFormBar(); });
   form.fields[f.key] = { input: select, orig, err: h('div'), def: f };
-  return h('div', { class: 'field' }, h('label', { class: 'switch' }, box, h('span', {}, f.label)), f.help ? h('div', { class: 'help' }, f.help) : null);
+  return h('div', { class: 'field' }, h('label', { class: 'switch' }, box, h('span', {}, f.label)), f.help && !CLEAN_TABS.includes(S.tab) ? h('div', { class: 'help' }, f.help) : null);
 }
 
 function emptyDevice(spec) {
@@ -2729,7 +2728,7 @@ function senderCard() {
   if (senderBusy() && !S.fwWatching) setTimeout(watchSenderUpdate, 0);   // running (another tab, a reload): follow it
   const label = newer || !inst ? 'Update' : 'Reinstall';
   const overWifi = v['/Hydro/Transport'] === 'wifi';      // the Pi sends the file over the network itself
-  return h('div', { class: 'card' }, h('h3', {}, 'Firmware ', newer ? h('span', { class: 'chip warn' }, 'update available') : null),
+  return h('div', { class: 'card' }, newer ? h('div', {}, h('span', { class: 'chip warn' }, 'update available')) : null,
     h('div', { class: 'stats' },
       stat('Installed', inst || '–', '', true),
       stat('Latest', latest || '–', newer ? 'newer than installed' : latest && inst ? 'up to date' : '', true)),
@@ -2891,12 +2890,8 @@ function sensorBtSwitch(v, off) {
     else if (window.confirm('Switch the sensor\'s Bluetooth off? The Pi reaches it over the Wi-Fi network; Wi-Fi gets the whole radio. The sensor restarts.')) go();
     else box.checked = true;
   });
-  const help = sw.btWant ? 'The sensor restarts and comes back with Bluetooth ' + (sw.btWant.on ? 'on' : 'off') + '…'
-    : known == null ? 'Not known yet (the Pi reads it at its next check-in).'
-    : on ? (overWifi ? 'On, but not needed: the Pi talks to the sensor over Wi-Fi. Off gives Wi-Fi the whole radio.' : 'On: the Pi talks to the sensor over Bluetooth, so it stays on.')
-    : 'Off: the sensor is reached over Wi-Fi only.';
   return h('div', { class: 'field', style: 'margin:10px 0 0' }, h('label', { class: 'switch' }, box, h('span', {}, 'Sensor Bluetooth')),
-    h('div', { class: 'help' }, help));
+    sw.btWant ? h('div', { class: 'help' }, 'Sensor restarting…') : null);
 }
 
 // Readings arrive (broadcast) but the two-way connection fails: explain the difference
@@ -2971,14 +2966,13 @@ function liveCard() {
     const have = val['/Hydro/LiveTime'] != null;
     const n = (x, d) => x == null ? '–' : Number(x).toFixed(d);
     clear(vals).append(
-      stat('Sensor signal', have ? n(val['/Hydro/Signal'], 3) + ' ' + (val['/Hydro/SignalUnit'] || 'V') : '–', 'at GPIO4, unfiltered'),
-      stat('Height', have ? n(val['/Hydro/RawHeightMm'], 1) + ' mm' : '–', 'from this reading'),
+      stat('Sensor signal', have ? n(val['/Hydro/Signal'], 3) + ' ' + (val['/Hydro/SignalUnit'] || 'V') : '–', ''),
+      stat('Height', have ? n(val['/Hydro/RawHeightMm'], 1) + ' mm' : '–', ''),
       stat('Litres', have ? n(val['/Hydro/LiveLitres'], 1) + ' L' : '–', have ? 'height ' + n(val['/Hydro/LiveHeightMm'], 1) + ' mm' : ''));
-    note.textContent = !val['/Hydro/Live'] ? (have ? 'Last live reading ' + ago(Math.round(age)) + ' ago. ' : '')
-        + 'Switch on for the real sensor voltage without smoothing, twice a second' + (overWifi ? ', over the Wi-Fi network' : ': it keeps a Bluetooth connection open, which uses some power') + '. It switches off by itself after 15 minutes.'
-      : !have ? 'Connecting to the sensor over ' + (overWifi ? 'the Wi-Fi network' : 'Bluetooth') + '… (a few seconds)'
-      : age < 3 ? 'Live: updated ' + Math.max(0, age).toFixed(1) + ' s ago. Stops by itself after 15 minutes.'
-      : 'Live: waiting for the sensor (last reading ' + age.toFixed(0) + ' s ago)…';
+    note.textContent = !val['/Hydro/Live'] ? (have ? 'Last reading ' + ago(Math.round(age)) + ' ago' : '')
+      : !have ? 'Connecting…'
+      : age < 3 ? 'Updated ' + Math.max(0, age).toFixed(1) + ' s ago'
+      : 'Waiting for the sensor (' + age.toFixed(0) + ' s)…';
   };
   draw(v);
   if (on) {
@@ -2993,7 +2987,7 @@ function liveCard() {
     setTimeout(tick, 300);
   }
   const card = h('div', { class: 'card' }, h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 6px' },
-    h('h3', { style: 'margin:0' }, 'Live reading ', on ? h('span', { class: 'chip warn' }, 'live') : null), btn), vals, note);
+    on ? h('span', { class: 'chip warn' }, 'live') : h('span'), btn), vals, note);
   return card;
 }
 
@@ -3085,9 +3079,6 @@ function renderUpdateBanner() {
 
 async function tabUpdate(main) {
   main.append(await updatePanel());
-  // the water level sensor's firmware is updated on the Water tab
-  main.append(h('div', { class: 'muted' }, 'The page looks for a new version by itself (every few hours) and shows a banner on every tab when there is one. '
-    + 'Updating downloads the latest version from GitHub and restarts the services; your settings in config.ini are kept.'));
 }
 
 async function updatePanel() {
