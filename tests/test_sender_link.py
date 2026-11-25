@@ -745,3 +745,47 @@ class WifiTransportTests(unittest.TestCase):
         self._pending_start = [d.start]
         self.run_loop(lambda: (d.tank.service['/Hydro/LinkStatus'] or '').startswith('no answer'), 10)
         self.assertIn('no answer over Wi-Fi', d.tank.service['/Hydro/LinkStatus'])
+
+
+class AlarmTests(unittest.TestCase):
+    """Venus OS alarms: frost in the water tank, and the Truma heater's W/E codes."""
+
+    def test_frost_alarm_with_water_at_or_below_3_c_and_hysteresis(self):
+        d = Esp32HydroDriver('s', section('custom_name = Fresh water\n'))
+        a = d.frost.service
+        d._frost_check(40.0, {1: 5.0})
+        self.assertEqual(a['/Alarm'], 0)
+        d._frost_check(40.0, {1: 3.0})                                     # at the limit: alarm
+        self.assertEqual((a['/Alarm'], a['/State']), (2, 9))
+        self.assertIn('Fresh water: water 3.0', a['/CustomName'])
+        d._frost_check(40.0, {1: 3.8})                                     # within 1 C above: still on
+        self.assertEqual(a['/Alarm'], 2)
+        d._frost_check(40.0, {1: 4.2})
+        self.assertEqual(a['/Alarm'], 0)
+        d._frost_check(1.0, {1: 0.5})                                      # (almost) empty tank: no alarm
+        self.assertEqual(a['/Alarm'], 0)
+
+    def test_frost_alarm_can_be_switched_off_and_uses_the_chosen_probe(self):
+        self.assertIsNone(Esp32HydroDriver('s', section('frost_alarm = no\n')).frost)
+        d = Esp32HydroDriver('s', section('frost_alarm_probe = 2\nfrost_alarm_c = 1\n'))
+        d._frost_check(40.0, {1: -5.0, 2: 2.0})
+        self.assertEqual(d.frost.service['/Alarm'], 0)
+        d._frost_check(40.0, {1: 9.0, 2: 0.5})
+        self.assertEqual(d.frost.service['/Alarm'], 2)
+
+    def test_heater_code_becomes_a_warning_or_alarm_with_its_meaning(self):
+        import truma_heater
+        d = Esp32HydroDriver('s', section('heater = yes\n'))
+        h = d.heater
+        h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 1, 'water': 'eco', 'err': 42, 'ecls': 'W'})
+        self.assertEqual(h.alarm.service['/Alarm'], 1)                      # W = warning
+        self.assertIn('W 42 H: window above the heater cowl is open', h.alarm.service['/CustomName'])
+        h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 112, 'ecls': 'E'})
+        self.assertEqual(h.alarm.service['/Alarm'], 2)                      # E = alarm
+        self.assertIn('E 112 H', h.alarm.service['/CustomName'])
+        h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
+        self.assertEqual(h.alarm.service['/Alarm'], 0)
+        path = os.path.join(tempfile.mkdtemp(), 'codes.json')
+        with open(path, 'w') as f:
+            json.dump({'E112': 'no flame'}, f)
+        self.assertEqual(truma_heater.code_text({'err': 112, 'ecls': 'E'}, truma_heater.load_codes(path)), 'E 112 H: no flame')

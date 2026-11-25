@@ -864,12 +864,47 @@ const TRUMA_CODES = {
   W255: ['The heater has no 12 V supply', 'Check the heater\'s 12 V supply and fuse.'],
 };
 function trumaCode(t) {
-  const c = TRUMA_CODES[(t.ecls || 'W') + t.err];
-  return { title: (t.ecls || 'W') + ' ' + t.err + ' H' + (c ? ': ' + c[0] : ''),
-    help: c ? c[1] : t.ecls === 'E' ? 'Error: the heater stops. Fix the cause and reset it on the CP plus (see the Truma manual).'
-      : 'Warning: the heater pauses and starts again by itself once the cause is gone (see the Truma manual).' };
+  const key = (t.ecls || 'W') + t.err, c = TRUMA_CODES[key], mine = S.trumaCodes && S.trumaCodes[key];
+  const what = t.ecls === 'E' ? 'Error: the heater stops. Fix the cause and reset it on the CP plus.'
+    : 'Warning: the heater pauses and starts again by itself once the cause is gone.';
+  return { title: (t.ecls || 'W') + ' ' + t.err + ' H' + (mine ? ': ' + mine : c ? ': ' + c[0] : ''),
+    help: c && !mine ? c[1] : what + (mine || c ? '' : ' Its meaning is not in the list yet: look it up in the Truma manual and add it below (Code meanings).') };
+}
+// the code list (built in + from your manual), kept on the Pi: also used for the Venus OS notification
+async function loadTrumaCodes() {
+  const r = await api('/api/truma_codes');
+  if (r.ok) { S.trumaCodes = Object.assign({}, r.data.builtin, r.data.custom); S.trumaCustom = r.data.custom; S.trumaBuiltin = r.data.builtin; }
+}
+function trumaCodesCard() {
+  const rows = h('div', {});
+  const list = Object.assign({}, S.trumaBuiltin || {}, S.trumaCustom || {});
+  const keys = Object.keys(list).sort((a, b) => a[0] === b[0] ? parseInt(a.slice(1)) - parseInt(b.slice(1)) : a < b ? -1 : 1);
+  const line = (k, v) => {
+    const code = h('input', { value: k ? k[0] + ' ' + k.slice(1) : '', placeholder: 'W 42', style: 'width:80px', disabled: !canEdit() });
+    const text = h('input', { value: v || '', placeholder: 'meaning, from the Truma manual', style: 'flex:1;min-width:0', disabled: !canEdit() });
+    return h('div', { class: 'row', style: 'margin:4px 0' }, code, text);
+  };
+  keys.forEach(k => rows.append(line(k, list[k])));
+  rows.append(line('', ''));
+  const save = async () => {
+    const out = {};
+    for (const r of rows.children) {
+      const [c, t] = r.querySelectorAll('input');
+      const k = c.value.toUpperCase().replace(/[\sH]/g, '');
+      if (k) out[k] = t.value.trim();
+    }
+    const x = await api('/api/truma_codes', { codes: JSON.stringify(out) });
+    toast(x.ok ? x.data.message : x.data.error, !x.ok);
+    if (x.ok) { await loadTrumaCodes(); renderTab(); }
+  };
+  return h('details', { class: 'card' }, h('summary', {}, h('b', {}, 'Code meanings')),
+    h('div', { class: 'muted', style: 'margin:6px 0' }, 'The CP plus shows codes like W 42 H (W = warning, E = error). Add the codes of your heater with their meaning from the Truma manual; they appear on this page and in the Venus OS notification. An empty meaning removes a code.'),
+    rows,
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => rows.append(line('', '')) }, 'Add a line'),
+      h('button', { type: 'button', class: 'btn small primary', disabled: !canEdit(), onclick: save }, 'Save')));
 }
 async function tabHeater(main) {
+  if (!S.trumaCodes) await loadTrumaCodes();
   const t = heaterStatus(), live = t && t.lin === 'ok';
   const f = x => x == null ? '–' : Number(x).toFixed(1);
   const code = t && t.err ? trumaCode(t) : null;
@@ -888,7 +923,7 @@ async function tabHeater(main) {
     !live ? h('div', { class: 'banner warn', style: 'margin:8px 0' }, h('div', {},
       h('b', {}, t ? 'No data from the heater yet: ' + t.lin : 'The sensor has not reported the heater yet.'),
       h('div', { class: 'muted' }, 'The heater talks to the water level sensor over its LIN bus (CP plus panel); wiring and status in docs/truma.md. To see how it works now, start the simulation below.'))) : null,
-    code ? h('div', { class: 'banner ' + (t.ecls === 'E' ? 'bad' : 'warn'), style: 'margin:8px 0' }, h('div', {}, h('b', {}, code.title), h('div', { class: 'muted' }, code.help))) : null,
+    code ? h('div', { class: 'banner ' + (t.ecls === 'E' ? 'bad' : 'warn'), style: 'margin:8px 0' }, h('div', {}, h('b', {}, code.title), h('div', { class: 'muted' }, code.help + ' Also shown in Venus OS as ' + (t.ecls === 'E' ? 'an alarm' : 'a warning') + '.'))) : null,
     h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;margin:12px 0' },
       h('div', {}, h('div', { class: 'big' }, f(t && t.room), h('small', {}, ' °C')),
         h('div', { class: 'muted' }, 'room' + (t ? (t.heat ? ' · heating to ' + f(t.set) + ' °C' : ' · heating off') : ''))),
@@ -911,6 +946,7 @@ async function tabHeater(main) {
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err E112', 'Error E 112…') }, 'Error E 112'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err 0', 'Code cleared…') }, 'Clear code'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim off', 'Simulation off…') }, 'Stop'))));
+  main.append(trumaCodesCard());
   // automations: settings of the water driver (saved with the save bar, the driver restarts)
   if (!canEdit()) return;
   const r = await loadDriver();
@@ -933,7 +969,8 @@ const DEV = {
   esp32: { title: 'Water tank', what: 'water level sensor', add: flowWater, simple: [],
     // connection: auto = Wi-Fi, Bluetooth as fallback
     groups: [['Connection', ['connection', 'sensor_host', 'sender_password']], ['Truma heater', ['heater', 'heater_name']],
-             ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']]] },
+             ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']],
+             ['Frost alarm', ['frost_alarm', 'frost_alarm_c', 'frost_alarm_min_l', 'frost_alarm_probe']]] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
 

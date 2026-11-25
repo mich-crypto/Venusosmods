@@ -24,7 +24,7 @@ import rawlog
 import truma_heater
 from gi.repository import GLib
 from venus_service import monotonic_s
-from venus_service import (BleDriver, TankDevice, TemperatureDevice, interpolate, parse_table,
+from venus_service import (BleDriver, DigitalInputDevice, TankDevice, TemperatureDevice, interpolate, parse_table,
                            FLUID_FRESH_WATER, TEMPERATURE_TYPES)
 
 log = logging.getLogger('esp32_hydro')
@@ -139,6 +139,20 @@ class Esp32HydroDriver(BleDriver):
             self.tank['/Hydro/Mac'] = 'Wi-Fi %s' % self.sensor_host
             self.link_interval = min(self.link_interval, 60)    # a request over the network costs nothing
 
+        # Frost alarm in Venus OS: water in the tank and the water temperature at or below the limit
+        self.frost = None
+        if config.getboolean('frost_alarm', True):
+            self.frost_c = config.getfloat('frost_alarm_c', 3.0)
+            self.frost_min_l = config.getfloat('frost_alarm_min_l', 2.0)
+            self.frost_probe = 2 if config.get('frost_alarm_probe', '1').strip() == '2' else 1
+            self.frost_name = config.get('custom_name', '') or 'Water tank'
+            self._frost_on = False
+            self.frost = DigitalInputDevice(
+                self.bus, uid + '_frost', product_name='Water tank frost alarm', connection=connection,
+                default_instance=config.getint('frost_instance', 27),
+                custom_name='%s frost' % self.frost_name, timeout_s=timeout)
+            self.devices.append(self.frost)
+
         # Truma heater through the same sensor (in preparation, docs/truma.md)
         self.heater = None
         if config.getboolean('heater', False):
@@ -191,6 +205,24 @@ class Esp32HydroDriver(BleDriver):
         if self._wclient is not None:
             self._wclient.host = ip
         self._start_poller()
+
+    def _frost_check(self, litres, temps):
+        """Alarm while there is water in the tank and it is at or below the limit; off again 1 C above it
+        (or when the tank is empty), so it doesn't flap."""
+        if self.frost is None:
+            return
+        t = temps.get(self.frost_probe)
+        if t is None or litres is None:
+            return
+        if not self._frost_on and litres > self.frost_min_l and t <= self.frost_c:
+            self._frost_on = True
+            log.warning('frost alarm: water %.1f C with %.0f L in the tank', t, litres)
+        elif self._frost_on and (t > self.frost_c + 1 or litres <= self.frost_min_l):
+            self._frost_on = False
+            log.info('frost alarm cleared: water %.1f C, %.0f L', t, litres)
+        self.frost.publish(2 if self._frost_on else 0,
+                           ('%s: water %.1f °C with %.0f L - risk of freezing' % (self.frost_name, t, litres))
+                           if self._frost_on else '%s frost' % self.frost_name)
 
     def _saved_ip(self):
         try:
@@ -814,6 +846,7 @@ class Esp32HydroDriver(BleDriver):
             self.temp.publish(temps[1])
         if self.temp2 is not None and temps.get(2) is not None:
             self.temp2.publish(temps[2])
+        self._frost_check(None if fault else volume_l, temps)
         if d.get('truma') and self.heater:
             self.tank['/Hydro/Truma'] = json.dumps(d['truma'])
             self.heater.apply(d['truma'])
@@ -925,6 +958,7 @@ class Esp32HydroDriver(BleDriver):
             self.temp.publish(r.temperature)
         if self.temp2 is not None and r.temperature2 is not None:
             self.temp2.publish(r.temperature2)
+        self._frost_check(None if r.fault else volume_l, {1: r.temperature, 2: r.temperature2})
 
 
 if __name__ == '__main__':
