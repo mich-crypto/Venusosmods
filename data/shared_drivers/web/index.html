@@ -2712,7 +2712,6 @@ function senderCard() {
   const dev = deviceOf(S.state, 'water'), v = dev ? dev.values : {};
   const inst = v['/FirmwareVersion'], latest = S.senderFw && S.senderFw.latest, newer = senderUpdate();
   const link = v['/Hydro/LinkStatus'];
-  const body = h('div', {});
   const sec = S.driver && (S.driver.sections || []).find(x => x.kind === 'esp32');
   const svc = (S.state.services || []).find(x => x.name === 'esp32_hydro');
   const noData = !dev || (link || '').indexOf('no broadcast') === 0;
@@ -2725,8 +2724,9 @@ function senderCard() {
       + 'If anything fails it keeps its old firmware.', async () => {
     const x = await api('/api/sender_update', { via });
     toast(x.ok ? x.data.message : x.data.error, !x.ok);
-    if (x.ok) watchSenderUpdate(body);
+    if (x.ok) watchSenderUpdate();
   });
+  if (senderBusy() && !S.fwWatching) setTimeout(watchSenderUpdate, 0);   // running (another tab, a reload): follow it
   const label = newer || !inst ? 'Update' : 'Reinstall';
   const overWifi = v['/Hydro/Transport'] === 'wifi';      // the Pi sends the file over the network itself
   return h('div', { class: 'card' }, h('h3', {}, 'Firmware ', newer ? h('span', { class: 'chip warn' }, 'update available') : null),
@@ -2741,7 +2741,7 @@ function senderCard() {
       h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !dev, onclick: ev => rebootSensor(ev.target) }, 'Restart sensor'),
       h('button', { type: 'button', class: 'btn small', onclick: () => { S.dbgView = 'raw'; S.rawSource = 'link'; selectTab('debug'); } }, 'Connection log')),
-    body);
+    senderProgress());
 }
 
 // Restart the sensor (over Wi-Fi or Bluetooth, settings are kept); the Pi reads it back ~20 s later
@@ -3003,20 +3003,44 @@ function cancelSenderUpdate() {
   });
 }
 
-async function watchSenderUpdate(body) {
-  S.fwWatching = true;
-  try { await watchUpdateLog(body); } finally { S.fwWatching = false; }
+// The progress of an update is kept here, not in the tab: switching tabs rebuilds the tab,
+// and coming back shows the box again with the latest text (key 'mods' or 'fw').
+function progSet(key, text) {
+  S.prog = S.prog || {};
+  S.prog[key] = text;
+  const el = document.getElementById('prog-' + key);
+  if (el) { el.textContent = text; el.scrollTop = el.scrollHeight; }
 }
-async function watchUpdateLog(body) {
-  const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:30vh;margin-top:8px' }, 'starting…');
-  clear(body).append(pre, h('div', { class: 'row', style: 'margin-top:6px' },
-    h('button', { type: 'button', class: 'btn small', onclick: cancelSenderUpdate }, 'Cancel update')));
+function progBox(key) {
+  const pre = h('pre', { class: 'rawbox', id: 'prog-' + key, style: 'height:auto;max-height:30vh;margin-top:8px' }, (S.prog && S.prog[key]) || 'starting…');
+  requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
+  return pre;
+}
+
+// the sensor update's log under the Firmware card (with Cancel while it runs)
+function senderProgress() {
+  if (!S.fwWatching && !(S.prog && S.prog.fw)) return null;
+  return h('div', { id: 'fwprog' }, progBox('fw'), S.fwWatching ? h('div', { class: 'row', style: 'margin-top:6px' },
+    h('button', { type: 'button', class: 'btn small', onclick: cancelSenderUpdate }, 'Cancel update')) : null);
+}
+async function watchSenderUpdate() {
+  if (S.fwWatching) return;
+  S.fwWatching = true;
+  progSet('fw', 'starting…');
+  const sc = $('#sendercard');
+  if (sc) sc.replaceChildren(senderCard());
+  try { await watchUpdateLog(); } finally {
+    S.fwWatching = false;
+    const fp = $('#fwprog');
+    if (fp) fp.replaceWith(senderProgress());
+  }
+}
+async function watchUpdateLog() {
   for (let i = 0; i < 400; i++) {
     await new Promise(r => setTimeout(r, 2000));
     const x = await api('/api/sender_update_log');
     if (!x.ok) continue;
-    pre.textContent = x.data.text || '(starting…)';
-    pre.scrollTop = pre.scrollHeight;
+    progSet('fw', x.data.text || '(starting…)');
     if (x.data.state === 'done') { toast('The water level sensor is updated.'); await refreshState(); return; }
     if (x.data.state === 'failed') { toast('The update did not work, see the log. The sensor keeps its old firmware.', true); return; }
   }
@@ -3046,7 +3070,7 @@ async function tabUpdate(main) {
 
 async function updatePanel() {
   const card = h('div', { class: 'card' }, h('h3', {}, 'Software update'));
-  const body = h('div', {});
+  const body = h('div', { id: 'updbody' });
   card.append(body);
   const draw = async (refresh) => {
     const r = await api('/api/update_check' + (refresh ? '?refresh=1' : ''));
@@ -3062,9 +3086,11 @@ async function updatePanel() {
       h('button', { class: 'btn small' + (d.available ? ' primary' : ''), disabled: d.running || !canEdit(), onclick: () => confirmThen('Download the latest version and restart the services?', async () => {
         const x = await api('/api/update_run', {});
         toast(x.ok ? x.data.message : x.data.error, !x.ok);
-        if (x.ok) watchUpdate(body);
+        if (x.ok) watchUpdate();
       }) }, d.available ? 'Update now' : 'Reinstall latest'), d.available ? h('span', { class: 'chip warn' }, 'update available') : (d.installed && d.latest ? h('span', { class: 'chip ok' }, 'up to date') : null)));
     if (!canEdit()) body.append(h('div', { class: 'muted', style: 'margin-top:6px' }, ['Unlock the page to update. ', h('a', { href: '#', onclick: ev => { ev.preventDefault(); unlock(); } }, 'Unlock')]));
+    if (S.updWatching || (S.prog && S.prog.mods)) body.append(progBox('mods'));
+    else if (d.running) watchUpdate();                          // running (another tab, a reload): follow it
     if (d.checking) setTimeout(() => { if (S.tab === 'update') draw(false); }, 2500);
   };
   await draw(false);
@@ -3073,29 +3099,32 @@ async function updatePanel() {
 
 // Follow the update log; at the end the page server restarts with the new version:
 // wait until it answers again, then reload so the new page is shown right away.
-async function watchUpdate(body) {
-  const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:30vh;margin-top:8px' }, 'starting…');
-  body.append(pre);
+async function watchUpdate() {
+  if (S.updWatching) return;
+  S.updWatching = true;
+  progSet('mods', 'starting…');
+  const body = $('#updbody');
+  if (body && !$('#prog-mods')) body.append(progBox('mods'));
+  const add = more => progSet('mods', S.prog.mods + more);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let gone = false;
   for (let i = 0; i < 150; i++) {
     await sleep(2000);
     const x = await api('/api/update_log');
     if (x.status === 0 || x.status >= 500) {                // the page server is restarting
-      if (!gone) pre.textContent += '\n(the page is restarting with the new version…)';
+      if (!gone) add('\n(the page is restarting with the new version…)');
       gone = true;
       continue;
     }
     if (!x.ok) continue;
-    pre.textContent = x.data.text || '(no output yet)';
-    pre.scrollTop = pre.scrollHeight;
+    progSet('mods', x.data.text || '(no output yet)');
     if (!x.data.running) {
       const failed = !gone && !/Update finished|Restarted /.test(x.data.text || '');
-      if (failed) { toast('The update stopped, see the log.', true); return; }
+      if (failed) { S.updWatching = false; toast('The update stopped, see the log.', true); return; }
       break;
     }
   }
-  pre.textContent += '\nUpdate finished: loading the new version…';
+  add('\nUpdate finished: loading the new version…');
   for (let i = 0; i < 30; i++) {                             // wait until the new page server answers
     const r = await api('/api/state');
     if (r.ok) break;
