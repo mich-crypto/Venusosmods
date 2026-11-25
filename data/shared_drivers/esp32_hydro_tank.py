@@ -12,6 +12,7 @@ name (the tank's own /Temperature path is only shown by the GUI for Mopeka tanks
 
 import json
 import logging
+import os
 import re
 import struct
 import subprocess
@@ -25,6 +26,14 @@ from venus_service import (BleDriver, TankDevice, TemperatureDevice, interpolate
                            FLUID_FRESH_WATER, TEMPERATURE_TYPES)
 
 log = logging.getLogger('esp32_hydro')
+
+
+def wifi_checksum(*parts):
+    """A short checksum of the Wi-Fi setting (FNV-1a), so the password itself is not stored again."""
+    h = 0x811c9dc5
+    for b in '\x1f'.join(p or '' for p in parts).encode('utf-8'):
+        h = ((h ^ b) * 0x01000193) & 0xffffffff
+    return '%08x' % h
 
 
 class Esp32HydroDriver(BleDriver):
@@ -72,6 +81,13 @@ class Esp32HydroDriver(BleDriver):
         self.wifi_ssid = config.get('wifi_ssid', '')
         self.wifi_password = config.get('wifi_password', '')
         self.adapter = config.get('adapter', 'hci0')
+        # The Wi-Fi setting can also be changed on the sensor's own page. The Pi sends its own
+        # only when it changed here (last change wins), not at every check-in. What was sent is
+        # kept as a checksum, so a restart or reboot of the Pi doesn't send it again.
+        self.wifi_state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state',
+                                            '%s.wifi-sent' % config.get('service', 'esp32_hydro'))
+        self._wifi_sum = wifi_checksum(self.wifi_mode, self.wifi_ssid, self.wifi_password)
+        self._wifi_pending = None
         self.seen_mac = self.mac
         self.gatt = None
         self._collector = None
@@ -295,9 +311,29 @@ class Esp32HydroDriver(BleDriver):
             return True
         if monotonic_s() < self._link_quiet_until:
             return True                        # each try pauses the other drivers' scanning: not every 5 min
-        self._send('checkin', proto.link_commands(self.sender_password, self.wifi_mode,
-                                                  self.wifi_ssid, self.wifi_password))
+        push = self._wifi_sum != self._wifi_sent()
+        self._wifi_pending = self._wifi_sum if push else None
+        if push:
+            frames = proto.link_commands(self.sender_password, self.wifi_mode, self.wifi_ssid, self.wifi_password)
+        else:
+            frames = proto.link_commands(self.sender_password)          # auth, hb, info
+        self._send('checkin', frames)
         return True
+
+    def _wifi_sent(self):
+        try:
+            with open(self.wifi_state_file) as f:
+                return f.read().strip()
+        except OSError:
+            return None
+
+    def _wifi_mark_sent(self, value):
+        try:
+            os.makedirs(os.path.dirname(self.wifi_state_file), exist_ok=True)
+            with open(self.wifi_state_file, 'w') as f:
+                f.write(value + '\n')
+        except OSError as e:
+            log.warning('could not remember the Wi-Fi setting sent: %s', e)
 
     # Live view (settings page, Water tab): stay connected, switch the sender's
     # smoothing off and read the raw signal about twice a second, for 15 minutes.
@@ -409,6 +445,9 @@ class Esp32HydroDriver(BleDriver):
             return
         self.tank['/FirmwareVersion'] = info.get('fw')
         self.tank['/Hydro/WifiMode'] = info.get('mode')
+        if self._wifi_pending:
+            self._wifi_mark_sent(self._wifi_pending)   # the sensor has the Pi's setting now
+            self._wifi_pending = None
         self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
         self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
         self.tank['/Hydro/TempNames'] = json.dumps(info.get('tn') or [])

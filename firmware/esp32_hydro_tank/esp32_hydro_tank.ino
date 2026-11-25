@@ -189,7 +189,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.2"
+#define FW_VERSION           "4.3"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -1289,7 +1289,10 @@ main{max-width:560px;margin:0 auto;padding:16px}h1{font-size:20px;margin:4px 0 1
 .chip.bad{color:var(--bad);border-color:var(--bad)}
 button,input{font:inherit;border-radius:8px;border:1px solid var(--line);padding:9px 12px;background:var(--bg);color:var(--fg)}
 button{cursor:pointer}button.p{background:var(--acc);color:var(--accfg);border-color:var(--acc)}button:disabled{opacity:.5}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.row input{flex:1;min-width:0}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:6px 0;flex-wrap:wrap}
+.seg button{border:0;border-radius:0;border-right:1px solid var(--line);padding:8px 12px}.seg button:last-child{border-right:0}
+.seg button.on{background:var(--acc);color:var(--accfg);font-weight:600}.row input{flex:1;min-width:0}
 pre{white-space:pre-wrap;font:13px/1.35 ui-monospace,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;max-height:260px;overflow:auto;margin:8px 0 0}
 table{border-collapse:collapse;width:100%;font-size:14px}td,th{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line)}
 details summary{cursor:pointer;font-weight:600}
@@ -1314,6 +1317,20 @@ details summary{cursor:pointer;font-weight:600}
  <h2>Temperatures</h2>
  <div id="temps"></div>
  <div class="mut" id="tnote"></div>
+</div>
+
+<div class="card">
+ <h2>Wi-Fi of this sensor</h2>
+ <div class="seg" id="wmode"></div>
+ <div class="mut" id="whelp"></div>
+ <div id="wnet">
+  <div class="row"><select id="wlist" style="flex:1;min-width:0"><option value="">Pick a network…</option></select><button onclick="wscan()">Scan</button></div>
+  <div class="row"><input id="wssid" placeholder="Wi-Fi network name" autocomplete="off"></div>
+  <div class="row"><input id="wpass" type="password" placeholder="password (empty = keep the saved one)" autocomplete="off"></div>
+ </div>
+ <div class="row"><button class="p" onclick="wsave()">Save Wi-Fi</button></div>
+ <div class="mut" id="wstate"></div>
+ <div class="mut">The Venus OS page can change this too: the last change wins. Network name and password are also used for firmware updates over Wi-Fi.</div>
 </div>
 
 <div class="card">
@@ -1409,6 +1426,8 @@ async function refresh(){
   if(s.draining)c+='<span class="chip">Draining</span>';
   c+='<span class="chip">'+(s.custom_table?'Your calibration':'Built-in table')+'</span>';
   simAt=s.sim_mm!=null?Date.now()-s.sim_ms:null;
+  if(!wtouched){wmode=s.wifi_mode;wdraw();if(document.activeElement!==$('wssid')&&!$('wssid').value)$('wssid').value=s.sta_ssid||''}
+  $('wstate').textContent=s.sta_ip?'Connected to “'+s.sta_ssid+'”: http://'+s.sta_ip:(s.wifi_mode==='van'?'Not connected to “'+(s.sta_ssid||'')+'” (yet).':'')+(s.ap_on?' Own Wi-Fi is on.':'');
   if(s.sim_mm!=null)c+='<span class="chip bad">SIMULATION: '+s.sim_mm.toFixed(0)+' mm, not the sensor</span>';
   fastOn=s.fast_s>0;
   if(fastOn)c+='<span class="chip bad">Test mode: no smoothing, '+Math.ceil(s.fast_s/60)+' min left</span>';
@@ -1424,10 +1443,10 @@ async function refresh(){
  }catch(e){$('foot').textContent='No connection to the sender…'}
 }
 function tab(p){if(!p||!p.length)return'';let h='<table><tr><th>#</th><th>height mm</th><th>litres</th></tr>';p.forEach((x,i)=>h+='<tr><td>'+i+'</td><td>'+x[0].toFixed(1)+'</td><td>'+x[1].toFixed(1)+'</td></tr>');return h+'</table>'}
-async function cmd(c){
- if(!c)return;busy=true;$('outp').textContent='> '+c+'\n…';
+async function cmd(c,shown){
+ if(!c)return;busy=true;const lbl=shown||c;$('outp').textContent='> '+lbl+'\n…';
  document.querySelectorAll('button').forEach(b=>b.disabled=true);
- try{const r=await fetch('/api/cmd',{method:'POST',body:new URLSearchParams({c})});$('outp').textContent='> '+c+'\n'+await r.text()}
+ try{const r=await fetch('/api/cmd',{method:'POST',body:new URLSearchParams({c})});$('outp').textContent='> '+lbl+'\n'+await r.text()}
  catch(e){$('outp').textContent='Failed: '+e}
  document.querySelectorAll('button').forEach(b=>b.disabled=false);busy=false;refresh();
 }
@@ -1448,9 +1467,20 @@ async function upd(){const f=$('fw').files[0];if(!f)return;const d=new FormData(
  $('outp').textContent='Uploading '+f.name+' …';busy=true;
  try{const r=await fetch('/update',{method:'POST',body:d});$('outp').textContent=await r.text()}catch(e){$('outp').textContent='Failed: '+e}
  busy=false;setTimeout(refresh,8000)}
-let fastOn=false,simAt=null;
+let fastOn=false,simAt=null,wmode=null,wtouched=false;
+// Wi-Fi card: the switch, the network list from a scan, save as serial commands
+const WMODES=[['ap','AP on'],['van','Wi-Fi network'],['auto','Bluetooth only']];
+const WHELP={ap:'The own Wi-Fi "Watertank" is always on (uses the most energy).',van:'Joins the Wi-Fi network below; the page is then also reachable in that network.',auto:'Saves energy: Wi-Fi off. It comes on by itself when the Pi has not been heard over Bluetooth for 15 minutes, or for 30 minutes after pressing BOOT.'};
+function wdraw(){const cur=wmode==='off'?'auto':wmode;$('wmode').innerHTML=WMODES.map(([v,l])=>'<button class="'+(cur===v?'on':'')+'" onclick="wmode=\''+v+'\';wtouched=true;wdraw()">'+l+'</button>').join('');$('whelp').textContent=WHELP[cur]||''}
+async function wscan(){const b=$('wlist');b.innerHTML='<option>Scanning… (a few seconds)</option>';
+ try{const r=await (await fetch('/api/wifiscan')).json();b.innerHTML='<option value="">Pick a network…</option>'+r.map(n=>'<option value="'+esc(n.s)+'">'+esc(n.s)+'  '+n.r+' dBm</option>').join('')}
+ catch(e){b.innerHTML='<option value="">Scan failed</option>'}}
+async function wsave(){const ss=$('wssid').value.trim(),pw=$('wpass').value;
+ if(wmode==='van'&&!ss){alert('Enter the Wi-Fi network name');return}
+ if(ss)await cmd('wifi ssid '+ss);if(pw)await cmd('wifi pass '+pw,'wifi pass ********');await cmd('wifi mode '+(wmode||'auto'));$('wpass').value='';wtouched=false}
 // stopwatch since the simulated level went out
 setInterval(()=>{const b=$('simbox');if(!b)return;b.innerHTML=simAt==null?'':'<b style="font-size:26px;color:var(--fg)">'+((Date.now()-simAt)/1000).toFixed(1)+' s</b> since the simulated level was sent'},100);
+$('wlist').addEventListener('change',()=>{if($('wlist').value){$('wssid').value=$('wlist').value;$('wpass').focus()}});
 // 4 updates a second in test mode, every 2 s otherwise
 function loop(){refresh().finally(()=>setTimeout(loop,fastOn?250:2000))}
 loop();
@@ -1489,6 +1519,7 @@ static void handleStatus() {
   j += "\"uptime_s\":" + String(millis() / 1000) + ",";
   j += "\"wifi_mode\":\"" + wifiMode + "\",\"pi_ago_s\":" + String(lastPiHeard ? (long)((millis() - lastPiHeard) / 1000) : -1L) + ",";
   j += "\"sta_ip\":\"" + staIp() + "\",\"ap_on\":" + String(apOn ? "true" : "false") + ",";
+  j += "\"sta_ssid\":\"" + jsonEsc(staSsid) + "\",";
   j += "\"ble_adv\":" + String(advertising && advertising->isAdvertising() ? "true" : "false") + ",";
   j += "\"ble_conn\":" + String(linkServer ? linkServer->getConnectedCount() : 0) + ",";
   j += "\"ble_restarts\":" + String(advRestarts) + ",";
@@ -1703,6 +1734,28 @@ static void fwGet() {
   fwBusy = false;
 }
 
+// Networks around, for the Wi-Fi card (needs the station side for a moment)
+static void handleWifiScan() {
+  lastWebUse = millis();
+  if (!(WiFi.getMode() & WIFI_STA)) WiFi.enableSTA(true);
+  int n = WiFi.scanNetworks();
+  String j = "[";
+  int shown = 0;
+  for (int i = 0; i < n && shown < 25; i++) {
+    String ssid = WiFi.SSID(i);
+    if (ssid.length() == 0) continue;
+    bool dup = false;
+    for (int k = 0; k < i; k++) if (WiFi.SSID(k) == ssid) { dup = true; break; }
+    if (dup) continue;
+    if (shown++) j += ',';
+    j += "{\"s\":\"" + jsonEsc(ssid) + "\",\"r\":" + String(WiFi.RSSI(i)) + "}";
+  }
+  j += "]";
+  WiFi.scanDelete();
+  staDirty = !staOn;                     // back to the Wi-Fi the mode asks for
+  server.send(200, "application/json", j);
+}
+
 static void webStart() {
   pinMode(PIN_BOOT_BUTTON, INPUT_PULLUP);
   updateWifi();                            // own Wi-Fi on: the first minutes after power-on
@@ -1710,6 +1763,7 @@ static void webStart() {
   server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", PAGE); });
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/cmd", HTTP_POST, handleCmd);
+  server.on("/api/wifiscan", HTTP_GET, handleWifiScan);
   server.on("/api/password", HTTP_POST, handlePassword);
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   // Phones test for internet with fixed addresses (captive.apple.com/hotspot-detect.html,
