@@ -290,6 +290,14 @@ Check from both ends:
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
 
+**Truma heater (in preparation)**: a Truma Combi with CP plus panel can be connected
+to the water level sensor's ESP32 over its LIN bus, with a small transceiver chip. The
+Pi side is ready: *Water → Settings → Truma heater* switches it on; a **Heater** tab
+then shows the status, has Heating on/off, the room set point, hot water
+(off/eco/hot/boost) and a frost guard; Venus OS gets the room temperature and the
+controls on the switch pane. The LIN part of the sensor firmware is still to be
+written; wiring and plan in `docs/truma.md`.
+
 **Connection log, for long-term tests** (Water → Firmware → *Connection log*, or
 Debug → Raw data → *Water link*): every Bluetooth exchange between the Pi and the
 water level sensor, step by step (connect, services, what was sent without
