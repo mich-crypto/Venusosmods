@@ -288,6 +288,36 @@ class CommandTests(unittest.TestCase):
         d._link_tick()
         self.assertEqual(len(d.gatt.sent), n)                              # no check-in during the download
 
+    def test_command_retried_when_the_connection_broke_before_it_went_out(self):
+        d = self.driver(cfg='')
+        d._on_command_set('/Hydro/Command', 'reboot')
+        d._send_command()
+        d.gatt.frames_sent = 1                                             # only auth went out
+        d.gatt.done(False, 'StartNotify failed: Not Connected')
+        self.assertEqual(d._command, 'reboot')                             # queued again
+        self.assertIsNone(d.tank.service['/Hydro/CommandResult'])
+
+    def test_sensor_log_lines_and_hourly_stats_go_to_the_persistent_log(self):
+        import rawlog
+        d = self.driver(cfg='')
+        rawlog.clear('link')
+        d._link_tick()
+        self.assertIn(b'Cdlog new', d.gatt.sent[-1])
+        d._on_link_notify(b'ok\x04ok wifi mode auto\x04dlog new\n00:01:02 BT connected\n00:01:03 auth ok\x04{"fw":"4.9","mode":"auto"}\x04')
+        d._log_stats()
+        text = '\n'.join(rawlog.read_tail('link'))
+        self.assertIn('sensor 00:01:02 BT connected', text.replace('  ', ' '))
+        self.assertIn('last hour', text)
+        self.assertEqual(d.tank.service['/FirmwareVersion'], '4.9')        # info still read from the last answer
+        self.assertTrue(rawlog.path_of('link').startswith(rawlog.PERSIST_DIR))   # kept across reboots
+
+    def test_link_log_hides_passwords(self):
+        t = Esp32HydroDriver.frames_text([b'Cauth secret', b'Cwifi pass hunter2', b'Cwifi join MOS\tpw', b'D\x00\x00\x00\x00ab', b'Cinfo'])
+        self.assertNotIn('secret', t)
+        self.assertNotIn('hunter2', t)
+        self.assertNotIn('pw', t.replace('password', ''))
+        self.assertIn('1 data packets from byte 0', t)
+
     def test_command_answers_and_refusals(self):
         d = self.driver()
         self.assertFalse(Esp32HydroDriver('s', section(''))._on_command_set('/Hydro/Command', 'fwget http://x'))   # no sensor heard yet
@@ -437,7 +467,7 @@ class WifiPushTests(unittest.TestCase):
         with open(state) as f:
             self.assertNotIn('s3cret', f.read())                          # a checksum, not the password
         d._link_tick()
-        self.assertEqual(d.gatt.sent[-1], [b'Cauth watertank', b'Chb', b'Cinfo'])   # left alone
+        self.assertEqual(d.gatt.sent[-1], [b'Cauth watertank', b'Chb', b'Cdlog new', b'Cinfo'])   # left alone
         d2 = self.driver(state, 'wifi_mode = van\nwifi_ssid = Camper\nwifi_password = s3cret\n')
         d2._link_tick()
         self.assertNotIn(b'Cwifi mode van', d2.gatt.sent[-1])             # a Pi restart doesn't resend it

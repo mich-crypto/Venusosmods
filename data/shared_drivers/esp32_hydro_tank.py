@@ -72,6 +72,11 @@ class Esp32HydroDriver(BleDriver):
             setup=self._writable_paths)
         self.devices.append(self.tank)
         self.raw = rawlog.RawLog('water')
+        self.link_log = rawlog.RawLog('link')    # Debug -> Raw data -> Link: every exchange, step by step
+        self._tx_at = 0
+        self._live_n = 0
+        self.stats = self._new_stats()
+        self._cmd_tries = 0
 
         # Bluetooth link: check in every link_interval s (keeps the sender's own
         # Wi-Fi off in auto mode), push the Wi-Fi settings, read firmware and state
@@ -132,6 +137,7 @@ class Esp32HydroDriver(BleDriver):
         self._link_tick()
         GLib.timeout_add_seconds(self.link_interval, self._link_tick)
         GLib.timeout_add_seconds(self.SCAN_WATCH_S, self._scan_watch)
+        GLib.timeout_add_seconds(3600, self._log_stats)
         return False
 
     # The sensor broadcasts every 2 s. If nothing arrives, look first at the other Bluetooth
@@ -155,11 +161,14 @@ class Esp32HydroDriver(BleDriver):
         self._silent_kicks += 1
         if scanner.heard_any_within(self.SILENT_S):
             if self._silent_kicks == 1:
+                self.link_log.write('scan', 'no broadcast for %d s, other devices heard' % silent)
                 log.info('no broadcast from the sensor for %d s, other Bluetooth devices are heard: '
                          'sensor off or out of range', silent)
             return True
         if self._silent_kicks <= 3 or self._silent_kicks % 10 == 0:
             log.warning('nothing heard over Bluetooth for %d s: restarting this driver\'s scan', silent)
+            self.link_log.write('scan', 'nothing heard for %d s: scan restarted' % silent)
+            self.stats['scan_restarts'] += 1
             scanner.restart()
         if self._silent_kicks >= 6:            # 3 minutes without any device
             why = scanner.power_cycle_if_dead()
@@ -327,13 +336,63 @@ class Esp32HydroDriver(BleDriver):
             self.gatt = GattClient(self.bus, self.seen_mac, proto.LINK_CMD_UUID, proto.LINK_REPLY_UUID,
                                    self._on_link_notify, adapter=self.adapter, timeout_s=40,
                                    scanner=getattr(self, 'scanner', None), connect_attempts=2)
+            self.gatt.trace = self._trace
         return self.gatt
+
+    # ------------------------------------------------------------ debug log
+    def _quiet_live(self):
+        return self._mode == 'live' and self._live_n % 20 != 1     # a live poll every 0.5 s: log every 20th
+
+    def _trace(self, text):
+        if self._quiet_live() and not ('fail' in text or 'error' in text or 'disconnected' in text):
+            return
+        self.link_log.write('step', '%s %s' % (self._mode or '-', text))
+
+    @staticmethod
+    def _new_stats():
+        return {'adv': 0, 'gaps': 0, 'longest_gap': 0, 'ok': {}, 'failed': {}, 'scan_restarts': 0}
+
+    def _log_stats(self):
+        """One line an hour: how the link did (for long-term tests)."""
+        st, self.stats = self.stats, self._new_stats()
+        ex = ', '.join('%s %d ok / %d failed' % (m, st['ok'].get(m, 0), st['failed'].get(m, 0))
+                       for m in sorted(set(st['ok']) | set(st['failed']))) or 'no exchanges'
+        self.link_log.write('stats', 'last hour: %d broadcasts (about 1800 expected), %d gaps over 10 s (longest %d s), %s, %d scan restarts'
+                            % (st['adv'], st['gaps'], st['longest_gap'], ex, st['scan_restarts']))
+        return True
+
+    @staticmethod
+    def frames_text(frames):
+        """What was sent, without passwords; data packets summed up."""
+        out, data, first = [], 0, None
+        for f in frames:
+            if f.startswith(b'D'):
+                data += 1
+                if first is None and len(f) >= 5:
+                    first = struct.unpack('<I', f[1:5])[0]
+                continue
+            t = f[1:].decode('utf-8', 'replace')
+            if t.startswith('auth '):
+                t = 'auth ***'
+            elif t.startswith('wifi pass'):
+                t = 'wifi pass ***'
+            elif '\t' in t:
+                t = t.split('\t')[0] + ' (+Wi-Fi password)'
+            out.append(t)
+        if data:
+            out.append('%d data packets from byte %d' % (data, first or 0))
+        return ' | '.join(out)
 
     def _send(self, mode, frames):
         """One exchange; every frame but auth gets a notified reply."""
         self._mode = mode
         self._collector = proto.ReplyCollector()
         self._expected = sum(1 for f in frames if f.startswith(b'C') and not f.startswith(b'Cauth '))   # data: no answer
+        if mode == 'live':
+            self._live_n += 1
+        self._tx_at = monotonic_s()
+        if not self._quiet_live():
+            self.link_log.write('tx', '%s: %s' % (mode, self.frames_text(frames)))
         self._client().exchange(frames, self._on_link_done)
 
     def _retry_soon(self):
@@ -364,6 +423,7 @@ class Esp32HydroDriver(BleDriver):
             frames = proto.link_commands(self.sender_password, self.wifi_mode, self.wifi_ssid, self.wifi_password)
         else:
             frames = proto.link_commands(self.sender_password)          # auth, hb, info
+        frames = frames[:-1] + [b'Cdlog new'] + frames[-1:]   # the sensor's new log lines (4.9+), info stays last
         self._send('checkin', frames)
         return True
 
@@ -463,12 +523,27 @@ class Esp32HydroDriver(BleDriver):
 
     def _on_link_done(self, ok, error):
         replies = self._collector.replies if self._collector else []
+        bucket = self.stats['ok' if ok else 'failed']
+        bucket[self._mode or '-'] = bucket.get(self._mode or '-', 0) + 1
+        if not ok or not self._quiet_live():
+            self.link_log.write('rx', '%s: %s after %.1f s%s' % (
+                self._mode, 'ok' if ok else 'FAILED (%s)' % error, monotonic_s() - self._tx_at,
+                ''.join(' | ' + (r if len(r) <= 160 else r[:160] + '…') for r in replies)))
         self._collector = None
         mode, self._mode = self._mode, None
         if mode == 'ota':
             self._ota_answer(ok, error, replies)
             return
         if mode == 'command':
+            sent = getattr(self.gatt, 'frames_sent', 2) if self.gatt is not None else 0
+            if not ok and not replies and sent < 2 and self._cmd_tries < 3:
+                # the connection broke before the command went out: the sensor never got it, try again
+                self._cmd_tries += 1
+                self.link_log.write('retry', 'command not delivered (%s), try %d of 3 in 3 s' % (error, self._cmd_tries + 1))
+                self._command = self._last_cmd
+                GLib.timeout_add_seconds(3, self._send_command)
+                return
+            self._cmd_tries = 0
             answer = replies[-1].strip() if replies else 'no answer: %s' % (error or 'link failed')
             if any(r.startswith('denied') for r in replies):
                 answer = 'wrong sensor password'
@@ -508,6 +583,11 @@ class Esp32HydroDriver(BleDriver):
             log.warning('link: sender refused the password - set sender_password = the sender\'s Wi-Fi password')
             self.tank['/Hydro/LinkStatus'] = 'wrong sensor password'
             return
+        for r in replies:
+            if r.startswith('dlog new'):
+                for line in r.split('\n')[1:]:
+                    if line.strip():
+                        self.link_log.write('sensor', line)
         self.apply_info(replies[-1] if replies else '')
 
     def apply_info(self, text):
@@ -543,7 +623,17 @@ class Esp32HydroDriver(BleDriver):
         if mac != self.seen_mac or self.tank['/Hydro/Mac'] is None:
             self.seen_mac = mac
             self.tank['/Hydro/Mac'] = mac
-        self._last_adv = monotonic_s()
+        now = monotonic_s()
+        if self._last_adv is not None and r.sequence != self._last_seq:
+            self.stats['adv'] += 1
+            gap = now - self._last_adv
+            if gap > 10:
+                self.stats['gaps'] += 1
+                self.stats['longest_gap'] = max(self.stats['longest_gap'], int(gap))
+        if self._last_adv is None or now - self._last_adv > 10:
+            self.link_log.write('adv', 'broadcast %s, rssi %s' % (
+                'heard (first since start)' if self._last_adv is None else 'heard again after %d s' % (now - self._last_adv), rssi))
+        self._last_adv = now
         self._last_temp = r.temperature
         if r.sequence == self._last_seq:
             return  # same packet seen again, nothing new

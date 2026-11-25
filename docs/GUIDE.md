@@ -290,6 +290,19 @@ Check from both ends:
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
 
+**Connection log, for long-term tests** (Water → Firmware → *Connection log*, or
+Debug → Raw data → *Water link*): every Bluetooth exchange between the Pi and the
+water level sensor, step by step (connect, services, what was sent without
+passwords, the answer, how long it took, errors), gaps in the broadcasts, scan
+restarts, and once an hour a summary (broadcasts received, gaps, check-ins
+ok/failed). With sensor firmware 4.9 the Pi also collects the sensor's own log
+at every check-in (lines marked `sensor`: connections, disconnects, password
+checks, commands, Wi-Fi, updates, why it last restarted, times = time since the
+sensor started). The log is kept across reboots in `/data/log/venusosmods/link.log`
+(up to about 2 MB, then the older half is dropped). *Copy* takes what is shown,
+*Download* the whole file. The sensor's own page has the same log under
+*Debug log*, and `dlog` in its Terminal.
+
 **Bluetooth scan stuck** (the log says "device not known to BlueZ" over and over
 until a reboot): the water driver looks at all Bluetooth devices, not only the
 sensor. If others (gas sensor, fridge, Victron, phones) are still heard, the sensor
