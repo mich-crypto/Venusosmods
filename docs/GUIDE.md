@@ -188,8 +188,8 @@ It never switches off while a phone is connected to it. The **green flash**
 | **AP on** | the own Wi-Fi "Watertank-1" is always on | highest |
 
 **On the sensor itself** (firmware 4.3+): its own page has the same switch in
-the card *Wi-Fi of this sensor*, with *Scan* for the networks around, the
-network name and password, and *Save Wi-Fi*. The last change wins: the Pi only
+the card *Wi-Fi settings*, with its known networks to connect with one tap and
+*Scan* to add others (4.4). The last change wins: the Pi only
 sends its own setting again when you change it on the Venus OS page.
 
 Set it under Water → Settings → *Connection*. The sensor follows at its next
@@ -211,20 +211,33 @@ To use the page:
    `http://`, browsers otherwise try `https://`, which the sender doesn't
    speak. Still nothing: switch mobile data off for a moment.
 
-The page shows a drawing of the tank filling up, the litres, level, water
-height and sensor signal, and each temperature probe with its name and a
-*Rename* button (updated every 2 s), and has buttons for everything the serial
-commands do: *Tank is empty: set zero*, measuring the tank in portions
-(*Start*, *Record*, *Save*), the active table, a console for any serial
-command, the Wi-Fi password and **firmware updates** (upload
-`WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin`; the calibration is kept).
+The page (firmware 4.4) shows at the top right a **blue light** (Bluetooth
+broadcasting) with the time since the Pi last checked in ("Pi 2 min"; amber =
+Pi silent for 15 min, red = not broadcasting) and a **Wi-Fi symbol** with the
+network it is on, "AP on" or "off". Below: a drawing of the tank filling up,
+litres, level, water height and sensor signal, with a small **→0** button
+(tank empty: set zero). Then:
 
-**Simulate a level (firmware 3.6+):** on the sender's page, *Simulate a level*:
-0 / 25 / 50 / 75 / 100 % or a height in mm. The sender broadcasts that level at
-once instead of the sensor, and a stopwatch counts the seconds since, so you can
-see how long Venus OS (Remote Console, VRM) takes to show it. A red chip says
-SIMULATION while it runs; *Stop* or 15 minutes ends it. Serial: `sim 50%`,
-`sim 300`, `sim off`.
+- **Tank**: pick which tank table is used. The built-in one is the wheel-arch
+  tank (100 L). *Calibrate the tank* opens a window that explains the steps
+  (Start with the tank empty, pour in known amounts and Record, then name it and
+  *Save tank*); the result is a new tank in the list and is used right away.
+  *Rename*/*Delete* work on saved tanks (up to 4).
+- **Temperatures** with *Rename* per probe.
+- **Wi-Fi settings**: *AP only / Wi-Fi network / Bluetooth only*. Under *Wi-Fi
+  network* the **known networks** (up to 6, newest first): tap *Connect*, no
+  password needed again; ✕ forgets one. *Scan for other networks*, tap one,
+  type its password, *Connect*: it is then known. Plus *Hidden network* and the
+  password of the own network.
+- **Terminal**: send any serial command; *Show commands* lists them, a tap puts
+  one in the input line.
+- **Firmware update** (upload `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin`;
+  calibration and settings are kept).
+
+**Simulate a level (firmware 3.6+):** in the Terminal (or Serial Monitor):
+`sim 50%` or `sim 300` (mm). The sensor broadcasts that level at once instead of
+the sensor reading, to see how long Venus OS takes to show it. A red chip says
+SIMULATION while it runs; `sim off` or 15 minutes ends it.
 
 **Test mode:** *Test mode: fast reading* on the page (or `fast` in the Serial
 Monitor) turns the smoothing off for 15 minutes: the level follows the signal

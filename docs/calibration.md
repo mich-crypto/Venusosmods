@@ -84,9 +84,11 @@ When the tank is full:
 cal save
 ```
 
-The table is now active and stored. The last point is 100 %. `cal save` also
-prints the table as C code: copy it into `DEFAULT_TABLE` in the sketch as a
-backup (otherwise `reset`, or an ESP32 full flash erase, loses it).
+The table is now stored as a new tank and used. The last point is 100 %.
+`cal save <name>` gives it a name (firmware 4.4: up to 4 saved tanks, `tank`
+lists them, `tank use <n>` switches, `tank use 0` = built-in). `table` prints
+the table in use as C code: copy it into `DEFAULT_TABLE` in the sketch as a
+backup (an ESP32 full flash erase loses saved tanks).
 
 Tip: fill through the normal filler neck, so the tank's breather and any
 air pockets behave like they will on the road.
@@ -151,9 +153,11 @@ consistently off by a few %, re-run with `--scale`.
 | `cal add <L>` | record a point after adding `<L>` litres |
 | `cal point <mm> <L>` | add a point by hand (total litres) |
 | `cal undo` / `cal show` / `cal cancel` | edit the table being measured |
-| `cal save` | activate + store the table, print it as code |
+| `cal save [name]` | store the table as a new tank and use it |
+| `tank` | list the tanks (`*` = in use) |
+| `tank use <n>` / `tank rename <n> <name>` / `tank delete <n>` | switch, rename, delete (0 = built-in) |
 | `table` | print the active table as code |
-| `reset` | erase stored calibration, use `DEFAULT_TABLE` from the sketch |
+| `reset` | built-in tank and zero offset 0 (saved tanks are kept) |
 
 The Venus OS side needs no changes after calibration: the ESP32 sends level %,
 litres and capacity, and the tank's capacity on the GX updates automatically.
