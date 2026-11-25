@@ -20,6 +20,7 @@ import time
 
 import esp32_hydro_protocol as proto
 import rawlog
+import truma_heater
 from gi.repository import GLib
 from venus_service import monotonic_s
 from venus_service import (BleDriver, TankDevice, TemperatureDevice, interpolate, parse_table,
@@ -63,6 +64,7 @@ class Esp32HydroDriver(BleDriver):
                          # Bluetooth link (firmware 2.7+)
                          '/Hydro/WifiMode', '/Hydro/AccessPoint', '/Hydro/WifiIp',
                          '/Hydro/WifiSsid', '/Hydro/WifiKnown', '/Hydro/Uptime',
+                         '/Hydro/Truma',   # the heater's last status as JSON, for the settings page
                          '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac',
                          # live view: raw reading over the Bluetooth link
                          '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
@@ -111,6 +113,12 @@ class Esp32HydroDriver(BleDriver):
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
         self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
 
+        # Truma heater through the same sensor (in preparation, docs/truma.md)
+        self.heater = None
+        if config.getboolean('heater', False):
+            self.heater = truma_heater.TrumaHeater(self.bus, config, uid, connection, timeout, self._heater_send)
+            self.devices.extend(self.heater.devices)
+
     def _temperature(self, config, uid, connection, timeout, n, instance, name):
         """Probe 1 uses temperature_*, probe 2 temperature2_* in config.ini."""
         if not config.getboolean('temperature%s_service' % n, False):
@@ -132,6 +140,10 @@ class Esp32HydroDriver(BleDriver):
             if not self.seen_mac:
                 self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sensor yet'
             GLib.timeout_add_seconds(20, self._first_link)
+
+    def _heater_send(self, cmd):
+        """A heater change from Venus OS: to the sensor at once."""
+        return self._on_command_set('/Hydro/Command', cmd)
 
     def _first_link(self):
         self._link_tick()
@@ -453,7 +465,8 @@ class Esp32HydroDriver(BleDriver):
             frames = proto.link_commands(self.sender_password, self.wifi_mode, self.wifi_ssid, self.wifi_password)
         else:
             frames = proto.link_commands(self.sender_password)          # auth, hb, info
-        frames = frames[:-1] + [b'Cdlog new'] + frames[-1:]   # the sensor's new log lines (4.9+), info stays last
+        extra = [b'Cdlog new'] + ([b'Ctruma'] if self.heater else [])   # sensor log lines (4.9+), heater (4.11+)
+        frames = frames[:-1] + extra + frames[-1:]                        # info stays last
         self._send('checkin', frames)
         return True
 
@@ -579,12 +592,18 @@ class Esp32HydroDriver(BleDriver):
                 answer = 'wrong sensor password'
             self.tank['/Hydro/CommandResult'] = answer
             # Wi-Fi changes: read the new state back soon; a firmware download: the new version later
+            d = truma_heater.parse(answer)
+            if d is not None:                  # the page asked for the heater's status
+                self.tank['/Hydro/Truma'] = json.dumps(d)
+                if self.heater:
+                    self.heater.apply(d)
             if self._last_cmd.startswith('fwget ') and answer.startswith('ok'):
                 # the sensor now downloads over Wi-Fi with the whole radio: leave it alone meanwhile
                 self._link_quiet_until = monotonic_s() + self.FWGET_QUIET_S
                 delays = (self.FWGET_QUIET_S + 10, self.FWGET_QUIET_S + 60)
             else:
-                delays = (3, 25) if self._last_cmd.startswith('wifi ') else (20, 60) if self._last_cmd == 'reboot' else (45, 90)
+                delays = ((3, 25) if self._last_cmd.startswith(('wifi ', 'truma set')) else (20, 60) if self._last_cmd == 'reboot'
+                          else () if self._last_cmd in ('truma', 'dlog') else (45, 90))
             for s in delays:
                 GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
             return
@@ -614,6 +633,11 @@ class Esp32HydroDriver(BleDriver):
             self.tank['/Hydro/LinkStatus'] = 'wrong sensor password'
             return
         for r in replies:
+            d = truma_heater.parse(r)
+            if d is not None:
+                self.tank['/Hydro/Truma'] = json.dumps(d)
+                if self.heater:
+                    self.heater.apply(d)
             if r.startswith('dlog new'):
                 for line in r.split('\n')[1:]:
                     if line.strip():

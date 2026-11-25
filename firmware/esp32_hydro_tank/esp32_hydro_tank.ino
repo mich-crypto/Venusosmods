@@ -192,7 +192,17 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.10"
+#define FW_VERSION           "4.11"
+
+// ---- Truma Combi heater with CP plus panel (in preparation, see docs/truma.md)
+//      The CP plus is master of a LIN bus; this board will answer like Truma's iNet box
+//      through a LIN transceiver (TJA1020/TJA1021): RXD -> PIN_LIN_RX, TXD -> PIN_LIN_TX.
+//      Status, room set point and hot water are kept and passed to the Pi already; the
+//      LIN part itself is not written yet, so leave USE_TRUMA 0 until it is.
+#define USE_TRUMA            0
+#define PIN_LIN_RX           17
+#define PIN_LIN_TX           18
+#define PIN_LIN_SLP          -1     // transceiver SLP/EN pin, -1 = tied to 3V3
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -781,6 +791,74 @@ static bool forgetNetwork(const String &ssid) {
 
 static String jsonEsc(String v) { v.replace("\\", "\\\\"); v.replace("\"", "\\\""); return v; }
 
+// ------------------------------------------------------------- Truma heater
+// What the heater reports (filled by the LIN part, docs/truma.md) and what Venus OS asked for.
+// Water modes as on the CP plus: off, eco (40 C), hot (60 C), boost.
+struct TrumaState {
+  uint32_t lastFrame = 0;                 // millis() of the last LIN frame from the CP plus (0 = never)
+  float roomC = NAN, waterC = NAN;        // measured
+  float roomSet = NAN;                    // set point the heater uses
+  bool heating = false;
+  String water = "off";
+  uint16_t error = 0;                     // Truma error code, 0 = none
+  // requested by Venus OS / the page, sent to the CP plus by the LIN part
+  bool wantPending = false;
+  int8_t wantHeat = -1;                   // -1 = unchanged, 0 off, 1 on
+  float wantRoom = NAN;
+  String wantWater;
+};
+static TrumaState truma;
+
+static String trumaLinState() {
+  if (!USE_TRUMA) return "off";            // module not built in
+  if (!truma.lastFrame) return "no LIN data yet (LIN part not written yet, see docs/truma.md)";
+  return millis() - truma.lastFrame < 10000 ? "ok" : "LIN silent";
+}
+
+static String jsonF(float v, int d = 1) { return isnan(v) ? String("null") : String(v, d); }
+
+// "truma {...}": the prefix lets the Pi find it among the check-in answers
+static String trumaJson() {
+  String j = "truma {\"en\":" + String(USE_TRUMA ? 1 : 0) + ",\"lin\":\"" + trumaLinState() + "\"";
+  j += ",\"ago\":" + String(truma.lastFrame ? (long)((millis() - truma.lastFrame) / 1000) : -1L);
+  j += ",\"room\":" + jsonF(truma.roomC) + ",\"set\":" + jsonF(truma.roomSet) + ",\"heat\":" + String(truma.heating ? 1 : 0);
+  j += ",\"water\":\"" + truma.water + "\",\"wt\":" + jsonF(truma.waterC) + ",\"err\":" + String(truma.error);
+  j += ",\"pend\":" + String(truma.wantPending ? 1 : 0) + "}";
+  return j;
+}
+
+// "truma set heat=on room=21 water=eco" (any of them): kept until the LIN part sends them
+static String trumaSet(String args) {
+  args.trim();
+  String okText;
+  while (args.length()) {
+    int sp = args.indexOf(' ');
+    String kv = sp < 0 ? args : args.substring(0, sp);
+    args = sp < 0 ? String() : args.substring(sp + 1);
+    args.trim();
+    int eq = kv.indexOf('=');
+    String k = eq < 0 ? kv : kv.substring(0, eq), v = eq < 0 ? String() : kv.substring(eq + 1);
+    k.toLowerCase(); v.toLowerCase();
+    if (k == "heat" && (v == "on" || v == "off")) truma.wantHeat = v == "on" ? 1 : 0;
+    else if (k == "room" && v.toFloat() >= 5 && v.toFloat() <= 30) truma.wantRoom = round(v.toFloat());
+    else if (k == "water" && (v == "off" || v == "eco" || v == "hot" || v == "boost")) truma.wantWater = v;
+    else return "error truma: " + kv + " (heat=on|off room=5..30 water=off|eco|hot|boost)";
+    okText += " " + k + "=" + v;
+  }
+  if (!okText.length()) return "truma set heat=on|off room=5..30 water=off|eco|hot|boost";
+  truma.wantPending = true;
+  return "ok truma" + okText + (USE_TRUMA ? "" : " (kept; heater module not built in: USE_TRUMA 0)");
+}
+
+// Called from loop(). The LIN slave (iNet box emulation) goes here: read the CP plus frames,
+// fill truma.*, and answer with the wanted settings while truma.wantPending.
+static void trumaPoll() {
+#if USE_TRUMA
+  // TODO LIN (docs/truma.md): Serial1 at 9600 baud on PIN_LIN_RX/PIN_LIN_TX, break detection,
+  // frame IDs of the iNet box, transport layer for settings; set truma.lastFrame on each frame.
+#endif
+}
+
 static String staIp();                       // in the Wi-Fi part
 static bool staConnected();
 static String wifiScanJson(int maxN);
@@ -802,7 +880,9 @@ static String infoJson() {
     if (i) j += ',';
     j += "\"" + jsonEsc(tempPresent[i] ? tempName[i] : String()) + "\"";
   }
-  j += "]}";
+  j += "]";
+  if (USE_TRUMA) j += ",\"tr\":1";          // this sensor also talks to the Truma heater
+  j += "}";
   return j;
 }
 static portMUX_TYPE linkMux = portMUX_INITIALIZER_UNLOCKED;
@@ -1206,7 +1286,9 @@ static void printHelp() {
     "  tank rename <n> <name> | tank delete <n>\n"
     "  reset               built-in tank and zero offset 0 (saved tanks are kept)\n"
     "  reboot              restart the sensor (settings are kept)\n"
-    "  dlog [clear]        debug log: Bluetooth, Wi-Fi and updates");
+    "  dlog [clear]        debug log: Bluetooth, Wi-Fi and updates\n"
+    "  truma               Truma heater status (preparation, docs/truma.md)\n"
+    "  truma set heat=on|off room=5..30 water=off|eco|hot|boost");
 }
 
 static void handleCommand(String line) {
@@ -1508,6 +1590,9 @@ static void handleCommand(String line) {
           out->printf("  %s%d  %-24s %6.1f L\n", activeTank == i ? "*" : " ", i + 1, tankNames[i].c_str(), tankCaps[i]);
       out->println("tank use <n> | rename <n> <name> | delete <n>");
     }
+  } else if (cmd == "truma") {
+    if (rest.startsWith("set")) out->print(trumaSet(rest.substring(3)));
+    else out->print(trumaJson());
   } else if (cmd == "dlog") {
     if (rest == "clear") { portENTER_CRITICAL(&dlogMux); dlogCount = 0; dlogHead = 0; portEXIT_CRITICAL(&dlogMux); out->print("ok log cleared"); }
     else if (rest == "new") out->print(dlogNew());
@@ -1668,6 +1753,20 @@ dialog::backdrop{background:rgba(0,0,0,.55)}ol{padding-left:20px;margin:6px 0}ol
  <div class="mut" id="tnote"></div>
 </div>
 
+<div class="card" id="trcard" hidden>
+ <h2>Heater (Truma)</h2>
+ <div class="mut" id="trlin"></div>
+ <div class="grid" style="margin-top:6px">
+  <div><span class="mut">Room</span><b id="trroom">–</b></div>
+  <div><span class="mut">Set point</span><b id="trset">–</b></div>
+  <div><span class="mut">Heating</span><b id="trheat">–</b></div>
+  <div><span class="mut">Hot water</span><b id="trwater">–</b></div>
+ </div>
+ <div class="row"><button onclick="cmd('truma set heat=on')">Heating on</button><button onclick="cmd('truma set heat=off')">Heating off</button></div>
+ <div class="row"><input id="trroomin" type="number" min="5" max="30" step="1" placeholder="room set point °C"><button onclick="const v=$('trroomin').value;if(v)cmd('truma set room='+v)">Set</button></div>
+ <div class="seg" id="trwseg"></div>
+</div>
+
 <div class="card">
  <h2>Wi-Fi settings</h2>
  <div class="seg" id="wmode"></div>
@@ -1796,7 +1895,7 @@ async function refresh(){
   $('chips').innerHTML=c;
   $('tcard').style.display=s.temp_probe?'':'none';
   renderTemps(s.temps||[]);
-  header(s);tanks(s);wifi(s);
+  header(s);tanks(s);wifi(s);heater(s.truma);
   $('foot').textContent=(s.ap_on&&s.wifi_reason?'Own Wi-Fi on because: '+s.wifi_reason+' · ':'')+'Bluetooth '+s.mac+' · sensor id '+s.device_id+' · up '+ago(s.uptime_s);
  }catch(e){$('foot').textContent='No connection to the sensor…'}
 }
@@ -1810,6 +1909,15 @@ function header(s){
  w.style.color=s.sta_ip||s.ap_on?'var(--wf)':'var(--mut)';
  $('wft').textContent=s.sta_ip?s.sta_ssid+(s.ap_on?' + AP':''):s.ap_on?'AP on':s.wifi_mode==='van'&&s.sta_ssid?'joining…':'off';
  w.title=(s.sta_ip?'Connected to “'+s.sta_ssid+'” ('+s.sta_ip+')':'Not connected to a Wi-Fi network')+' · own network (AP) '+(s.ap_on?'on':'off');
+}
+// Truma heater (preparation: shown when the heater module is built in, USE_TRUMA 1)
+function heater(t){
+ $('trcard').hidden=!t;if(!t)return;
+ const f=x=>x==null?'–':x.toFixed(1)+' °C';
+ $('trlin').textContent='LIN: '+t.lin+(t.err?' · error '+t.err:'')+(t.pend?' · change waiting to be sent':'');
+ $('trroom').textContent=f(t.room);$('trset').textContent=f(t.set);$('trheat').textContent=t.heat?'on':'off';
+ $('trwater').textContent=t.water+(t.wt!=null?' ('+f(t.wt)+')':'');
+ $('trwseg').innerHTML=['off','eco','hot','boost'].map(m=>'<button class="'+(t.water===m?'on':'')+'" onclick="cmd(\'truma set water='+m+'\')">'+m+'</button>').join('');
 }
 // tank list, calibration dialog
 let tkey='';
@@ -1913,7 +2021,7 @@ const CMDS=[['status','reading and table in use'],['help','all commands with det
  ['cal add 10','calibration: 10 L poured in'],['cal undo','calibration: remove the last point'],['cal show','calibration: points so far'],['cal save My tank','calibration: save as a tank and use it'],
  ['cal cancel','calibration: throw away'],['table','table in use, as code for the sketch'],['wifi','Wi-Fi state'],['wifi known','remembered networks'],
  ['wifi mode auto','Wi-Fi mode: auto | van | ap | off'],['fast','test mode: no smoothing for 15 min'],['fast off','normal smoothing'],['sim 50%','broadcast a fake level for 15 min'],
- ['sim off','back to the real sensor'],['reboot','restart the sensor'],['dlog','debug log'],['live','raw reading as JSON'],['info','state as JSON (what the Pi reads)'],['log','serial log on / off']];
+ ['sim off','back to the real sensor'],['reboot','restart the sensor'],['dlog','debug log'],['truma','Truma heater status'],['live','raw reading as JSON'],['info','state as JSON (what the Pi reads)'],['log','serial log on / off']];
 function cmdsToggle(){const l=$('cmds');l.hidden=!l.hidden;$('cmdsb').textContent=l.hidden?'Show commands':'Hide commands';
  if(!l.innerHTML)l.innerHTML=CMDS.map((c,i)=>'<div class="item pick" onclick="$(\'con\').value=CMDS['+i+'][0];$(\'con\').focus()"><code class="nm" style="flex:none">'+esc(c[0])+'</code><span class="mut nm">'+esc(c[1])+'</span></div>').join('')}
 // 4 updates a second in test mode, every 2 s otherwise
@@ -1984,6 +2092,7 @@ static void handleStatus() {
   j += String("\"sloshing\":") + (sloshing ? "true" : "false") + ",";
   j += String("\"filling\":") + (filling ? "true" : "false") + ",";
   j += String("\"draining\":") + (draining ? "true" : "false") + ",";
+  if (USE_TRUMA) j += "\"truma\":" + trumaJson().substring(6) + ",";
   j += "\"tank\":" + String(activeTank + 1) + ",\"tanks\":[{\"n\":0,\"name\":\"" BUILTIN_TANK_NAME "\",\"cap\":" +
        String(DEFAULT_TABLE[sizeof(DEFAULT_TABLE) / sizeof(DEFAULT_TABLE[0]) - 1].litres, 1) + "}";
   for (int i = 0; i < MAX_TANKS; i++)
@@ -2335,6 +2444,7 @@ void loop() {
   server.handleClient();
 #endif
   linkPoll();
+  trumaPoll();
   updateLed();
 
   delay(5);

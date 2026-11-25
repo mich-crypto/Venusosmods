@@ -527,3 +527,56 @@ class ShippedFilesTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TrumaHeaterTests(unittest.TestCase):
+    """Truma heater through the water sensor (in preparation): commands, check-in, Venus OS."""
+
+    def driver(self, cfg='heater = yes\nheater_frost_guard = yes\nheater_frost_c = 5\n'):
+        d = Esp32HydroDriver('s', section(cfg))
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        d.gatt = CommandTests.Client()
+        d._client = lambda: d.gatt
+        return d
+
+    def test_commands(self):
+        import truma_heater as th
+        self.assertEqual(th.set_command(heat=True, room=21.4, water='eco'), 'truma set heat=on room=21 water=eco')
+        self.assertEqual(th.set_command(room=99), 'truma set room=30')
+        self.assertIsNone(th.set_command())
+        self.assertIsNone(th.parse('{"fw":"4.11"}'))
+        self.assertEqual(th.parse('truma {"en":1,"lin":"ok"}')['lin'], 'ok')
+
+    def test_checkin_reads_the_heater_and_publishes_it(self):
+        d = self.driver()
+        d._link_tick()
+        self.assertIn(b'Ctruma', d.gatt.sent[-1])
+        self.assertEqual(d.gatt.sent[-1][-1], b'Cinfo')                     # info stays last
+        d._on_link_notify(b'ok\x04ok wifi mode auto\x04dlog new\x04truma {"en":1,"lin":"ok","ago":1,"room":3.5,"set":10,'
+                          b'"heat":0,"water":"eco","wt":40,"err":0,"pend":0}\x04{"fw":"4.11","mode":"auto"}\x04')
+        self.assertEqual(d.heater.room.service['/Temperature'], 3.5)
+        sw = d.heater.switch.service
+        self.assertEqual((sw['/SwitchableOutput/room/Dimming'], sw['/SwitchableOutput/water/Dimming']), (10, 1))
+        self.assertEqual(json.loads(d.tank.service['/Hydro/Truma'])['room'], 3.5)
+        self.assertEqual(d._command, 'truma set heat=on room=7')          # frost guard: 3.5 C < 5 C, heating off
+
+    def test_no_lin_data_publishes_nothing_as_measured(self):
+        d = self.driver()
+        d.heater.apply({'en': 0, 'lin': 'off', 'room': None})
+        self.assertIsNone(d.heater.room.service['/Temperature'])
+        self.assertEqual(d.heater.switch.service['/SwitchableOutput/heat/Status'], 0x20)
+
+    def test_switch_pane_change_goes_to_the_sensor(self):
+        d = self.driver()
+        d.heater.request(water='boost')
+        d._send_command()
+        self.assertEqual(d.gatt.sent[-1][-1], b'Ctruma set water=boost')
+
+    def test_off_by_default(self):
+        d = Esp32HydroDriver('s', section(''))
+        self.assertIsNone(d.heater)
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        d.gatt = CommandTests.Client()
+        d._client = lambda: d.gatt
+        d._link_tick()
+        self.assertNotIn(b'Ctruma', d.gatt.sent[-1])

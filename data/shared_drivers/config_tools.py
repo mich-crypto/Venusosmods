@@ -222,6 +222,14 @@ SCHEMA = {
               'Probe 2 as its own temperature sensor in Venus OS.', options=YES_NO, default='no'),
             F('temperature2_name', 'text', 'Name of temperature 2', 'Shown in Venus OS and VRM.', default='Temperature 2'),
             F('temperature2_type', 'select', 'Temperature 2 type', '', options=TEMP_TYPES, default='generic'),
+            F('heater', 'bool', 'Truma heater', 'Truma Combi with CP plus on the same sensor (in preparation, '
+              'docs/truma.md): room temperature, heating, set point and hot water in Venus OS.', options=YES_NO, default='no'),
+            F('heater_name', 'text', 'Heater name', 'Shown in Venus OS and VRM.', default='Truma heater'),
+            F('heater_frost_guard', 'bool', 'Frost guard', 'Switch the heating on when the room gets colder than '
+              'the frost limit and it is off.', options=YES_NO, default='no'),
+            F('heater_frost_c', 'float', 'Frost limit', 'Room temperature that starts the frost guard; it heats '
+              'to 2 °C above it.', unit='°C', min=1, max=15, default='5'),
+            F('heater_instance', 'int', 'Heater VRM instance', '', min=0, max=999, advanced=True, default='26'),
             F('timeout', 'int', 'Disconnected after', 'Seconds without data.', unit='s',
               min=10, max=86400, advanced=True),
             F('temperature_instance', 'int', 'Temperature 1 VRM instance', '', min=0, max=999,

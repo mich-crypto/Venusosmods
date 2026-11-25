@@ -260,7 +260,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
 'use strict';
 // ---------------------------------------------------------------- helpers
 const S = { auth: null, tab: 'overview', state: null, driver: null, sb: null, forms: {}, logTimer: null, sbCtl: {} };
-const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'],
+const TABS = [['overview', 'Overview'], ['fridge', 'Fridge'], ['gas', 'Gas'], ['water', 'Water'], ['heater', 'Heater'],
               ['battery', 'Battery'], ['starlink', 'Starlink'], ['geofence', 'Geofence'], ['notify', 'Notifications'], ['debug', 'Debug'], ['update', 'Update']];
 
 function h(tag, attrs, ...kids) {
@@ -377,6 +377,7 @@ function ago(sec) {
 function renderTabs() {
   const nav = clear($('#tabs'));
   for (const [id, label] of TABS) {
+    if (id === 'heater' && !heaterOn()) continue;     // only once the Truma heater is switched on (Water → Settings)
     const dot = id === 'update' ? !!(S.upd && S.upd.available && S.upd.installed) : id === 'water' && senderUpdate();
     nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label, dot ? h('span', { class: 'upd-dot', title: 'update available' }) : null));
   }
@@ -440,7 +441,7 @@ async function renderTab() {
   hideSaveBar();                                   // a redraw (save, discard) starts with no pending changes
   const main = clear($('#main'));
   const f = { overview: tabOverview, fridge: () => tabDevice('fridge'), gas: () => tabDevice('mopeka'),
-              water: () => tabDevice('esp32'), battery: tabBattery, starlink: tabStarlink, geofence: tabGeofence, notify: tabNotify, debug: tabDebug, update: tabUpdate }[S.tab];
+              water: () => tabDevice('esp32'), heater: tabHeater, battery: tabBattery, starlink: tabStarlink, geofence: tabGeofence, notify: tabNotify, debug: tabDebug, update: tabUpdate }[S.tab];
   await f(main);
 }
 
@@ -825,11 +826,79 @@ async function gasHistoryCard() {
   return card;
 }
 
+// ------------------------------------------------- Truma heater (in preparation, docs/truma.md)
+// Through the water level sensor's ESP32 on the heater's LIN bus. The driver keeps the last status
+// on the water sensor (/Hydro/Truma); changes go to the sensor as "truma set ...".
+function heaterStatus() {
+  const dev = S.state && deviceOf(S.state, 'water');
+  const raw = dev && dev.values['/Hydro/Truma'];
+  try { return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+}
+function heaterOn() {
+  const sec = S.driver && (S.driver.sections || []).find(x => x.kind === 'esp32');
+  return !!heaterStatus() || !!(sec && truthy(sec.values.heater || ''));
+}
+async function heaterCmd(c, label) {
+  const x = await api('/api/sender_cmd', { c });
+  if (!x.ok) { toast(x.data.error, true); return; }
+  toast(label || 'Sent to the sensor…');
+  let result = null;
+  for (let i = 0; i < 60 && result == null; i++) {
+    await new Promise(r => setTimeout(r, 700));
+    const y = await api('/api/sender_cmd');
+    if (y.ok) result = y.data.result;
+  }
+  if (result == null) toast('No answer from the sensor over Bluetooth.', true);
+  else if (!/^(ok|truma \{)/.test(result)) toast('Sensor: ' + result, true);
+  else if (/^ok/.test(result)) toast(result.replace(/^ok truma/, 'Heater:'));
+  setTimeout(async () => { await refreshState(); if (S.tab === 'heater') renderTab(); }, 1500);
+}
+async function tabHeater(main) {
+  const t = heaterStatus(), live = t && t.lin === 'ok';
+  const f = x => x == null ? '–' : Number(x).toFixed(1);
+  main.append(h('div', { class: 'card' },
+    h('h3', {}, 'Truma heater ', h('span', { class: 'chip ' + (live ? 'ok' : 'warn') }, live ? 'connected' : 'in preparation')),
+    !live ? h('div', { class: 'banner warn', style: 'margin:8px 0' }, h('div', {},
+      h('b', {}, t ? 'No data from the heater yet: ' + t.lin : 'The sensor has not reported the heater yet.'),
+      h('div', { class: 'muted' }, 'The heater talks to the water level sensor over its LIN bus (CP plus panel). The wiring and the LIN part of the sensor firmware are described in docs/truma.md; until they are done, changes are kept on the sensor but not sent to the heater.'))) : null,
+    h('div', { class: 'hero', style: 'grid-template-columns:repeat(2,1fr);margin:8px 0 0' },
+      metric('Room', f(t && t.room), '°C', t && t.set != null ? 'set to ' + f(t.set) + ' °C' : ''),
+      metric('Heating', t ? (t.heat ? 'on' : 'off') : '–', '', t && t.err ? 'error ' + t.err : ''),
+      metric('Hot water', t ? t.water : '–', '', t && t.wt != null ? f(t.wt) + ' °C' : ''),
+      metric('Last report', t && t.ago >= 0 ? ago(t.ago) : '–', '', t && t.pend ? 'a change is waiting' : ''))));
+  const room = h('input', { type: 'number', min: 5, max: 30, step: 1, placeholder: 'room °C', style: 'width:110px', disabled: !canEdit() });
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'Control'),
+    h('div', { class: 'row' },
+      h('button', { type: 'button', class: 'btn small primary', disabled: !canEdit(), onclick: () => heaterCmd('truma set heat=on', 'Heating on…') }, 'Heating on'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => heaterCmd('truma set heat=off', 'Heating off…') }, 'Heating off'),
+      room, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => { const v = parseInt(room.value, 10); if (v >= 5 && v <= 30) heaterCmd('truma set room=' + v); else toast('5 to 30 °C', true); } }, 'Set room')),
+    h('div', { class: 'muted', style: 'margin-top:8px' }, 'Hot water'),
+    h('div', { class: 'seg', role: 'radiogroup' }, ['off', 'eco', 'hot', 'boost'].map(m =>
+      h('button', { type: 'button', role: 'radio', 'aria-checked': !!(t && t.water === m), class: 'segbtn' + (t && t.water === m ? ' on' : ''), disabled: !canEdit(),
+        onclick: () => heaterCmd('truma set water=' + m) }, m))),
+    h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => heaterCmd('truma', 'Asking the heater…') }, 'Refresh now')),
+    h('div', { class: 'muted' }, 'Also on the Venus OS switch pane ("Truma heater"): Heating, Room set point, Hot water.')));
+  // automations: settings of the water driver (saved with the save bar, the driver restarts)
+  if (!canEdit()) return;
+  const r = await loadDriver();
+  const section = r.ok && S.driver.sections.find(x => x.kind === 'esp32');
+  if (!section) return;
+  S.forms = {};
+  const form = { section, fields: {} };
+  S.forms[section.section] = form;
+  const byKey = {};
+  section.fields.forEach(x => { byKey[x.key] = x; });
+  const row = x => x.type === 'bool' ? toggleRow(form, x, section) : fieldRow(form, x, section);
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'Automations'),
+    ...['heater_frost_guard', 'heater_frost_c'].map(k => byKey[k]).filter(Boolean).map(row),
+    h('div', { class: 'muted', style: 'margin-top:6px' }, 'The frost guard uses the heater\'s room temperature: below the limit with the heating off, it switches the heating on at 2 °C above the limit. Heating up before you arrive (Telegram, geofence) comes with the LIN part.')));
+}
+
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
   esp32: { title: 'Water tank', what: 'water level sensor', add: flowWater, simple: [],
-    groups: [['Connection', ['sender_password']],
+    groups: [['Connection', ['sender_password']], ['Truma heater', ['heater', 'heater_name']],
              ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']]] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
@@ -2984,7 +3053,11 @@ async function tabFiles(main) {
 async function refreshState() {
   const r = await api('/api/state');
   if (r.ok && S.auth && !r.data.authed) setAuth(null);          // the password was changed on the Pi
-  if (r.ok) { S.state = r.data; renderLock(); renderPower(); renderBusyBanner(); }
+  if (r.ok) {
+    S.state = r.data; renderLock(); renderPower(); renderBusyBanner();
+    const hv = heaterOn();
+    if (hv !== S.heaterTab) { S.heaterTab = hv; renderTabs(); }    // the Heater tab appears once the heater is set up
+  }
   return r;
 }
 
