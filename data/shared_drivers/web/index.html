@@ -243,6 +243,7 @@ dialog#wiz { max-width:min(680px,96vw); max-height:92vh; padding:0; overflow:hid
     <h1>Venus OS mods</h1>
     <span class="sub" id="hostline"></span>
     <span class="spacer"></span>
+    <span id="powerchip"></span>
     <span id="lockchip"></span>
   </div>
   <nav id="tabs" role="tablist"></nav>
@@ -379,6 +380,19 @@ function renderTabs() {
     const dot = id === 'update' ? !!(S.upd && S.upd.available && S.upd.installed) : id === 'water' && senderUpdate();
     nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label, dot ? h('span', { class: 'upd-dot', title: 'update available' }) : null));
   }
+}
+
+// low supply voltage: a small warning top right; a tap shows the card on the Overview tab
+function renderPower() {
+  const box = $('#powerchip');
+  if (!box) return;
+  clear(box);
+  const pw = S.state && S.state.power;
+  if (!powerBad(pw)) return;
+  box.append(h('button', { type: 'button', class: 'chip chipbtn ' + (pw.now ? 'bad' : 'warn'), style: 'margin-right:10px',
+    title: 'The Pi gets too little power (below 4.63 V' + (pw.count ? ', ' + pw.count + '× since it started' : '') + (pw.now ? ', right now' : ', last ' + ago(pw.last_ago) + ' ago') + '). It makes its Bluetooth hang until a reboot.',
+    onclick: async () => { await selectTab('overview'); const c = [...document.querySelectorAll('.card')].find(x => /Pi power supply/i.test(x.textContent)); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' }); } },
+    '⚡ Low power'));
 }
 
 function renderLock() {
@@ -551,12 +565,6 @@ function renderBusyBanner() {
       h('div', { class: 'muted' }, bt === 'off'
         ? 'No sensor can be heard (water, gas, fridge). Switch it on in Venus OS: Settings → Bluetooth → Enabled.'
         : 'No Bluetooth adapter found: check Venus OS Settings → Bluetooth, or plug in the USB Bluetooth adapter.'))));
-  }
-  const pw = S.state && S.state.power;
-  if (powerBad(pw)) {
-    box.append(h('div', { class: 'banner bad upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
-      h('b', {}, 'The Pi gets too little power' + (pw.now ? ' right now' : ' (' + ago(pw.last_ago) + ' ago)')),
-      h('div', { class: 'muted' }, 'Below 4.63 V' + (pw.count ? ', ' + pw.count + '× since it started' : '') + '. This makes its Bluetooth hang until a reboot. Use a stronger 5 V supply and a short, thick cable.'))));
   }
   if (!senderBusy()) return;
   box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
@@ -2976,7 +2984,7 @@ async function tabFiles(main) {
 async function refreshState() {
   const r = await api('/api/state');
   if (r.ok && S.auth && !r.data.authed) setAuth(null);          // the password was changed on the Pi
-  if (r.ok) { S.state = r.data; renderLock(); renderBusyBanner(); }
+  if (r.ok) { S.state = r.data; renderLock(); renderPower(); renderBusyBanner(); }
   return r;
 }
 
