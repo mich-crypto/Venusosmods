@@ -557,7 +557,7 @@ class StarlinkApiTests(AppTestCase):
 
     def test_wifi_commands_go_straight_to_the_sensor(self):
         sent = self.sensor_ready(wifi=False)
-        for c in ('wifi mode ap', 'wifi scan', 'wifi join MOS\tpw 1', 'wifi forget MOS'):
+        for c in ('wifi mode ap', 'wifi scan', 'wifi join MOS\tpw 1', 'wifi forget MOS', 'reboot'):
             self.assertEqual(self.post('/api/sender_cmd', {'c': c}).status, 200, c)
             self.assertEqual(sent[-1][1:], ('/Hydro/Command', c))
         for c in ('cal save x', 'wifi mode fast', 'fwget http://x', 'reset'):

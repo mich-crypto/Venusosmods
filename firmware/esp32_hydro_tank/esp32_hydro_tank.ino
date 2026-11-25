@@ -191,7 +191,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.5"
+#define FW_VERSION           "4.6"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -741,6 +741,7 @@ static volatile bool otaActive = false;
 static volatile bool otaFailed = false;
 static volatile uint32_t otaSize = 0, otaGot = 0, otaLastData = 0;
 static uint32_t otaRestartAt = 0;
+static uint32_t rebootAt = 0;              // "reboot": restart once the answer has gone out
 
 static bool otaBusy() { return fwBusy || webOtaActive || otaActive || otaRestartAt; }
 
@@ -824,6 +825,11 @@ static void linkPoll() {
     Update.abort();                          // the Pi did not come back: keep the old firmware
     otaActive = false;
     Serial.println("Bluetooth firmware upload given up (no data for 3 minutes); keeping the old firmware.");
+  }
+  if (rebootAt && (int32_t)(millis() - rebootAt) >= 0) {
+    Serial.println("Restarting (reboot command).");
+    delay(100);
+    ESP.restart();
   }
   if (otaRestartAt && (int32_t)(millis() - otaRestartAt) >= 0) {
     Serial.println("New firmware installed over Bluetooth: restarting.");
@@ -1088,7 +1094,8 @@ static void printHelp() {
     "  tank                list the tanks (* = in use)\n"
     "  tank use <n>        use tank n (0 = built-in)\n"
     "  tank rename <n> <name> | tank delete <n>\n"
-    "  reset               built-in tank and zero offset 0 (saved tanks are kept)");
+    "  reset               built-in tank and zero offset 0 (saved tanks are kept)\n"
+    "  reboot              restart the sensor (settings are kept)");
 }
 
 static void handleCommand(String line) {
@@ -1388,6 +1395,11 @@ static void handleCommand(String line) {
           out->printf("  %s%d  %-24s %6.1f L\n", activeTank == i ? "*" : " ", i + 1, tankNames[i].c_str(), tankCaps[i]);
       out->println("tank use <n> | rename <n> <name> | delete <n>");
     }
+  } else if (cmd == "reboot" || cmd == "restart") {
+    if (otaBusy()) { out->print("error reboot: a firmware update is running"); return; }
+    rebootAt = millis() + 1500;              // after this answer has gone out (web page, Bluetooth)
+    if (!rebootAt) rebootAt = 1;
+    out->print("ok rebooting: back in about 10 s");
   } else if (cmd == "reset") {
     useTank(-1);
     saveActiveTank();
@@ -1568,6 +1580,7 @@ dialog::backdrop{background:rgba(0,0,0,.55)}ol{padding-left:20px;margin:6px 0}ol
  <div class="mut">Choose the <b>WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin</b> file (not the FLASH-AT-0x0 one). Calibration and settings are kept.</div>
  <div class="row"><input id="fw" type="file" accept=".bin"><button onclick="upd()">Upload</button></div></details></div>
 
+<div class="row"><button onclick="reboot()">Restart the sensor</button></div>
 <div class="mut" id="foot"></div>
 </main>
 
@@ -1758,13 +1771,16 @@ async function wjoin(name,pw){
  $('hpass').value='';
 }
 function wforget(i){const n=S.known[i];if(confirm('Forget “'+n+'”?'))cmd('wifi forget '+n)}
+async function reboot(){if(!confirm('Restart the sensor? Settings and calibration are kept; it is back in about 10 s.'))return;
+ await cmd('reboot');busy=true;$('foot').textContent='Restarting… the page reconnects by itself.';
+ setTimeout(()=>{busy=false},9000)}
 // terminal: list of commands, a tap puts one in the input line
 const CMDS=[['status','reading and table in use'],['help','all commands with details'],['temps','temperature probes'],['name 1 Fresh water','name probe 1'],
  ['zero','tank empty: height becomes 0 mm'],['tank','list the tanks'],['tank use 0','use the built-in tank'],['cal start','calibration: start with the tank empty'],
  ['cal add 10','calibration: 10 L poured in'],['cal undo','calibration: remove the last point'],['cal show','calibration: points so far'],['cal save My tank','calibration: save as a tank and use it'],
  ['cal cancel','calibration: throw away'],['table','table in use, as code for the sketch'],['wifi','Wi-Fi state'],['wifi known','remembered networks'],
  ['wifi mode auto','Wi-Fi mode: auto | van | ap | off'],['fast','test mode: no smoothing for 15 min'],['fast off','normal smoothing'],['sim 50%','broadcast a fake level for 15 min'],
- ['sim off','back to the real sensor'],['live','raw reading as JSON'],['info','state as JSON (what the Pi reads)'],['log','serial log on / off']];
+ ['sim off','back to the real sensor'],['reboot','restart the sensor'],['live','raw reading as JSON'],['info','state as JSON (what the Pi reads)'],['log','serial log on / off']];
 function cmdsToggle(){const l=$('cmds');l.hidden=!l.hidden;$('cmdsb').textContent=l.hidden?'Show commands':'Hide commands';
  if(!l.innerHTML)l.innerHTML=CMDS.map((c,i)=>'<div class="item pick" onclick="$(\'con\').value=CMDS['+i+'][0];$(\'con\').focus()"><code class="nm" style="flex:none">'+esc(c[0])+'</code><span class="mut nm">'+esc(c[1])+'</span></div>').join('')}
 // 4 updates a second in test mode, every 2 s otherwise

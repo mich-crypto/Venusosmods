@@ -2451,8 +2451,31 @@ function senderCard() {
       h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(), onclick: () => go('bluetooth') }, label + ' over Bluetooth'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !ssid, title: ssid ? 'via “' + ssid + '”' : 'Connect the sensor to a Wi-Fi network first (Settings → Connection)',
         onclick: () => go('wifi') }, label + ' over Wi-Fi'),
-      h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update')),
+      h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !dev, onclick: ev => rebootSensor(ev.target) }, 'Restart sensor')),
     body);
+}
+
+// Restart the sensor over Bluetooth (settings are kept); the Pi reads it back ~20 s later
+function rebootSensor(btn) {
+  confirmThen('Restart the water level sensor? Settings and calibration are kept; it is back in about 10 seconds.', async () => {
+    btn.disabled = true; btn.textContent = 'Restarting…';
+    const x = await api('/api/sender_cmd', { c: 'reboot' });
+    let result = null;
+    if (!x.ok) toast(x.data.error, true);
+    else {
+      for (let i = 0; i < 60 && result == null; i++) {
+        await new Promise(r => setTimeout(r, 700));
+        const y = await api('/api/sender_cmd');
+        if (y.ok) result = y.data.result;
+      }
+      if (result == null) toast('No answer from the sensor over Bluetooth.', true);
+      else if (/^ok/.test(result)) toast('The sensor restarts: back in about 10 seconds.');
+      else toast('Sensor: ' + (/^unknown/i.test(result) ? 'its firmware is older than 4.6 and has no restart command' : result), true);
+    }
+    btn.disabled = false; btn.textContent = 'Restart sensor';
+    setTimeout(async () => { await refreshState(); refreshDeviceTop(); }, 25000);
+  });
 }
 
 // ----- the sensor's Wi-Fi, set straight on the sensor over Bluetooth (no save, no driver restart)

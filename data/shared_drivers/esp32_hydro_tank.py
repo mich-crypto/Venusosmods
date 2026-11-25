@@ -465,7 +465,8 @@ class Esp32HydroDriver(BleDriver):
                 answer = 'wrong sensor password'
             self.tank['/Hydro/CommandResult'] = answer
             # Wi-Fi changes: read the new state back soon; a firmware download: the new version later
-            for s in ((3, 25) if self._last_cmd.startswith('wifi ') else (45, 90)):
+            delays = (3, 25) if self._last_cmd.startswith('wifi ') else (20, 60) if self._last_cmd == 'reboot' else (45, 90)
+            for s in delays:
                 GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
             return
         if mode in ('live', 'stop'):

@@ -234,6 +234,9 @@ litres, level, water height and sensor signal, with a small **→0** button
   one in the input line.
 - **Firmware update** (upload `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin`;
   calibration and settings are kept).
+- **Restart the sensor** (firmware 4.6, also `reboot` in the Terminal): back in
+  about 10 s, settings and calibration are kept. The Venus OS page has the same
+  button (*Restart sensor*) on the Water tab under Firmware; it goes over Bluetooth.
 
 **Simulate a level (firmware 3.6+):** in the Terminal (or Serial Monitor):
 `sim 50%` or `sim 300` (mm). The sensor broadcasts that level at once instead of
