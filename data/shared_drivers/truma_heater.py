@@ -18,7 +18,6 @@ nothing is published as measured; the controls are there but greyed out (no read
 
 import json
 import logging
-import os
 
 from venus_service import DigitalInputDevice, SwitchDevice, TemperatureDevice, TEMPERATURE_TYPES
 
@@ -27,8 +26,7 @@ log = logging.getLogger('truma')
 WATER_MODES = ('off', 'eco', 'hot', 'boost')
 
 # Meanings of the codes the CP plus shows ("W 42 H") for the gas Combi (4, 6, 4 E, 6 E), from the
-# troubleshooting guide of the Truma CP plus manual; the Heater tab of
-# the settings page can add others or change them (CODES_FILE).
+# troubleshooting guide of the Truma CP plus manual.
 BUILTIN_CODES = {
     'W17': 'Water overtemperature (hot water mode with an empty water container)',
     'W18': 'Air overtemperature: warm-air ducts not connected, outlets or recirculation intake blocked',
@@ -102,20 +100,9 @@ BUILTIN_HELP = {
     'E624': 'The FrostControl heating element needs replacing.',
     'E632': 'Reset the 230 V overheating protection (reset button, see the Combi manual).',
 }
-CODES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state', 'truma_codes.json')
-
-
 def load_codes(path=None):
-    """{'W42': 'meaning', ...}: built in, overridden / extended by the file."""
-    codes = dict(BUILTIN_CODES)
-    try:
-        with open(path or CODES_FILE) as f:
-            extra = json.load(f)
-        if isinstance(extra, dict):
-            codes.update((str(k).upper().replace(' ', ''), str(v)) for k, v in extra.items() if v)
-    except (OSError, ValueError):
-        pass
-    return codes
+    """{'W42': 'meaning', ...}: the built-in Truma list (fixed)."""
+    return dict(BUILTIN_CODES)
 
 
 def code_text(d, codes=None):
