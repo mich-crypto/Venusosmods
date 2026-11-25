@@ -402,11 +402,13 @@ class Esp32HydroDriver(BleDriver):
             self.live_until = monotonic_s() - 1   # the next poll stops it
         return True
 
+    FWGET_QUIET_S = 180
+
     def _live_poll(self):
         if not self.live_until:
             return False
-        if self.ota:
-            return True                        # paused while firmware goes over the link
+        if self.ota or monotonic_s() < self._link_quiet_until:
+            return True                        # paused while firmware goes over the link, or over Wi-Fi
         if self.gatt is not None and self.gatt.busy:
             return True                        # a check-in or the last poll is still running
         if monotonic_s() > self.live_until:
@@ -472,7 +474,12 @@ class Esp32HydroDriver(BleDriver):
                 answer = 'wrong sensor password'
             self.tank['/Hydro/CommandResult'] = answer
             # Wi-Fi changes: read the new state back soon; a firmware download: the new version later
-            delays = (3, 25) if self._last_cmd.startswith('wifi ') else (20, 60) if self._last_cmd == 'reboot' else (45, 90)
+            if self._last_cmd.startswith('fwget ') and answer.startswith('ok'):
+                # the sensor now downloads over Wi-Fi with the whole radio: leave it alone meanwhile
+                self._link_quiet_until = monotonic_s() + self.FWGET_QUIET_S
+                delays = (self.FWGET_QUIET_S + 10, self.FWGET_QUIET_S + 60)
+            else:
+                delays = (3, 25) if self._last_cmd.startswith('wifi ') else (20, 60) if self._last_cmd == 'reboot' else (45, 90)
             for s in delays:
                 GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
             return

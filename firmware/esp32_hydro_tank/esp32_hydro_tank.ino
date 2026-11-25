@@ -41,6 +41,7 @@
 #include <Update.h>
 #include <esp_arduino_version.h>
 #include <Preferences.h>
+#include <esp_coexist.h>
 
 // ============================================================ CONFIGURATION
 
@@ -191,7 +192,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.7"
+#define FW_VERSION           "4.8"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -2013,10 +2014,28 @@ static void handleUpdateUpload() {
 
 // Download and install the firmware the Pi offers (fwget). Blocks for the few
 // seconds it takes; Bluetooth keeps broadcasting the last reading meanwhile.
+// The real reason of a failed download: HTTPUpdate aborts the update after an error and
+// then reports only "Aborted", so translate its error code ourselves.
+static String fwErrorText(int code) {
+  switch (code) {
+    case UPDATE_ERROR_STREAM: return "the download stalled (Wi-Fi too weak or busy)";
+    case UPDATE_ERROR_WRITE: case UPDATE_ERROR_ERASE: case UPDATE_ERROR_READ: return "flash write failed";
+    case UPDATE_ERROR_SPACE: case UPDATE_ERROR_SIZE: return "file too big for the update slot";
+    case UPDATE_ERROR_MD5: return "file damaged (checksum)";
+    case UPDATE_ERROR_MAGIC_BYTE: return "not a firmware file";
+    default: return "download failed: " + httpUpdate.getLastErrorString();
+  }
+}
+
 static void fwGet() {
   fwPending = false;
   fwBusy = true;
   Serial.printf("Firmware download from %s\n", fwUrl.c_str());
+  // One radio for both: give Wi-Fi all of it while the file comes in. The Pi's Bluetooth
+  // connection is dropped and broadcasting pauses (back after a failure; a success restarts).
+  if (linkServer && linkServer->getConnectedCount()) linkServer->disconnect(linkServer->getConnId());
+  if (advertising) advertising->stop();
+  esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
   if (!staConnected()) {
     WiFi.mode(apOn ? WIFI_AP_STA : WIFI_STA);
     WiFi.begin(fwSsid.c_str(), fwPass.c_str());
@@ -2033,10 +2052,14 @@ static void fwGet() {
     httpUpdate.onProgress([](int done, int total) {   // green/red while it loads
       ledWrite(((done >> 14) & 1) ? 0 : STATUS_LED_MAX, ((done >> 14) & 1) ? STATUS_LED_MAX : 0, 0);
     });
+    client.setTimeout(20);
     t_httpUpdate_return r = httpUpdate.update(client, fwUrl);
     if (r == HTTP_UPDATE_NO_UPDATES) fwError = "the Pi had no file";
-    else fwError = "download failed: " + httpUpdate.getLastErrorString();
+    else fwError = httpUpdate.getLastError() > 0 ? fwErrorText(httpUpdate.getLastError())
+                                                 : "download failed: " + httpUpdate.getLastErrorString();
   }
+  esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
+  if (advertising) advertising->start();
   Serial.printf("Firmware download failed: %s\n", fwError.c_str());
   staDirty = true;                      // back to the Wi-Fi the mode asks for
   fwBusy = false;

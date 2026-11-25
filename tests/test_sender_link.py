@@ -279,6 +279,15 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(d.tank.service['/Hydro/WifiSsid'], 'MOS')
         self.assertEqual(json.loads(d.tank.service['/Hydro/WifiKnown']), ['MOS', 'Home'])
 
+    def test_no_bluetooth_while_the_sensor_downloads_over_wifi(self):
+        d = self.driver()
+        d._on_command_set('/Hydro/Command', 'fwget http://192.168.1.5:8088/fw/abc.bin')
+        d._send_command()
+        d._on_link_notify(b'ok fwget: joining the Wi-Fi and downloading\x04')
+        n = len(d.gatt.sent)
+        d._link_tick()
+        self.assertEqual(len(d.gatt.sent), n)                              # no check-in during the download
+
     def test_command_answers_and_refusals(self):
         d = self.driver()
         self.assertFalse(Esp32HydroDriver('s', section(''))._on_command_set('/Hydro/Command', 'fwget http://x'))   # no sensor heard yet
