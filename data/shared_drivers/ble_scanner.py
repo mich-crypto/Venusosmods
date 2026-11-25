@@ -36,6 +36,11 @@ OM_IFACE = 'org.freedesktop.DBus.ObjectManager'
 # built-in controller rejects connections ("Busy",
 # le-connection-abort-by-local) while any process keeps it scanning.
 PAUSE_FILE = '/tmp/venusosmods-ble-pause'
+# Last adapter power-cycle by any of our drivers: the adapter is shared (gas sensor, fridge,
+# Venus OS's own Bluetooth, phones), so it is reset at most once per RESET_EVERY_S for all of them.
+RESET_FILE = '/tmp/venusosmods-ble-reset'
+RESET_EVERY_S = 30 * 60
+DEAD_S = 180          # no advertisement from ANY device this long: the scan is dead
 
 
 def request_global_pause(seconds):
@@ -95,6 +100,7 @@ class BlueZScanner(object):
         self._paused = False         # paused by our own GATT client
         self._ext_paused = False     # paused because another process connects
         self._stuck = 0              # checks in a row where BlueZ said "in progress" but was not scanning
+        self.last_any = None         # monotonic time of the last advertisement from any device
 
     def start(self):
         self._bus.add_signal_receiver(
@@ -179,15 +185,19 @@ class BlueZScanner(object):
                 self._stuck = 0
                 log.info('BLE discovery restarted on %s', self._adapter_path)
             else:
-                log.warning('Power-cycling Bluetooth adapter %s to unstick it', self._adapter_name)
-                props.Set(ADAPTER_IFACE, 'Powered', dbus.Boolean(False))
-                GLib.timeout_add_seconds(2, self._power_on)
+                why = self.power_cycle_if_dead()       # only if nothing at all is heard and nothing is connected
+                if why:
+                    log.info('Bluetooth adapter %s left on: %s', self._adapter_name, why)
         except dbus.exceptions.DBusException as e:
             log.warning('Could not unstick BLE discovery: %s', e)
 
-    def restart(self, power_cycle=False):
-        """The scan is said to run but nothing arrives: stop and start it again, or power-cycle
-        the adapter (it comes back on after 2 s and scanning starts again)."""
+    def heard_any_within(self, seconds):
+        """True when some device (not only ours) was heard lately: the scan itself works."""
+        return self.last_any is not None and time.monotonic() - self.last_any < seconds
+
+    def restart(self):
+        """Stop and start this process's own discovery session. BlueZ keeps one session per
+        client, so the other drivers and Venus OS keep scanning meanwhile."""
         if self._paused or self._ext_paused:
             return
         try:
@@ -196,10 +206,6 @@ class BlueZScanner(object):
                 if self._adapter_path is None:
                     return
             obj = self._bus.get_object(BLUEZ, self._adapter_path)
-            if power_cycle:
-                dbus.Interface(obj, PROPS_IFACE).Set(ADAPTER_IFACE, 'Powered', dbus.Boolean(False))
-                GLib.timeout_add_seconds(2, self._power_on)
-                return
             try:
                 dbus.Interface(obj, ADAPTER_IFACE).StopDiscovery()
             except dbus.exceptions.DBusException:
@@ -207,6 +213,51 @@ class BlueZScanner(object):
             GLib.timeout_add(700, self._rearm)
         except dbus.exceptions.DBusException as e:
             log.warning('Could not restart BLE discovery: %s', e)
+
+    def _connected_devices(self, om_objects):
+        out = []
+        for path, ifaces in om_objects.items():
+            dev = ifaces.get(DEVICE_IFACE)
+            if dev and str(path).startswith(self._adapter_path + '/') and dev.get('Connected'):
+                out.append(str(dev.get('Address') or path))
+        return out
+
+    def power_cycle_if_dead(self):
+        """Last resort, as the adapter is shared: only when no device at all has been heard for
+        DEAD_S, nothing is connected, and no driver has reset it in the last RESET_EVERY_S.
+        Returns the reason when it did nothing."""
+        if self._paused or self._ext_paused:
+            return 'a connection is being made'
+        since = None if self.last_any is None else time.monotonic() - self.last_any
+        if since is not None and since < DEAD_S:
+            return 'other devices are heard (%d s ago)' % since
+        try:
+            with open(RESET_FILE) as f:
+                if time.time() - float(f.read().strip() or 0) < RESET_EVERY_S:
+                    return 'reset less than %d min ago' % (RESET_EVERY_S // 60)
+        except (OSError, ValueError):
+            pass
+        try:
+            if self._adapter_path is None:
+                self._adapter_path = self._find_adapter()
+                if self._adapter_path is None:
+                    return 'no adapter'
+            om = dbus.Interface(self._bus.get_object(BLUEZ, '/'), OM_IFACE).GetManagedObjects()
+            busy = self._connected_devices(om)
+            if busy:
+                return 'connected to %s' % ', '.join(busy)
+            try:
+                with open(RESET_FILE, 'w') as f:
+                    f.write('%.0f' % time.time())
+            except OSError:
+                pass
+            log.warning('Nothing heard over Bluetooth from any device: power-cycling adapter %s', self._adapter_name)
+            obj = self._bus.get_object(BLUEZ, self._adapter_path)
+            dbus.Interface(obj, PROPS_IFACE).Set(ADAPTER_IFACE, 'Powered', dbus.Boolean(False))
+            GLib.timeout_add_seconds(2, self._power_on)
+            return None
+        except dbus.exceptions.DBusException as e:
+            return 'D-Bus: %s' % e
 
     def _power_on(self):
         try:
@@ -279,6 +330,8 @@ class BlueZScanner(object):
         mac = _mac_from_path(path)
         if mac is None:
             return
+        if 'RSSI' in props or 'ManufacturerData' in props:
+            self.last_any = time.monotonic()        # any device: tells whether the scan works at all
         if self._mac_filter is not None and mac not in self._mac_filter:
             return
         if 'RSSI' in props:
