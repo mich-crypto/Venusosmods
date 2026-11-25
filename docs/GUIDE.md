@@ -326,15 +326,20 @@ is built in.
 
 **Truma heater (in preparation)**: a Truma Combi with CP plus panel can be connected
 to the water level sensor's ESP32 over its LIN bus, with a small transceiver chip. The
-Pi side is ready: the **Heater** tab switches it on (*Truma heater: setup*); a **Heater** tab
-then shows the status, has Heating on/off, the room set point, hot water
-(off/eco/hot/boost) and a frost guard; Venus OS gets the room temperature and the
+Pi side is ready: the **Heater** tab switches it on (*Settings → Truma heater: setup*). The
+tab shows a dial thermostat (drag the ring or use − / +, the round button switches heating
+on/off), the fan (Eco / High), hot water (off/eco/hot/boost) and the status; timer,
+simulation, setup and the frost guard are folded away under **Settings** (gas Combi only); Venus OS gets the room temperature and the
 controls on the switch pane. The LIN part of the sensor firmware is still to be
 written; wiring and plan in `docs/truma.md`. **Simulation**: the Heater tab (or
 `truma sim on` on the sensor) starts a simulated heater, so Venus OS, VRM and both
 pages can be tried without the heater; *Warning W 42* / *Error E 112* show how codes
 appear. The sensor's own page has the same Heater card (power button, − / + set point,
 hot water Off / Eco / Hot / Boost, codes), also on its own Wi-Fi.
+
+**Water tab layout**: the tank level on top (litres, %, temperatures, tank drawing);
+*Live reading*, *Firmware* and *Settings* are folded below and open with a tap
+(Firmware opens by itself when an update is running or the link has trouble).
 
 **Connection log, for long-term tests** (Water → Firmware → *Connection log*, or
 Debug → Raw data → *Water link*): every Bluetooth exchange between the Pi and the
