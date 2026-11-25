@@ -473,6 +473,21 @@ function batteryCard(d) {
       num(v['/Dc/0/Power'], 0) + ' W · ' + num(v['/Dc/0/Temperature'], 1) + ' °C'));
 }
 
+// The Pi's own 5 V supply: the firmware flags below ~4.63 V (a Pi 5 also measures it)
+function powerBad(p) { return !!(p && (p.now || (p.last_ago != null && p.last_ago < 3600))); }
+function powerCard(p) {
+  if (!p || !p.known) return null;
+  const bad = powerBad(p), ever = p.since_boot || p.count > 0;
+  const state = p.now ? 'too low now' : bad ? 'too low ' + ago(p.last_ago) + ' ago' : ever ? 'ok now' : 'ok';
+  return h('div', { class: 'card' },
+    h('h3', {}, 'Pi power supply ', h('span', { class: 'chip ' + (bad ? 'bad' : ever ? 'warn' : 'ok') }, state)),
+    h('div', { class: 'stats' },
+      stat('Voltage', p.volts != null ? p.volts.toFixed(2) + ' V' : p.now ? 'below 4.63 V' : 'above 4.63 V', p.volts != null ? 'measured (Pi 5)' : 'this Pi only reports too low or ok', true),
+      stat('Too low since start', p.count ? p.count + '×' : ever ? 'yes' : 'never', p.last_ago != null ? 'last ' + ago(p.last_ago) + ' ago' : '', true)),
+    bad || ever ? h('div', { class: 'muted', style: 'margin-top:6px' },
+      'A weak supply makes the Pi\'s Bluetooth hang until a reboot (the water sensor, gas sensor and fridge drop out). Use a proper 5.1 V supply of 3 A or more with a short, thick cable, and don\'t power the sensor from the Pi\'s USB.') : null);
+}
+
 async function tabOverview(main) {
   const st = S.state;
   if (canEdit()) {
@@ -486,7 +501,7 @@ async function tabOverview(main) {
       h('h3', {}, su.data.first_run ? 'Welcome' : 'Add more devices'), h('div', {}, su.data.first_run ? 'Let\'s add your devices. The guide finds them over Bluetooth and puts them in Venus OS.' : 'Not added yet: ' + missing.map(k => ({ gas: 'gas sensor', fridge: 'fridge', water: 'water tank' })[k]).join(', ') + '.')),
       primary(su.data.first_run ? 'Start the setup guide' : 'Open the setup guide', () => openSetup())));
   }
-  const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard), [starlinkCard(st.starlink)]).filter(Boolean);
+  const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard), [starlinkCard(st.starlink), powerCard(st.power)]).filter(Boolean);
   main.append(h('h2', {}, 'Now'));
   main.append(cards.length ? h('div', { class: 'grid' }, cards) :
     h('div', { class: 'banner' }, 'No device is reporting yet. Enable the drivers below and give them a minute.'));
@@ -536,6 +551,12 @@ function renderBusyBanner() {
       h('div', { class: 'muted' }, bt === 'off'
         ? 'No sensor can be heard (water, gas, fridge). Switch it on in Venus OS: Settings → Bluetooth → Enabled.'
         : 'No Bluetooth adapter found: check Venus OS Settings → Bluetooth, or plug in the USB Bluetooth adapter.'))));
+  }
+  const pw = S.state && S.state.power;
+  if (powerBad(pw)) {
+    box.append(h('div', { class: 'banner bad upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
+      h('b', {}, 'The Pi gets too little power' + (pw.now ? ' right now' : ' (' + ago(pw.last_ago) + ' ago)')),
+      h('div', { class: 'muted' }, 'Below 4.63 V' + (pw.count ? ', ' + pw.count + '× since it started' : '') + '. This makes its Bluetooth hang until a reboot. Use a stronger 5 V supply and a short, thick cable.'))));
   }
   if (!senderBusy()) return;
   box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },

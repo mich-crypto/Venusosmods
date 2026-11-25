@@ -602,6 +602,23 @@ class StarlinkApiTests(AppTestCase):
         self.assertEqual(log['state'], 'done')
         self.assertIn('now runs firmware 4.2', log['text'])
 
+    def test_pi_power_from_firmware_flags_and_kernel_lines(self):
+        tmp = os.path.join(self.tmp, 'throttled')
+        with open(tmp, 'w') as f:
+            f.write('50005\n')                                              # under-voltage now and since boot
+        self.app.THROTTLED_FILE = tmp
+        dmesg = '[ 1875.5] Under-voltage detected! (0x00050005)\n[ 2177.1] Under-voltage detected! (0x00050005)\n[ 2177.13] Bluetooth: hci0: Frame reassembly failed (-84)\n'
+        self.app._run = lambda argv: dmesg if argv == ['dmesg'] else ''
+        p = body_of(self.get('/api/state'))['power']
+        self.assertEqual((p['now'], p['since_boot'], p['count'], p['known'], p['volts']), (True, True, 2, True, None))
+        self.assertIsNotNone(p['last_ago'])
+        self.app._power = None
+        with open(tmp, 'w') as f:
+            f.write('0\n')
+        self.app._run = lambda argv: 'EXT5V_V volt(24)=5.13140000V' if 'pmic_read_adc' in argv else ''
+        p = body_of(self.get('/api/state'))['power']
+        self.assertEqual((p['now'], p['since_boot'], p['count'], p['volts']), (False, False, 0, 5.13))
+
     def test_hanging_bluetooth_update_can_be_cancelled_and_ends_by_itself(self):
         sent = self.sensor_ready(wifi=False)
         image = bytearray(200000)
