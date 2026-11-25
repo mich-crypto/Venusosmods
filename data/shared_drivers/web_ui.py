@@ -445,12 +445,23 @@ class App(object):
                 status = parse_svstat(out.stdout.decode('utf-8', 'replace'))
             except (OSError, subprocess.SubprocessError) as e:
                 log.warning('svstat failed: %s', e)
+        # a driver that has run since before the code last changed still runs the old code
+        code = self.code_mtime()
         result = []
         for n in names:
             s = status.get(self.link(n), {})
+            secs = s.get('seconds')
+            old = bool(code and s.get('state') == 'up' and secs is not None and time.time() - secs < code - 5)
             result.append({'name': n, 'enabled': n in linked, 'state': s.get('state', 'down' if n in linked else 'off'),
-                           'seconds': s.get('seconds'), 'pid': s.get('pid')})
+                           'seconds': secs, 'pid': s.get('pid'), 'old_code': old})
         return result
+
+    def code_mtime(self):
+        """When the drivers' Python files were last changed (an update copies them)."""
+        try:
+            return max(os.path.getmtime(os.path.join(HERE, f)) for f in os.listdir(HERE) if f.endswith('.py'))
+        except (OSError, ValueError):
+            return None
 
     DUMP_FRESH_S = 4            # a dump this young is used as it is (the device tabs refresh every 5 s)
     DUMP_KEEP_S = 90            # a busy service that does not answer keeps its last values this long
@@ -1768,7 +1779,22 @@ class App(object):
         link = self.link(name)
         if not os.path.lexists(link):
             return False
+        before = self._service_states()
+        pid = next((x.get('pid') for x in before if x['name'] == name), None)
         subprocess.run(['svc', '-t', link], timeout=5)
+        if pid:
+            # a busy driver may ignore the stop signal: if the same process still runs 10 s later, kill it
+            def check():
+                self._states = None
+                now = next((x for x in self._service_states() if x['name'] == name), {})
+                if now.get('pid') == pid:
+                    log.warning('%s did not restart within 10 s: killing pid %s', name, pid)
+                    try:
+                        os.kill(int(pid), 9)
+                    except (OSError, ValueError):
+                        pass
+                return False
+            GLib.timeout_add_seconds(10, check)
         return True
 
     def api_driver_config_save(self, req):
