@@ -714,6 +714,14 @@ class WifiTransportTests(unittest.TestCase):
         self.assertEqual((s['/Level'], s['/Hydro/HeightMm'], s['/Hydro/Filling'], s['/Hydro/Transport']), (15.1, 305, 1, 'wifi'))
         self.assertEqual(d.temp.service['/Temperature'], 7.5)
         self.assertIsNotNone(s['/Hydro/ReadTime'])                          # the connection light follows the readings
+        d.raw.path = os.path.join(tempfile.mkdtemp(), 'water.log')         # Debug -> Water shows the Wi-Fi readings
+        d._wifi_raw = (None, 0)
+        self._pending_start = [d.poller.tick]
+        self.run_loop(lambda: os.path.exists(d.raw.path))
+        with open(d.raw.path) as f:
+            line = f.read()
+        self.assertIn(' wifi ', line)
+        self.assertIn('height=305', line)
         self._pending_start = [d._link_tick]                               # check-in: hb, wifi push, log, info
         self.run_loop(lambda: s.get('/FirmwareVersion') == '4.12')
         self.assertEqual(s['/FirmwareVersion'], '4.12')

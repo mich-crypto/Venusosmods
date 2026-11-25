@@ -131,6 +131,7 @@ class Esp32HydroDriver(BleDriver):
         self._fixed_host = bool(config.get('sensor_host', '').strip())
         self._wifi_ok = None
         self._wifi_fails = 0
+        self._wifi_raw = (None, 0)       # the last reading written to the water log over Wi-Fi, and when
         self.poller = None
         self._wclient = self._bclient = None
         self.tank['/Hydro/Transport'] = self.transport
@@ -844,6 +845,7 @@ class Esp32HydroDriver(BleDriver):
                 '/Hydro/Fault': int(fault),
                 '/Hydro/Temperature2': temps.get(2),
             })
+        self._wifi_raw_write(d, height, volume_l, level, temps, fault)
         if self.temp is not None and temps.get(1) is not None:
             self.temp.publish(temps[1])
         if self.temp2 is not None and temps.get(2) is not None:
@@ -852,6 +854,22 @@ class Esp32HydroDriver(BleDriver):
         if d.get('truma') and self.heater:
             self.tank['/Hydro/Truma'] = json.dumps(d['truma'])
             self.heater.apply(d['truma'])
+
+    WIFI_RAW_EVERY_S = 60
+
+    def _wifi_raw_write(self, d, height, volume_l, level, temps, fault):
+        """Debug -> Water: the reading over Wi-Fi, like a Bluetooth broadcast: when it changes,
+        else once a minute (it is read every 5 s)."""
+        def f(v, n=1):
+            return '-' if v is None else ('%.*f' % (n, v) if isinstance(v, (int, float)) else str(v))
+        flags = ','.join(k for k in ('filling', 'draining', 'sloshing') if d.get(k)) or '-'
+        text = 'height=%s mm litres=%s level=%s %% t1=%s t2=%s flags=%s%s' % (
+            f(height), f(volume_l), f(level), f(temps.get(1)), f(temps.get(2)), flags, ' FAULT' if fault else '')
+        last, when = self._wifi_raw
+        now = monotonic_s()
+        if text != last or now - when >= self.WIFI_RAW_EVERY_S:
+            self.raw.write('wifi', '%s %s' % (self.sensor_host, text))
+            self._wifi_raw = (text, now)
 
     def _on_wifi_error(self, text):
         self._wifi_fails += 1

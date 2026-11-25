@@ -3075,9 +3075,10 @@ async function updatePanel() {
   const draw = async (refresh) => {
     const r = await api('/api/update_check' + (refresh ? '?refresh=1' : ''));
     clear(body);
-    if (!r.ok) { body.append(h('div', { class: 'muted' }, r.data.error || 'Could not check')); return; }
+    if (!r.ok) { body.append(h('div', { class: 'muted' }, r.data.error || 'Could not check'), await updateLogView()); return; }
     const d = r.data;
     S.upd = d; renderTabs();
+    if (d.running) S.updFailed = false;
     body.append(h('div', { class: 'stats' }, stat('Installed', d.installed ? d.installed.slice(0, 7) : 'unknown', d.installed ? '' : 'updated by update.sh from now on', true),
       stat('Latest', d.latest ? d.latest.slice(0, 7) : (d.checking ? 'checking…' : '–'), d.date ? d.date.slice(0, 10) : '', true)));
     if (d.message) body.append(h('div', { class: 'muted' }, 'Latest change: ' + d.message));
@@ -3089,22 +3090,39 @@ async function updatePanel() {
         if (x.ok) watchUpdate();
       }) }, d.available ? 'Update now' : 'Reinstall latest'), d.available ? h('span', { class: 'chip warn' }, 'update available') : (d.installed && d.latest ? h('span', { class: 'chip ok' }, 'up to date') : null)));
     if (!canEdit()) body.append(h('div', { class: 'muted', style: 'margin-top:6px' }, ['Unlock the page to update. ', h('a', { href: '#', onclick: ev => { ev.preventDefault(); unlock(); } }, 'Unlock')]));
-    if (S.updWatching || (S.prog && S.prog.mods)) body.append(progBox('mods'));
-    else if (d.running) watchUpdate();                          // running (another tab, a reload): follow it
+    const logView = await updateLogView();
+    if (logView) body.append(logView);
+    if (d.running && !S.updWatching) watchUpdate();             // running (another tab, a reload): follow it
     if (d.checking) setTimeout(() => { if (S.tab === 'update') draw(false); }, 2500);
   };
   await draw(false);
   return card;
 }
 
+// While an update runs: its live log. Otherwise the log of the last update (kept on the Pi until
+// it restarts), open right after an update or when it stopped with an error.
+async function updateLogView() {
+  if (S.updWatching) return progBox('mods');
+  const x = await api('/api/update_log');
+  const text = x.ok ? (x.data.text || '').trim() : '';
+  if (!text) return null;
+  const open = !!(S.justUpdated || S.updFailed);
+  const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:40vh;margin-top:6px' }, text);
+  const d = h('details', { open, style: 'margin-top:10px' },
+    h('summary', { style: 'cursor:pointer' }, S.justUpdated ? 'Log of the update that just finished' : S.updFailed ? 'Log of the update (it stopped)' : 'Log of the last update'), pre);
+  const down = () => { pre.scrollTop = pre.scrollHeight; };
+  d.addEventListener('toggle', down); if (open) requestAnimationFrame(down);
+  return d;
+}
+
 // Follow the update log; at the end the page server restarts with the new version:
 // wait until it answers again, then reload so the new page is shown right away.
 async function watchUpdate() {
   if (S.updWatching) return;
-  S.updWatching = true;
+  S.updWatching = true; S.updFailed = false; S.justUpdated = false;
   progSet('mods', 'starting…');
   const body = $('#updbody');
-  if (body && !$('#prog-mods')) body.append(progBox('mods'));
+  if (body && !$('#prog-mods')) { body.querySelectorAll('details').forEach(x => x.remove()); body.append(progBox('mods')); }
   const add = more => progSet('mods', S.prog.mods + more);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let gone = false;
@@ -3120,7 +3138,7 @@ async function watchUpdate() {
     progSet('mods', x.data.text || '(no output yet)');
     if (!x.data.running) {
       const failed = !gone && !/Update finished|Restarted /.test(x.data.text || '');
-      if (failed) { S.updWatching = false; toast('The update stopped, see the log.', true); return; }
+      if (failed) { S.updWatching = false; S.updFailed = true; toast('The update stopped, see the log.', true); return; }
       break;
     }
   }
@@ -3131,6 +3149,7 @@ async function watchUpdate() {
     await sleep(2000);
   }
   await sleep(1000);
+  try { sessionStorage.setItem('vom-updated', '1'); } catch (e) { /* no storage: just reload */ }
   location.reload();
 }
 
@@ -3212,7 +3231,7 @@ async function rawView(box) {
   const lines = r.data.lines, old = $('.rawbox'), stick = !old || old.scrollTop + old.clientHeight >= old.scrollHeight - 30;
   const note = { gas: 'Every Mopeka advertisement of your sensor: the raw bytes (data=), what they decode to, and the level that was published.',
     fridge: 'What the Pi sends to the fridge (tx) and what comes back (rx), with the decoded status. A status payload is a row of bytes; the table below names them.',
-    water: 'Every new ESP32 advertisement with its raw bytes and what they decode to.',
+    water: 'Every new reading of the water level sensor: over the Wi-Fi network (wifi: when it changes, else once a minute) or a Bluetooth broadcast (adv: its raw bytes and what they decode to).',
     link: 'The connection to the water level sensor, step by step, over the Wi-Fi network (wifi lines: which way, address, no answer) or Bluetooth (adv: broadcast gaps; step: connect, services): what the Pi sent (tx), the answer (rx), what the sensor itself logged (sensor, at every check-in) and a summary every hour (stats). Kept across reboots; Download gives the whole file.' }[S.rawSource];
   out.append(h('div', { class: 'row', style: 'margin-bottom:8px' }, h('div', { class: 'muted' }, note), h('span', { class: 'spacer' }),
     h('button', { type: 'button', class: 'btn small', onclick: () => { S.rawPaused = !S.rawPaused; renderTab(); } }, S.rawPaused ? 'Resume' : 'Pause'),
@@ -3529,6 +3548,9 @@ async function boot() {
   renderTabs();
   const r = await refreshState();
   if (!r.ok) { $('#main').append(h('div', { class: 'banner bad' }, r.data.error || 'The Pi does not answer')); return; }
+  let updated = false;                              // reloaded at the end of an update: show its log
+  try { updated = !!sessionStorage.getItem('vom-updated'); sessionStorage.removeItem('vom-updated'); } catch (e) { /* none */ }
+  if (updated) { S.justUpdated = true; S.tab = 'update'; renderTabs(); toast('Update finished: now running Venus OS mods ' + (S.state.version || '')); }
   checkUpdate();                                   // in the background; shows a banner if there is a new version
   setInterval(() => { if (!document.hidden) checkUpdate(); }, 30 * 60 * 1000);
   await renderTab();
