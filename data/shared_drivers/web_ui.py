@@ -1316,19 +1316,21 @@ class App(object):
         if not sec:
             return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
         name, values = self.sender_device(sec)
-        if not (sec.get('wifi_ssid') or '').strip() and not values.get('/Hydro/WifiIp'):
-            return jsonr({'ok': False, 'error': 'The sensor downloads updates over Wi-Fi: enter the Wi-Fi name and password '
-                          'under Settings → Connection first.'}, 400)
+        have_wifi = bool((sec.get('wifi_ssid') or '').strip() or values.get('/Hydro/WifiIp'))
+        via = req.form.get('via') or ('wifi' if have_wifi else 'bluetooth')
+        if via == 'wifi' and not have_wifi:
+            return jsonr({'ok': False, 'error': 'For an update over Wi-Fi, enter the Wi-Fi name and password '
+                          'under Settings → Connection first (or update over Bluetooth).'}, 400)
         if not values.get('/Hydro/Mac'):
             return jsonr({'ok': False, 'error': 'no reading from the sensor yet, so the Pi can\'t reach it'}, 409)
-        self.fw_job = {'state': 'downloading', 'log': [], 'started': time.time(), 'token': None,
-                       'from_version': values.get('/FirmwareVersion'), 'name': name, 'size': 0}
+        self.fw_job = {'state': 'downloading', 'log': [], 'started': time.time(), 'token': None, 'via': via,
+                       'from_version': values.get('/FirmwareVersion'), 'name': name, 'size': 0, 'pct': -10}
         self.fw_log('Downloading the latest sensor firmware from GitHub ...')
         script = ('curl -fsSL -m 120 -o "$2" "$1" 2>&1 && exit 0; '
                   'wget -q -T 120 -O "$2" "$1" 2>&1 && exit 0; exit 1')
         starlink_hub.run_async(['sh', '-c', script, 'fetch', self.FW_URL % self.UPDATE_REPO, self.FW_FILE],
                                self._fw_downloaded, timeout=150, with_errors=True)
-        return jsonr({'ok': True, 'message': 'Update started: the sensor will download it over Wi-Fi.'})
+        return jsonr({'ok': True, 'message': 'Update started over %s.' % ('Wi-Fi' if via == 'wifi' else 'Bluetooth')})
 
     def _fw_downloaded(self, rc, out):
         job = self.fw_job
@@ -1343,6 +1345,18 @@ class App(object):
                                                   if rc != 0 else 'not a sensor firmware file'))
             return
         job['data'], job['size'] = data, len(data)
+        if job['via'] == 'bluetooth':
+            # the water driver sends it over its own Bluetooth connection, in resumable rounds
+            self.fw_log('Got %d kB. Sending it to the sensor over Bluetooth (a few minutes) ...' % (len(data) // 1024))
+            try:
+                self.bus.call_blocking(job['name'], '/Hydro/Command', BUS_ITEM, 'SetValue', 'v',
+                                       [dbus.String('ota ' + self.FW_FILE, variant_level=1)], timeout=4)
+            except dbus.exceptions.DBusException as e:
+                job['state'] = 'failed'
+                self.fw_log('The water driver did not take the command: %s' % e)
+                return
+            job['state'], job['sent'] = 'sent', time.time()
+            return
         job['token'] = os.urandom(8).hex()
         ip = self.own_ip()
         if not ip:
@@ -1382,11 +1396,15 @@ class App(object):
             values = self.dbus_dump(job['name'], max_age=2)
         except dbus.exceptions.DBusException:
             values = {}
+        pct = values.get('/Hydro/OtaProgress')
+        if job['via'] == 'bluetooth' and isinstance(pct, (int, float)) and pct >= job['pct'] + 10:
+            job['pct'] = int(pct) // 10 * 10
+            self.fw_log('Sent %d %%' % pct)
         answer = values.get('/Hydro/CommandResult') or ''
         if answer and answer != job.get('answer'):
             job['answer'] = answer
             self.fw_log('Sensor: %s' % answer)
-            if not answer.startswith('ok'):
+            if answer.startswith(('error', 'wrong', 'no answer')):
                 job['state'] = 'failed'
                 return
         err = values.get('/Hydro/FwError') or ''
@@ -1399,7 +1417,7 @@ class App(object):
             job['state'] = 'done'
             self.fw_log('Done: the sensor now runs firmware %s.' % now_v)
             return
-        if time.time() - job.get('sent', 0) > self.FW_OFFER_S:
+        if time.time() - job.get('sent', 0) > (self.FW_OFFER_S if job['via'] == 'wifi' else 1800):
             job['state'] = 'failed'
             self.fw_log('No new version reported within 10 minutes: the sensor keeps its old firmware. '
                         'Check the Wi-Fi name and password, or update on the sensor\'s own page.')

@@ -2445,16 +2445,26 @@ function senderCard() {
     v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sensor page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
     noData ? noDataHelp(svc) : link && link !== 'ok' && dev && val(dev, '/Connected') === 1 ? linkHelp(link, inst) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
-      h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(),
-        onclick: () => confirmThen('Update the sensor firmware' + (latest ? ' to ' + latest : '') + '? The sensor joins the Wi-Fi from Settings → Connection for a moment, downloads it from the Pi and restarts (about a minute). If anything fails it keeps its old firmware.', async () => {
-          const x = await api('/api/sender_update', {});
+      ...(() => {
+        // two ways: Bluetooth (always there, a few minutes) or Wi-Fi (seconds, needs the Wi-Fi from the settings)
+        const wifi = !!(sec && (sec.values.wifi_ssid || '').trim());
+        const go = via => confirmThen((via === 'bluetooth'
+            ? 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over Bluetooth? It takes a few minutes; a dropped connection only pauses it. '
+            : 'Update the sensor firmware' + (latest ? ' to ' + latest : '') + ' over Wi-Fi? The sensor joins “' + sec.values.wifi_ssid + '” for a moment and downloads it from the Pi (about a minute). ')
+            + 'If anything fails it keeps its old firmware.', async () => {
+          const x = await api('/api/sender_update', { via });
           toast(x.ok ? x.data.message : x.data.error, !x.ok);
           if (x.ok) watchSenderUpdate(body);
-        }) }, newer || !inst ? 'Update sensor firmware' : 'Reinstall sensor firmware'),
-      h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
-      h('span', { class: 'muted' }, sec && (sec.values.wifi_ssid || '').trim()
-        ? 'Updates download over the Wi-Fi “' + sec.values.wifi_ssid + '”.'
-        : 'To update from here, enter the Wi-Fi name and password under Settings → Connection.')),
+        });
+        const label = newer || !inst ? 'Update' : 'Reinstall';
+        return [
+          h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(), onclick: () => go('bluetooth') }, label + ' over Bluetooth'),
+          h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !wifi, title: wifi ? '' : 'Enter the Wi-Fi under Settings → Connection first',
+            onclick: () => go('wifi') }, label + ' over Wi-Fi'),
+          h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
+          h('span', { class: 'muted' }, wifi ? 'Over Wi-Fi it is faster (“' + sec.values.wifi_ssid + '”).'
+            : 'Over Wi-Fi needs the Wi-Fi under Settings → Connection.')];
+      })()),
     body);
   return card;
 }

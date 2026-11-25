@@ -655,16 +655,16 @@ if you forget it. Open the address in Safari and add it to the home screen.
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches
   the sender's test mode on meanwhile. Needs sender firmware 2.8+.
 * **Water → Water level sensor** – the sensor's firmware (installed and latest),
-  its Wi-Fi state and the two-way link, **Check for update** and **Update sensor
-  firmware** (firmware 4.1+ on the sensor): the Pi downloads the update from
-  GitHub and offers it on its own web server; over Bluetooth it only sends the
-  sensor a short command, and the sensor joins the Wi-Fi network from *Settings →
-  Connection*, downloads the file in seconds, installs it and restarts. If
-  anything fails it keeps its old firmware. Needs the Wi-Fi network name and
-  password in the settings once: *Use the Pi's Wi-Fi* takes the network the Pi
-  is on, password included (read on the Pi, never shown in the browser), or pick
-  a nearby network from the list and type its password. The first update to 4.1
-  goes over the sensor's own page (Firmware update).
+  its Wi-Fi state and the two-way link, **Check for update** and two ways to
+  update (the old firmware stays if anything fails):
+  * **Update over Bluetooth** (sensor firmware 4.2+): the water driver sends the
+    file over the same connection as the live reading, in rounds of 40 small
+    packets. After each round the sensor says how much it has, so a dropped
+    connection or a refused packet only pauses it. A few minutes.
+  * **Update over Wi-Fi** (4.1+): over Bluetooth the Pi only sends a short
+    command; the sensor joins the Wi-Fi from *Settings → Connection* (*Use the
+    Pi's Wi-Fi* fills it in) and downloads the file from the Pi in seconds.
+  Older sensor firmware: update once on the sensor's own page.
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
   services; the page then reloads itself with the new version). The page checks for a new version by itself every few hours, also

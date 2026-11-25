@@ -12,6 +12,9 @@ name (the tank's own /Temperature path is only shown by the GUI for Mopeka tanks
 
 import json
 import logging
+import re
+import struct
+import subprocess
 import time
 
 import esp32_hydro_protocol as proto
@@ -55,7 +58,7 @@ class Esp32HydroDriver(BleDriver):
                          '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
                          '/Hydro/LiveHeightMm', '/Hydro/LiveLitres', '/Hydro/LiveTime',
                          # firmware update: the page's command, the sensor's answer and last error
-                         '/Hydro/CommandResult', '/Hydro/FwError'),
+                         '/Hydro/CommandResult', '/Hydro/FwError', '/Hydro/OtaProgress'),
             setup=self._writable_paths)
         self.devices.append(self.tank)
         self.raw = rawlog.RawLog('water')
@@ -76,6 +79,7 @@ class Esp32HydroDriver(BleDriver):
         self._mode = None              # what the running exchange is: checkin | live | stop
         self._link_quiet_until = 0     # old firmware without the link: try only once an hour
         self._command = None           # waiting to be sent to the sensor
+        self.ota = None                # a firmware upload over Bluetooth, see _ota_step
         self.live_until = 0            # monotonic end of the live view (0 = off)
 
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
@@ -118,6 +122,8 @@ class Esp32HydroDriver(BleDriver):
         cmd = str(value or '').strip()
         if not cmd or not self.seen_mac:
             return False
+        if cmd.startswith('ota '):
+            return self._ota_start(cmd[4:].strip())
         if cmd.startswith('fwget '):
             cmd += '\t%s\t%s' % (self.wifi_ssid, self.wifi_password)
         self._command = cmd
@@ -134,6 +140,124 @@ class Esp32HydroDriver(BleDriver):
             self._send('command', [proto.link_commands(self.sender_password)[0], b'C' + cmd.encode('utf-8')])
         return False
 
+    # ---------------------------------------------------- firmware over Bluetooth
+    # Over the same connection as the live reading, in rounds: auth, OTA_BATCH data packets
+    # ('D' + offset + bytes, each fitting one Bluetooth frame), then "ota status". The answer says
+    # how much the sensor has, and the next round starts there, so a refused packet or a dropped
+    # connection only costs a retry. "ota end" lets the sensor check the image and restart.
+    OTA_BATCH = 40
+    OTA_MAX_ERRORS = 40
+
+    def _ota_start(self, path):
+        if self.ota:
+            return False
+        try:
+            with open(path, 'rb') as f:
+                data = f.read()
+            md5 = subprocess.check_output(['md5sum', path]).decode().split()[0]
+        except (OSError, subprocess.CalledProcessError, IndexError):
+            self.tank['/Hydro/CommandResult'] = 'error ota: could not read %s' % path
+            return True
+        if len(data) < 1000 or data[0] != 0xE9 or data[27] != 0x3C:
+            self.tank['/Hydro/CommandResult'] = 'error ota: not a sensor firmware file'
+            return True
+        self.ota = {'data': data, 'md5': md5, 'phase': 'begin', 'pos': 0, 'chunk': 180, 'errors': 0, 'restarts': 0}
+        self.tank['/Hydro/OtaProgress'] = 0
+        self.tank['/Hydro/CommandResult'] = 'ota: connecting'
+        GLib.timeout_add(0, self._ota_step)
+        return True
+
+    def _ota_step(self):
+        o = self.ota
+        if not o:
+            return False
+        if self.gatt is not None and self.gatt.busy:
+            GLib.timeout_add(500, self._ota_step)         # a check-in or live poll is finishing
+            return False
+        auth = proto.link_commands(self.sender_password)[0]
+        self._client().keep_connected = True
+        if o['phase'] == 'begin':
+            frames = [auth, ('Cota begin %d %s' % (len(o['data']), o['md5'])).encode()]
+        elif o['phase'] == 'data':
+            frames = [auth]
+            pos = o['pos']
+            for _ in range(self.OTA_BATCH):
+                if pos >= len(o['data']):
+                    break
+                part = o['data'][pos:pos + o['chunk']]
+                frames.append(b'D' + struct.pack('<I', pos) + part)
+                pos += len(part)
+            frames.append(b'Cota status')
+        else:
+            frames = [auth, b'Cota end']
+        self._send('ota', frames)
+        return False
+
+    def _ota_fail(self, text):
+        self.ota = None
+        self._client().keep_connected = False
+        self.tank['/Hydro/OtaProgress'] = None
+        self.tank['/Hydro/CommandResult'] = 'error ota: %s' % text
+        log.warning('firmware over Bluetooth: %s', text)
+
+    def _ota_answer(self, ok, error, replies):
+        o = self.ota
+        if not o:
+            return
+        answer = replies[-1].strip() if replies else ''
+        if not ok and not answer:
+            o['errors'] += 1                   # dropped or refused: try the same round again
+            if o['errors'] > self.OTA_MAX_ERRORS:
+                self._ota_fail('too many connection errors (last: %s)' % error)
+                return
+            self.tank['/Hydro/CommandResult'] = 'ota: connection trouble (%s), trying again' % error
+            GLib.timeout_add_seconds(3, self._ota_step)
+            return
+        if answer.startswith('denied'):
+            self._ota_fail('the sensor refused the password: set Sensor password')
+            return
+        if o['phase'] == 'begin':
+            m = re.match(r'ok ota begin mtu=(\d+)', answer)
+            if not m:
+                if not answer or answer.lower().startswith('unknown command') or answer.startswith('ota begin <size>'):
+                    answer = ('the sensor firmware is older than 4.2 and can\'t take updates over Bluetooth: '
+                              'update it once over Wi-Fi or on its own page')
+                self._ota_fail(answer)
+                return
+            mtu = int(m.group(1))
+            o['chunk'] = max(15, min(mtu - 3, 244) - 5)   # one frame: MTU - 3, minus 'D' and the offset
+            o['phase'], o['pos'] = 'data', 0
+            self.tank['/Hydro/CommandResult'] = 'ota: sending %d kB in %d-byte packets' % (len(o['data']) // 1024, o['chunk'])
+        elif o['phase'] == 'data':
+            m = re.match(r'ota (active|failed) (\d+)/(\d+)', answer)
+            if not m:
+                if answer.startswith('ota idle') and o['restarts'] < 2:
+                    o['restarts'] += 1         # the sensor lost the upload (restart): start again
+                    o['phase'] = 'begin'
+                    GLib.timeout_add_seconds(2, self._ota_step)
+                    return
+                self._ota_fail(answer or 'no status from the sensor')
+                return
+            if m.group(1) == 'failed':
+                self._ota_fail('the sensor could not write the firmware')
+                return
+            o['pos'] = int(m.group(2))
+            self.tank['/Hydro/OtaProgress'] = int(100 * o['pos'] / len(o['data']))
+            if o['pos'] >= len(o['data']):
+                o['phase'] = 'end'
+        else:
+            if not answer.startswith('ok'):
+                self._ota_fail(answer)
+                return
+            self.ota = None
+            self._client().keep_connected = False
+            self.tank['/Hydro/OtaProgress'] = 100
+            self.tank['/Hydro/CommandResult'] = answer
+            for s in (20, 45, 90):             # the sensor restarts: ask for its version soon
+                GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
+            return
+        GLib.timeout_add(0, self._ota_step)
+
     def _client(self):
         if self.gatt is None or self.gatt.mac != self.seen_mac.upper():
             from ble_gatt import GattClient
@@ -146,7 +270,7 @@ class Esp32HydroDriver(BleDriver):
         """One exchange; every frame but auth gets a notified reply."""
         self._mode = mode
         self._collector = proto.ReplyCollector()
-        self._expected = sum(1 for f in frames if not f.startswith(b'Cauth '))
+        self._expected = sum(1 for f in frames if f.startswith(b'C') and not f.startswith(b'Cauth '))   # data: no answer
         self._client().exchange(frames, self._on_link_done)
 
     def _retry_soon(self):
@@ -161,6 +285,8 @@ class Esp32HydroDriver(BleDriver):
         GLib.timeout_add_seconds(60, again)
 
     def _link_tick(self):
+        if self.ota:
+            return True                        # a firmware upload uses the link
         if not self.seen_mac:
             # without a broadcast the Pi doesn't know where to connect: say so on the page
             self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sensor yet'
@@ -196,6 +322,8 @@ class Esp32HydroDriver(BleDriver):
     def _live_poll(self):
         if not self.live_until:
             return False
+        if self.ota:
+            return True                        # paused while firmware goes over the link
         if self.gatt is not None and self.gatt.busy:
             return True                        # a check-in or the last poll is still running
         if monotonic_s() > self.live_until:
@@ -233,6 +361,9 @@ class Esp32HydroDriver(BleDriver):
         replies = self._collector.replies if self._collector else []
         self._collector = None
         mode, self._mode = self._mode, None
+        if mode == 'ota':
+            self._ota_answer(ok, error, replies)
+            return
         if mode == 'command':
             answer = replies[-1].strip() if replies else 'no answer: %s' % (error or 'link failed')
             if any(r.startswith('denied') for r in replies):
