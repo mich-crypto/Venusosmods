@@ -247,6 +247,14 @@ class CommandTests(unittest.TestCase):
         d._on_link_notify(b'ok fwget: joining the Wi-Fi and downloading\x04')
         self.assertTrue(d.tank.service['/Hydro/CommandResult'].startswith('ok fwget'))
 
+    def test_cancel_stops_the_bluetooth_upload_and_tells_the_sensor(self):
+        d = self.driver()
+        d.ota = {'data': b'x', 'md5': '', 'phase': 'data', 'pos': 0, 'chunk': 180, 'errors': 0, 'restarts': 0}
+        self.assertTrue(d._on_command_set('/Hydro/Command', 'ota cancel'))
+        self.assertIsNone(d.ota)
+        d._send_command()
+        self.assertEqual(d.gatt.sent[-1][-1], b'Cota abort')
+
     def test_fwget_without_wifi_settings_uses_the_sensors_own_network(self):
         d = self.driver(cfg='')
         d._on_command_set('/Hydro/Command', 'fwget http://192.168.1.5:8088/fw/abc.bin')

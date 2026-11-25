@@ -540,7 +540,8 @@ function renderBusyBanner() {
   if (!senderBusy()) return;
   box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
     h('b', {}, 'Water level sensor update running'),
-    h('div', { class: 'muted' }, 'It downloads the new firmware from the Pi over Wi-Fi and restarts by itself (about a minute). Please don\'t reboot the Pi meanwhile.'))));
+    h('div', { class: 'muted' }, 'The sensor restarts by itself when the new firmware is in. If it hangs, cancel it: the sensor keeps its old firmware.')),
+    h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: cancelSenderUpdate }, 'Cancel update')));
 }
 
 // Gas / Water / Fridge tab: swap in a fresh top card (level, height, drawing, temperatures)
@@ -2701,9 +2702,18 @@ async function checkSenderFw(btn) {
 }
 
 // Follow the update: download, command over Bluetooth, the sensor fetching it, the new version
+function cancelSenderUpdate() {
+  confirmThen('Cancel the sensor update? The sensor keeps its old firmware.', async () => {
+    const x = await api('/api/sender_update_cancel', {});
+    toast(x.ok ? x.data.message : x.data.error, !x.ok);
+    await refreshState(); renderBusyBanner(); renderTab();
+  });
+}
+
 async function watchSenderUpdate(body) {
   const pre = h('pre', { class: 'rawbox', style: 'height:auto;max-height:30vh;margin-top:8px' }, 'starting…');
-  clear(body).append(pre);
+  clear(body).append(pre, h('div', { class: 'row', style: 'margin-top:6px' },
+    h('button', { type: 'button', class: 'btn small', onclick: cancelSenderUpdate }, 'Cancel update')));
   for (let i = 0; i < 400; i++) {
     await new Promise(r => setTimeout(r, 2000));
     const x = await api('/api/sender_update_log');

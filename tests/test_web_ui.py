@@ -602,6 +602,27 @@ class StarlinkApiTests(AppTestCase):
         self.assertEqual(log['state'], 'done')
         self.assertIn('now runs firmware 4.2', log['text'])
 
+    def test_hanging_bluetooth_update_can_be_cancelled_and_ends_by_itself(self):
+        sent = self.sensor_ready(wifi=False)
+        image = bytearray(200000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(self.app.FW_FILE, 'wb') as f:
+            f.write(image)
+        self.assertEqual(self.post('/api/sender_update', {}).status, 200)
+        self.started[-1][1](0, b'')
+        self.assertTrue(body_of(self.get('/api/state'))['sender_update'])
+        r = body_of(self.post('/api/sender_update_cancel', {}))
+        self.assertTrue(r['ok'])
+        self.assertEqual(sent[-1][1:], ('/Hydro/Command', 'ota cancel'))          # the driver stops sending
+        self.assertFalse(body_of(self.get('/api/state'))['sender_update'])       # the page is free again
+        # no progress for 4 minutes: failed by itself
+        self.assertEqual(self.post('/api/sender_update', {}).status, 200)
+        self.started[-1][1](0, b'')
+        self.app.fw_job['moved'] = self.app.fw_job['sent'] = time.time() - 300
+        self.app.fw_job['seen'] = (self.values.get('/Hydro/OtaProgress'), self.values.get('/Hydro/CommandResult'))
+        self.assertFalse(body_of(self.get('/api/state'))['sender_update'])
+        self.assertIn('No progress', body_of(self.get('/api/sender_update_log'))['text'])
+
     def test_sensor_update_over_wifi(self):
         sent = self.sensor_ready()
         self.assertEqual(self.post('/api/sender_update', {}).status, 200)

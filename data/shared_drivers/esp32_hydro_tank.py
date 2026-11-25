@@ -177,6 +177,12 @@ class Esp32HydroDriver(BleDriver):
         cmd = str(value or '').strip()
         if not cmd or not self.seen_mac:
             return False
+        if cmd == 'ota cancel':                # from the page: stop sending, the sensor drops what it got
+            if self.ota:
+                self._ota_fail('cancelled')
+            self._command = 'ota abort'
+            GLib.timeout_add(0, self._send_command)
+            return True
         if cmd.startswith('ota '):
             return self._ota_start(cmd[4:].strip())
         if cmd.startswith('fwget ') and self.wifi_ssid:

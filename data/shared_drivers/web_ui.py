@@ -381,6 +381,7 @@ class App(object):
             'GET /api/sender_fw': self.api_sender_fw,
             'POST /api/sender_update': self.api_sender_update,
             'GET /api/sender_update_log': self.api_sender_update_log,
+            'POST /api/sender_update_cancel': self.api_sender_update_cancel,
             'POST /api/sender_live': self.api_sender_live,
             'GET /api/sender_live': self.api_sender_live_values,
             'GET /api/wifi_networks': self.api_wifi_networks,
@@ -1257,6 +1258,8 @@ class App(object):
 
     def sender_update_running(self):
         job = self.fw_job
+        if job and job['state'] in ('downloading', 'sent', 'fetched'):
+            self.fw_progress()                 # a hanging update ends even when nobody watches its log
         return bool(job and job['state'] in ('downloading', 'sent', 'fetched'))
 
     def sender_section(self):
@@ -1392,6 +1395,10 @@ class App(object):
     def fw_progress(self):
         """Move the job on from what the driver reports (command answer, version, errors)."""
         job = self.fw_job
+        if job and job['state'] == 'downloading' and time.time() - job['started'] > 300:
+            job['state'] = 'failed'
+            self.fw_log('The download from GitHub did not finish.')
+            return
         if not job or job['state'] not in ('sent', 'fetched'):
             return
         try:
@@ -1399,6 +1406,15 @@ class App(object):
         except dbus.exceptions.DBusException:
             values = {}
         pct = values.get('/Hydro/OtaProgress')
+        seen = (pct, values.get('/Hydro/CommandResult'))
+        if seen != job.get('seen'):
+            job['seen'], job['moved'] = seen, time.time()          # something happened: not stuck
+        if job['via'] == 'bluetooth' and time.time() - job.get('moved', job['sent']) > self.FW_STALL_S:
+            job['state'] = 'failed'
+            self.fw_log('No progress for %d minutes: given up. The sensor keeps its old firmware '
+                        '(it drops an unfinished upload by itself after 3 minutes).' % (self.FW_STALL_S // 60))
+            self._driver_ota_cancel(job)
+            return
         if job['via'] == 'bluetooth' and isinstance(pct, (int, float)) and pct >= job['pct'] + 10:
             job['pct'] = int(pct) // 10 * 10
             self.fw_log('Sent %d %%' % pct)
@@ -1551,6 +1567,25 @@ class App(object):
         if not ok:
             return jsonr({'ok': False, 'error': error}, status)
         return jsonr({'ok': True, 'ssid': cur['name'], 'message': 'Sent to the sensor: join the Pi\'s Wi-Fi “%s”.' % cur['name']})
+
+    FW_STALL_S = 240
+
+    def _driver_ota_cancel(self, job):
+        try:
+            self.bus.call_blocking(job['name'], '/Hydro/Command', BUS_ITEM, 'SetValue', 'v',
+                                   [dbus.String('ota cancel', variant_level=1)], timeout=4)
+        except dbus.exceptions.DBusException:
+            pass                               # driver gone: nothing is sending anyway
+
+    def api_sender_update_cancel(self, req):
+        """Stop a sensor update that hangs: the page is free again at once."""
+        job = self.fw_job
+        if not job or not self.sender_update_running():
+            return jsonr({'ok': True, 'message': 'No update is running.'})
+        job['state'] = 'failed'
+        self.fw_log('Cancelled on the page. The sensor keeps its old firmware.')
+        self._driver_ota_cancel(job)
+        return jsonr({'ok': True, 'message': 'Update cancelled. The sensor keeps its old firmware.'})
 
     def api_sender_update_log(self, req):
         self.fw_progress()
