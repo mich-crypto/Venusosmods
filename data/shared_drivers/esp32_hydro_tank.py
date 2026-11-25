@@ -108,6 +108,8 @@ class Esp32HydroDriver(BleDriver):
         self._last_cmd = ''
         self.ota = None                # a firmware upload over Bluetooth, see _ota_step
         self.live_until = 0            # monotonic end of the live view (0 = off)
+        self._live_fails = 0
+        self._live_pause_until = 0
         self._last_adv = None          # monotonic time of the sensor's last broadcast
         self._last_temp = None         # probe 1, from the last broadcast
         self._silent_kicks = 0         # scan restarts since the broadcasts stopped
@@ -584,6 +586,9 @@ class Esp32HydroDriver(BleDriver):
 
     FWGET_QUIET_S = 180
 
+    LIVE_RETRY_S = 5
+    LIVE_MAX_FAILS = 20
+
     def _live_poll(self):
         if not self.live_until:
             return False
@@ -591,6 +596,8 @@ class Esp32HydroDriver(BleDriver):
             return True                        # paused while firmware goes over the link, or over Wi-Fi
         if self.gatt is not None and self.gatt.busy:
             return True                        # a check-in or the last poll is still running
+        if monotonic_s() < self._live_pause_until:
+            return True                        # the last try failed: wait a little (no flood of retries)
         if monotonic_s() > self.live_until:
             self.live_until = 0
             self.tank['/Hydro/Live'] = 0
@@ -688,8 +695,18 @@ class Esp32HydroDriver(BleDriver):
             if replies and replies[-1].startswith('{'):
                 self.apply_live(replies[-1])
                 self.tank['/Hydro/LinkStatus'] = 'ok'
+                self._live_fails = 0
             elif not ok:
                 self.tank['/Hydro/LinkStatus'] = 'live view: %s' % (error or 'failed')
+                # failed: try again in LIVE_RETRY_S, and give up after LIVE_MAX_FAILS in a row
+                self._live_fails += 1
+                self._live_pause_until = monotonic_s() + self.LIVE_RETRY_S
+                if mode == 'live' and self._live_fails >= self.LIVE_MAX_FAILS:
+                    self.link_log.write('live', 'live view stopped: %d tries in a row failed (%s)' % (self._live_fails, error))
+                    self.tank['/Hydro/LinkStatus'] = 'live view stopped: the sensor did not answer (%s)' % error
+                    self.live_until = 0
+                    self.tank['/Hydro/Live'] = 0
+                    self._live_fails = 0
             if any(r.startswith('denied') for r in replies):
                 self.tank['/Hydro/LinkStatus'] = 'wrong sensor password'
                 self.live_until = monotonic_s() - 1
