@@ -1092,9 +1092,12 @@ function tankSvg(hmm, litres, cap, id) {
 // Connection light: how the Pi reaches the sensor (Wi-Fi link, or Bluetooth as fallback), breathing
 // green while it does, red when not; and the sensor's own Wi-Fi
 function sensorLights(dev) {
-  const v = dev.values, when = v['/Hydro/LinkTime'], age = when ? Math.max(0, Math.round(Date.now() / 1000 - when)) : null;
-  const ok = val(dev, '/Connected') === 1 && v['/Hydro/LinkStatus'] === 'ok' && age != null && age < 900;
-  const wifiLink = v['/Hydro/Transport'] === 'wifi';
+  // the latest contact of any kind: a reading over Wi-Fi (every 5 s) or a check-in (Bluetooth / Wi-Fi)
+  const v = dev.values, wifiLink = v['/Hydro/Transport'] === 'wifi';
+  const read = wifiLink ? v['/Hydro/ReadTime'] : null, check = v['/Hydro/LinkStatus'] === 'ok' ? v['/Hydro/LinkTime'] : null;
+  const when = Math.max(read || 0, check || 0) || null, age = when ? Math.max(0, Math.round(Date.now() / 1000 - when)) : null;
+  const now = Date.now() / 1000;
+  const ok = val(dev, '/Connected') === 1 && ((read && now - read < 60) || (check && now - check < 900));
   const ip = v['/Hydro/WifiIp'], ap = !!v['/Hydro/AccessPoint'], ssid = v['/Hydro/WifiSsid'];
   const wifiOn = !!ip || ap;
   return h('span', { class: 'lights' },

@@ -67,6 +67,7 @@ class Esp32HydroDriver(BleDriver):
                          '/Hydro/WifiSsid', '/Hydro/WifiKnown', '/Hydro/Uptime',
                          '/Hydro/Truma',   # the heater's last status as JSON, for the settings page
                          '/Hydro/Transport',   # 'bluetooth' or 'wifi': how the Pi reaches the sensor
+                         '/Hydro/ReadTime',    # last reading over Wi-Fi (unix time): the connection light
                          '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac',
                          # live view: raw reading over the Bluetooth link
                          '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
@@ -819,6 +820,7 @@ class Esp32HydroDriver(BleDriver):
             self.tank['/Hydro/Transport'] = self.transport
         self._last_adv = now
         self.stats['wifi'] += 1
+        self.tank['/Hydro/ReadTime'] = int(time.time())
         temps = dict((t.get('n'), t.get('c')) for t in (d.get('temps') or []))
         self._last_temp = temps.get(1)
         height = d.get('height_mm')

@@ -713,6 +713,7 @@ class WifiTransportTests(unittest.TestCase):
         s = d.tank.service
         self.assertEqual((s['/Level'], s['/Hydro/HeightMm'], s['/Hydro/Filling'], s['/Hydro/Transport']), (15.1, 305, 1, 'wifi'))
         self.assertEqual(d.temp.service['/Temperature'], 7.5)
+        self.assertIsNotNone(s['/Hydro/ReadTime'])                          # the connection light follows the readings
         self._pending_start = [d._link_tick]                               # check-in: hb, wifi push, log, info
         self.run_loop(lambda: s.get('/FirmwareVersion') == '4.12')
         self.assertEqual(s['/FirmwareVersion'], '4.12')
