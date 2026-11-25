@@ -58,7 +58,7 @@ own safety logic, and the panel shows every change made from Venus OS.
 
 ## Venus OS
 
-With *Water → Settings → Truma heater = yes* the water driver also asks the sensor
+With *Heater → Truma heater: setup → Truma heater = yes* the water driver also asks the sensor
 for `truma` at every check-in and publishes:
 
 * **com.victronenergy.temperature** "Truma heater room": the room temperature measured
@@ -124,5 +124,12 @@ sensor page):
   E codes how to acknowledge: press the knob (from standby twice); don't switch the
   CP plus off and on (15-minute lockout); no more than 4 resets in 15 minutes (E 607 H);
   a flashing code means a lockout is running.
-* Codes outside the list are shown with their class and "contact Truma Service";
-  *Code meanings* on the Heater tab adds or changes meanings.
+* Codes outside the list are shown with their class and "contact Truma Service".
+
+**Receiving the codes from the heater** (LIN part, still to do): the CP plus sends the
+error code as a number in its status to the iNet box (`error_code` in the inetbox projects:
+byte[1] × 100 + byte[0]) together with the operating status (`WARNING`) and the display
+status (error / fatal error). The letter is not sent separately; for the gas Combi every
+number in the table belongs to one letter (W 42, E 517, …), so the sensor adds it from there
+(unknown numbers: E when the panel reports an error, else W). Until then the codes come
+from the simulation only.

@@ -804,7 +804,4 @@ class AlarmTests(unittest.TestCase):
         self.assertIn('E517', th.BUILTIN_CODES)
         h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
         self.assertEqual(h.alarm.service['/Alarm'], 0)
-        path = os.path.join(tempfile.mkdtemp(), 'codes.json')
-        with open(path, 'w') as f:
-            json.dump({'E112': 'no flame'}, f)
-        self.assertEqual(truma_heater.code_text({'err': 112, 'ecls': 'E'}, truma_heater.load_codes(path)), 'E 112 H: no flame')
+        self.assertEqual(truma_heater.code_text({'err': 517, 'ecls': 'E'}), 'E 517 H: Gas supply interrupted')

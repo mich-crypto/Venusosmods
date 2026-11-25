@@ -320,13 +320,13 @@ appears in the notifications and VRM like a bilge or smoke alarm). It clears 1 �
 above the limit. Limit, litres and probe: *Water → Settings → Frost alarm*.
 
 **Truma codes in Venus OS**: a W code (warning) or E code (error) of the heater shows
-as a warning or alarm in Venus OS, named with the code and its meaning. The Heater
-tab has *Code meanings*: add the codes of your heater from the Truma manual there
-(only W 42 and W 255 are built in); they are used on the page and in Venus OS.
+as a warning or alarm in Venus OS, named with the code and its short meaning; the
+Heater tab and the sensor's page show what to do. The full code list of the gas Combi
+is built in.
 
 **Truma heater (in preparation)**: a Truma Combi with CP plus panel can be connected
 to the water level sensor's ESP32 over its LIN bus, with a small transceiver chip. The
-Pi side is ready: *Water → Settings → Truma heater* switches it on; a **Heater** tab
+Pi side is ready: the **Heater** tab switches it on (*Truma heater: setup*); a **Heater** tab
 then shows the status, has Heating on/off, the room set point, hot water
 (off/eco/hot/boost) and a frost guard; Venus OS gets the room temperature and the
 controls on the switch pane. The LIN part of the sensor firmware is still to be

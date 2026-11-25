@@ -387,8 +387,6 @@ class App(object):
             'GET /api/wifi_networks': self.api_wifi_networks,
             'POST /api/sender_use_pi_wifi': self.api_sender_use_pi_wifi,
             'POST /api/sender_cmd': self.api_sender_cmd,
-            'GET /api/truma_codes': self.api_truma_codes,
-            'POST /api/truma_codes': self.api_truma_codes_save,
             'GET /api/sender_cmd': self.api_sender_cmd_result,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
@@ -1574,40 +1572,6 @@ class App(object):
             return jsonr({'ok': False, 'error': 'not a command for the sensor'}, 400)
         ok, error, status = self.send_sender_command(cmd)
         return jsonr({'ok': True} if ok else {'ok': False, 'error': error}, status)
-
-    # ---- meanings of the Truma codes (built in + from the heater's manual, edited on the Heater tab)
-    def api_truma_codes(self, req):
-        import truma_heater
-        import json
-        try:
-            with open(truma_heater.CODES_FILE) as f:
-                custom = json.load(f)
-        except (OSError, ValueError):
-            custom = {}
-        return jsonr({'ok': True, 'builtin': truma_heater.BUILTIN_CODES, 'custom': custom if isinstance(custom, dict) else {}})
-
-    def api_truma_codes_save(self, req):
-        """codes = JSON {"W42": "meaning", "E112": "..."}; an empty meaning removes a code."""
-        import truma_heater
-        import json
-        try:
-            raw = json.loads(req.form.get('codes') or '{}')
-        except ValueError:
-            return jsonr({'ok': False, 'error': 'not a list of codes'}, 400)
-        if not isinstance(raw, dict) or len(raw) > 200:
-            return jsonr({'ok': False, 'error': 'not a list of codes'}, 400)
-        codes = {}
-        for k, v in raw.items():
-            key = str(k).upper().replace(' ', '').rstrip('H')
-            if not re.match(r'^[WE]\d{1,3}$', key):
-                return jsonr({'ok': False, 'error': 'code "%s": write it like W42 or E112' % k}, 400)
-            text = str(v or '').strip()[:120]
-            if text:
-                codes[key] = text
-        os.makedirs(os.path.dirname(truma_heater.CODES_FILE), exist_ok=True)
-        with open(truma_heater.CODES_FILE, 'w') as f:
-            json.dump(codes, f, indent=1, sort_keys=True)
-        return jsonr({'ok': True, 'message': '%d code meanings saved' % len(codes)})
 
     def api_sender_cmd_result(self, req):
         sec = self.sender_section()

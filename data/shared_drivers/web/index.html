@@ -377,7 +377,6 @@ function ago(sec) {
 function renderTabs() {
   const nav = clear($('#tabs'));
   for (const [id, label] of TABS) {
-    if (id === 'heater' && !heaterOn()) continue;     // only once the Truma heater is switched on (Water → Settings)
     const dot = id === 'update' ? !!(S.upd && S.upd.available && S.upd.installed) : id === 'water' && senderUpdate();
     nav.append(h('button', { role: 'tab', 'aria-selected': S.tab === id, onclick: () => selectTab(id) }, label, dot ? h('span', { class: 'upd-dot', title: 'update available' }) : null));
   }
@@ -859,7 +858,7 @@ async function heaterCmd(c, label) {
 }
 // Truma codes as the CP plus shows them ("W 42 H"): W = warning (clears itself), E = error (reset on the CP plus).
 // Gas Combi (4, 6, 4 E, 6 E), from the troubleshooting guide of the Truma CP plus manual: what it means
-// (Venus OS shows only that) and what to do. 'Code meanings' adds others.
+// (Venus OS shows only that) and what to do.
 const TRUMA_CODES = {
   W17: ["Water overtemperature (hot water mode with an empty water container)", "Switch the heater off, let it cool down completely, fill the water container, then switch it on again."],
   W18: ["Air overtemperature: warm-air ducts not connected, outlets or recirculation intake blocked", "Connect all warm-air ducts and check them for kinks, clear the outlets and the recirculation intake, ventilate the installation space."],
@@ -898,48 +897,34 @@ const TRUMA_CODES = {
 };
 const TRUMA_ACK = "Acknowledge on the CP plus: press the knob (from standby twice). Do not switch the CP plus off and on (it locks the heater for 15 minutes), and no more than 4 resets in 15 minutes (E 607 H). A flashing code: a 15-minute lockout is running, wait.";
 function trumaCode(t) {
-  const key = (t.ecls || 'W') + t.err, c = TRUMA_CODES[key], mine = S.trumaCodes && S.trumaCodes[key];
+  const key = (t.ecls || 'W') + t.err, c = TRUMA_CODES[key], mine = null;
   const what = t.ecls === 'E' ? 'Error: the heater stops. Fix the cause and reset it on the CP plus.'
     : 'Warning: the heater keeps running; the warning goes away by itself once the cause is gone.';
   return { title: (t.ecls || 'W') + ' ' + t.err + ' H' + (mine ? ': ' + mine : c ? ': ' + c[0] : ''),
-    help: (c ? 'What to do: ' + c[1] : what + (mine ? '' : ' This code is not in Truma\'s published list for the gas Combi: note it exactly and contact Truma Service, or add its meaning below (Code meanings).'))
+    help: (c ? 'What to do: ' + c[1] : what + ' This code is not in Truma\'s published list for the gas Combi: note it exactly and contact Truma Service.')
 , ack: t.ecls === 'E' ? TRUMA_ACK : '' };
 }
-// the code list (built in + from your manual), kept on the Pi: also used for the Venus OS notification
-async function loadTrumaCodes() {
-  const r = await api('/api/truma_codes');
-  if (r.ok) { S.trumaCodes = Object.assign({}, r.data.builtin, r.data.custom); S.trumaCustom = r.data.custom; S.trumaBuiltin = r.data.builtin; }
+// "Truma heater" on/off and its name: settings of the water driver (the sensor talks to the heater)
+async function heaterSetupCard(main) {
+  if (!canEdit()) return false;
+  const r = await loadDriver();
+  const section = r.ok && S.driver.sections.find(x => x.kind === 'esp32');
+  if (!section) { main.append(h('div', { class: 'card' }, h('h3', {}, 'Truma heater'), h('div', { class: 'muted' }, 'Set up the water level sensor first (Water tab): the heater is connected to it.'))); return false; }
+  S.forms = {};
+  const form = { section, fields: {} };
+  S.forms[section.section] = form;
+  const byKey = {};
+  section.fields.forEach(x => { byKey[x.key] = x; });
+  const row = x => x.type === 'bool' ? toggleRow(form, x, section) : fieldRow(form, x, section);
+  const on = truthy(section.values.heater || '');
+  main.append(h('div', { class: 'card' }, h('h3', {}, 'Truma heater: setup'),
+    ...['heater', 'heater_name'].map(k => byKey[k]).filter(Boolean).map(row),
+    on ? null : h('div', { class: 'muted', style: 'margin-top:6px' }, 'Switch it on and save: the heater then appears here and in Venus OS. Until the sensor is wired to the heater you can try everything with the simulation.')));
+  return { form, byKey, row, on };
 }
-function trumaCodesCard() {
-  const rows = h('div', {});
-  const list = Object.assign({}, S.trumaBuiltin || {}, S.trumaCustom || {});
-  const keys = Object.keys(list).sort((a, b) => a[0] === b[0] ? parseInt(a.slice(1)) - parseInt(b.slice(1)) : a < b ? -1 : 1);
-  const line = (k, v) => {
-    const code = h('input', { value: k ? k[0] + ' ' + k.slice(1) : '', placeholder: 'W 42', style: 'width:80px', disabled: !canEdit() });
-    const text = h('input', { value: v || '', placeholder: 'meaning, from the Truma manual', style: 'flex:1;min-width:0', disabled: !canEdit() });
-    return h('div', { class: 'row', style: 'margin:4px 0' }, code, text);
-  };
-  keys.forEach(k => rows.append(line(k, list[k])));
-  rows.append(line('', ''));
-  const save = async () => {
-    const out = {};
-    for (const r of rows.children) {
-      const [c, t] = r.querySelectorAll('input');
-      const k = c.value.toUpperCase().replace(/[\sH]/g, '');
-      if (k) out[k] = t.value.trim();
-    }
-    const x = await api('/api/truma_codes', { codes: JSON.stringify(out) });
-    toast(x.ok ? x.data.message : x.data.error, !x.ok);
-    if (x.ok) { await loadTrumaCodes(); renderTab(); }
-  };
-  return h('details', { class: 'card' }, h('summary', {}, h('b', {}, 'Code meanings')),
-    h('div', { class: 'muted', style: 'margin:6px 0' }, 'The CP plus shows codes like W 42 H (W = warning, E = error). Add the codes of your heater with their meaning from the Truma manual; they appear on this page and in the Venus OS notification. An empty meaning removes a code.'),
-    rows,
-    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => rows.append(line('', '')) }, 'Add a line'),
-      h('button', { type: 'button', class: 'btn small primary', disabled: !canEdit(), onclick: save }, 'Save')));
-}
+
 async function tabHeater(main) {
-  if (!S.trumaCodes) await loadTrumaCodes();
+  if (!heaterOn()) { await heaterSetupCard(main); return; }
   const t = heaterStatus(), live = t && t.lin === 'ok';
   const f = x => x == null ? '–' : Number(x).toFixed(1);
   const code = t && t.err ? trumaCode(t) : null;
@@ -1014,18 +999,10 @@ async function tabHeater(main) {
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err E112', 'Error E 112…') }, 'Error E 112'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err 0', 'Code cleared…') }, 'Clear code'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim off', 'Simulation off…') }, 'Stop'))));
-  main.append(trumaCodesCard());
-  // automations: settings of the water driver (saved with the save bar, the driver restarts)
-  if (!canEdit()) return;
-  const r = await loadDriver();
-  const section = r.ok && S.driver.sections.find(x => x.kind === 'esp32');
-  if (!section) return;
-  S.forms = {};
-  const form = { section, fields: {} };
-  S.forms[section.section] = form;
-  const byKey = {};
-  section.fields.forEach(x => { byKey[x.key] = x; });
-  const row = x => x.type === 'bool' ? toggleRow(form, x, section) : fieldRow(form, x, section);
+  // setup and automations: settings of the water driver (saved with the save bar, the driver restarts)
+  const setup = await heaterSetupCard(main);
+  if (!setup) return;
+  const { byKey, row } = setup;
   main.append(h('div', { class: 'card' }, h('h3', {}, 'Automations'),
     ...['heater_frost_guard', 'heater_frost_c'].map(k => byKey[k]).filter(Boolean).map(row),
     h('div', { class: 'muted', style: 'margin-top:6px' }, 'The frost guard uses the heater\'s room temperature: below the limit with the heating off, it switches the heating on at 2 °C above the limit. Heating up before you arrive (Telegram, geofence) comes with the LIN part.')));
@@ -1036,7 +1013,7 @@ const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
   esp32: { title: 'Water tank', what: 'water level sensor', add: flowWater, simple: [],
     // connection: auto = Wi-Fi, Bluetooth as fallback
-    groups: [['Connection', ['connection', 'sensor_host', 'sender_password']], ['Truma heater', ['heater', 'heater_name']],
+    groups: [['Connection', ['connection', 'sensor_host', 'sender_password']],
              ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']],
              ['Frost alarm', ['frost_alarm', 'frost_alarm_c', 'frost_alarm_min_l', 'frost_alarm_probe']]] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
@@ -3211,8 +3188,6 @@ async function refreshState() {
   if (r.ok && S.auth && !r.data.authed) setAuth(null);          // the password was changed on the Pi
   if (r.ok) {
     S.state = r.data; renderLock(); renderPower(); renderBusyBanner();
-    const hv = heaterOn();
-    if (hv !== S.heaterTab) { S.heaterTab = hv; renderTabs(); }    // the Heater tab appears once the heater is set up
   }
   return r;
 }
