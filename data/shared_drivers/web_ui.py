@@ -46,7 +46,7 @@ import starlink_hub  # noqa: E402
 
 log = logging.getLogger('web_ui')
 
-VERSION = '2.2.0'   # Venus OS mods version, shown at the top of the page
+VERSION = '2.3.0'   # Venus OS mods version, shown at the top of the page
 OUR_PROCESSES = ('mopeka_venus.py', 'esp32_hydro_tank.py', 'fridge_venus.py')
 BUS_ITEM = 'com.victronenergy.BusItem'
 LAN_RANGES = ('192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '100.64.0.0/10')   # incl. Tailscale
@@ -1534,7 +1534,7 @@ class App(object):
 
     # Wi-Fi commands for the sensor, sent at once over Bluetooth by the water driver (no restart).
     # The answer arrives in /Hydro/CommandResult, which the page asks for with GET.
-    SENDER_CMD = re.compile(r'^(wifi (mode (auto|van|ap|off)|join [^\n\r]{1,100}|forget [^\t\n\r]{1,32}|scan)|reboot|dlog|truma|truma set( (heat=(on|off)|room=\d{1,2}|water=(off|eco|hot|boost))){1,3})$')
+    SENDER_CMD = re.compile(r'^(wifi (mode (auto|van|ap|off)|join [^\n\r]{1,100}|forget [^\t\n\r]{1,32}|scan)|reboot|dlog|bt (on|off)|truma sim (on|off|err ([WE]\d{1,3}|0))|truma|truma set( (heat=(on|off)|room=\d{1,2}|water=(off|eco|hot|boost))){1,3})$')
 
     def send_sender_command(self, cmd):
         """(ok, error, status) of handing one command to the water driver."""

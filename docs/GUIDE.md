@@ -290,13 +290,28 @@ Check from both ends:
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
 
+**Connection over the Wi-Fi network instead of Bluetooth** (Pi 2.3.0, sensor 4.12):
+when the sensor and the Pi are on the same network, set *Water → Settings →
+Connection to the sensor* to **Wi-Fi network** (and *Sensor address* to its IP, e.g.
+192.168.0.110; best made fixed in the router). The Pi then reads the sensor's web
+page every 5 seconds and sends every command, the live reading, logs, the heater and
+firmware updates over the network; it uses no Bluetooth at all for the sensor. The
+status light on the Water tab says *Wi-Fi link*. Afterwards *Switch the sensor's
+Bluetooth off* (Settings → Connection, or Bluetooth *Off* on the sensor's own page)
+gives Wi-Fi the whole radio; the sensor then refuses "Bluetooth only" so it can't cut
+itself off, and still opens its own Wi-Fi if the Pi stops asking for 15 minutes.
+
 **Truma heater (in preparation)**: a Truma Combi with CP plus panel can be connected
 to the water level sensor's ESP32 over its LIN bus, with a small transceiver chip. The
 Pi side is ready: *Water → Settings → Truma heater* switches it on; a **Heater** tab
 then shows the status, has Heating on/off, the room set point, hot water
 (off/eco/hot/boost) and a frost guard; Venus OS gets the room temperature and the
 controls on the switch pane. The LIN part of the sensor firmware is still to be
-written; wiring and plan in `docs/truma.md`.
+written; wiring and plan in `docs/truma.md`. **Simulation**: the Heater tab (or
+`truma sim on` on the sensor) starts a simulated heater, so Venus OS, VRM and both
+pages can be tried without the heater; *Warning W 42* / *Error E 112* show how codes
+appear. The sensor's own page has the same Heater card (power button, − / + set point,
+hot water Off / Eco / Hot / Boost, codes), also on its own Wi-Fi.
 
 **Connection log, for long-term tests** (Water → Firmware → *Connection log*, or
 Debug → Raw data → *Water link*): every Bluetooth exchange between the Pi and the
