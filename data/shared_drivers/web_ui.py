@@ -1547,7 +1547,7 @@ class App(object):
 
     # Wi-Fi commands for the sensor, sent at once over Bluetooth by the water driver (no restart).
     # The answer arrives in /Hydro/CommandResult, which the page asks for with GET.
-    SENDER_CMD = re.compile(r'^(wifi (mode (auto|van|ap|off)|join [^\n\r]{1,100}|forget [^\t\n\r]{1,32}|scan)|reboot|dlog|bt (on|off)|truma sim (on|off|err ([WE]\d{1,3}|0))|truma|truma set( (heat=(on|off)|room=\d{1,2}|water=(off|eco|hot|boost))){1,3})$')
+    SENDER_CMD = re.compile(r'^(wifi (mode (auto|van|ap|off)|join [^\n\r]{1,100}|forget [^\t\n\r]{1,32}|scan)|reboot|dlog|bt (on|off)|truma sim (on|off|err ([WE]\d{1,3}|0))|truma|truma set( (heat=(on|off)|room=\d{1,2}|fan=(eco|high)|water=(off|eco|hot|boost)|energy=(gas|electricity|mix)|power=(0|900|1800)|timer=(on|off)|tstart=\d\d:\d\d|tstop=\d\d:\d\d|troom=\d{1,2}|twater=(off|eco|hot|boost))){1,9})$')
 
     def send_sender_command(self, cmd):
         """(ok, error, status) of handing one command to the water driver."""

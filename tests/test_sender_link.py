@@ -563,6 +563,21 @@ class TrumaHeaterTests(unittest.TestCase):
         self.assertIsNone(th.parse('{"fw":"4.11"}'))
         self.assertEqual(th.parse('truma {"en":1,"lin":"ok"}')['lin'], 'ok')
 
+    def test_more_settings_fan_energy_power(self):
+        import truma_heater as th
+        self.assertEqual(th.set_command(heat=True, room=21, fan='high'), 'truma set heat=on room=21 fan=high')
+        self.assertEqual(th.set_command(energy='mix', power=900), 'truma set energy=mix power=900')
+        for bad in (dict(fan='turbo'), dict(energy='diesel'), dict(power=500)):
+            with self.assertRaises(ValueError):
+                th.set_command(**bad)
+
+    def test_switch_pane_fan_sends_heating_room_and_fan_together(self):
+        d = self.driver()
+        d.heater.apply({'lin': 'ok', 'room': 18, 'set': 21, 'heat': 1, 'fan': 'eco', 'water': 'off', 'err': 0})
+        self.assertEqual(d.heater.switch.service['/SwitchableOutput/fan/State'], 0)
+        d.heater._heat(fan='high')                                         # the CP plus wants all three
+        self.assertEqual(d._command, 'truma set heat=on room=21 fan=high')
+
     def test_checkin_reads_the_heater_and_publishes_it(self):
         d = self.driver()
         d._link_tick()

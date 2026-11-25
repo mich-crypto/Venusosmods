@@ -194,7 +194,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.14"
+#define FW_VERSION           "4.15"
 
 // ---- Truma Combi heater with CP plus panel (in preparation, see docs/truma.md)
 //      The CP plus is master of a LIN bus; this board will answer like Truma's iNet box
@@ -815,11 +815,26 @@ struct TrumaState {
   uint16_t error = 0;                     // Truma code number, 0 = none (the CP plus shows "W 42 H" / "E 112 H")
   char errClass = 'W';                    // 'W' warning (clears itself) or 'E' error (needs a reset on the CP plus)
   bool sim = false;                       // simulated heater ("truma sim on"), to try Venus OS without the heater
+  // what else the CP plus reports / accepts from an iNet box (names as in the inetbox projects)
+  String fan = "eco";                     // heating_mode: eco | high (Truma "boost")
+  String energy = "gas";                  // energy_mix (Combi E): gas | electricity | mix
+  uint16_t elPower = 0;                   // el_power_level (Combi E): 0 | 900 | 1800 W
+  String op = "off";                      // operating_status: off | starting | on | warning
+  float volts = NAN;                      // supply voltage at the heater
+  String vent = "";                       // ventilation shown on the panel (Vent 1..10), read only
+  bool burnGas = false, burnEl = false;   // which source is working now
+  bool timerOn = false;                   // timer: start..stop with its own room / water setting
+  String timerStart = "", timerStop = "", timerWater = "off";
+  float timerRoom = NAN;
   // requested by Venus OS / the page, sent to the CP plus by the LIN part
   bool wantPending = false;
   int8_t wantHeat = -1;                   // -1 = unchanged, 0 off, 1 on
   float wantRoom = NAN;
-  String wantWater;
+  String wantWater, wantFan, wantEnergy;
+  int wantPower = -1;
+  int8_t wantTimer = -1;
+  String wantTStart, wantTStop, wantTWater;
+  float wantTRoom = NAN;
 };
 static TrumaState truma;
 
@@ -839,6 +854,11 @@ static String trumaJson() {
   j += ",\"room\":" + jsonF(truma.roomC) + ",\"set\":" + jsonF(truma.roomSet) + ",\"heat\":" + String(truma.heating ? 1 : 0);
   j += ",\"water\":\"" + truma.water + "\",\"wt\":" + jsonF(truma.waterC) + ",\"err\":" + String(truma.error);
   j += ",\"ecls\":\"" + String(truma.errClass) + "\",\"sim\":" + String(truma.sim ? 1 : 0);
+  j += ",\"fan\":\"" + truma.fan + "\",\"energy\":\"" + truma.energy + "\",\"elw\":" + String(truma.elPower);
+  j += ",\"op\":\"" + truma.op + "\",\"v\":" + jsonF(truma.volts) + ",\"vent\":\"" + truma.vent + "\"";
+  j += ",\"burn\":\"" + String(truma.burnGas ? (truma.burnEl ? "mix" : "gas") : truma.burnEl ? "el" : "") + "\"";
+  j += ",\"tmr\":{\"on\":" + String(truma.timerOn ? 1 : 0) + ",\"start\":\"" + truma.timerStart + "\",\"stop\":\"" + truma.timerStop;
+  j += "\",\"room\":" + jsonF(truma.timerRoom) + ",\"water\":\"" + truma.timerWater + "\"}";
   j += ",\"pend\":" + String(truma.wantPending ? 1 : 0) + "}";
   return j;
 }
@@ -855,13 +875,23 @@ static String trumaSet(String args) {
     int eq = kv.indexOf('=');
     String k = eq < 0 ? kv : kv.substring(0, eq), v = eq < 0 ? String() : kv.substring(eq + 1);
     k.toLowerCase(); v.toLowerCase();
+    bool water = v == "off" || v == "eco" || v == "hot" || v == "boost";
+    bool hhmm = v.length() == 5 && v[2] == ':' && v.substring(0, 2).toInt() < 24 && v.substring(3).toInt() < 60;
     if (k == "heat" && (v == "on" || v == "off")) truma.wantHeat = v == "on" ? 1 : 0;
     else if (k == "room" && v.toFloat() >= 5 && v.toFloat() <= 30) truma.wantRoom = round(v.toFloat());
-    else if (k == "water" && (v == "off" || v == "eco" || v == "hot" || v == "boost")) truma.wantWater = v;
-    else return "error truma: " + kv + " (heat=on|off room=5..30 water=off|eco|hot|boost)";
+    else if (k == "water" && water) truma.wantWater = v;
+    else if (k == "fan" && (v == "eco" || v == "high")) truma.wantFan = v;
+    else if (k == "energy" && (v == "gas" || v == "electricity" || v == "mix")) truma.wantEnergy = v;
+    else if (k == "power" && (v == "0" || v == "900" || v == "1800")) truma.wantPower = v.toInt();
+    else if (k == "timer" && (v == "on" || v == "off")) truma.wantTimer = v == "on" ? 1 : 0;
+    else if (k == "tstart" && hhmm) truma.wantTStart = v;
+    else if (k == "tstop" && hhmm) truma.wantTStop = v;
+    else if (k == "troom" && v.toFloat() >= 5 && v.toFloat() <= 30) truma.wantTRoom = round(v.toFloat());
+    else if (k == "twater" && water) truma.wantTWater = v;
+    else return "error truma: " + kv + " (heat=on|off room=5..30 fan=eco|high water=off|eco|hot|boost energy=gas|electricity|mix power=0|900|1800 timer=on|off tstart=HH:MM tstop=HH:MM troom=5..30 twater=...)";
     okText += " " + k + "=" + v;
   }
-  if (!okText.length()) return "truma set heat=on|off room=5..30 water=off|eco|hot|boost";
+  if (!okText.length()) return "truma set heat=on|off room=5..30 fan=eco|high water=off|eco|hot|boost energy=gas|electricity|mix power=0|900|1800 timer=on|off tstart=HH:MM tstop=HH:MM troom=5..30 twater=off|eco|hot|boost";
   truma.wantPending = true;
   return "ok truma" + okText + (USE_TRUMA || truma.sim ? "" : " (kept; heater module not built in: USE_TRUMA 0)");
 }
@@ -882,7 +912,17 @@ static void trumaSimStep() {
     if (truma.wantHeat >= 0) truma.heating = truma.wantHeat;
     if (!isnan(truma.wantRoom)) truma.roomSet = truma.wantRoom;
     if (truma.wantWater.length()) truma.water = truma.wantWater;
-    truma.wantHeat = -1; truma.wantRoom = NAN; truma.wantWater = ""; truma.wantPending = false;
+    if (truma.wantFan.length()) truma.fan = truma.wantFan;
+    if (truma.wantEnergy.length()) truma.energy = truma.wantEnergy;
+    if (truma.wantPower >= 0) truma.elPower = truma.wantPower;
+    if (truma.wantTimer >= 0) truma.timerOn = truma.wantTimer;
+    if (truma.wantTStart.length()) truma.timerStart = truma.wantTStart;
+    if (truma.wantTStop.length()) truma.timerStop = truma.wantTStop;
+    if (!isnan(truma.wantTRoom)) truma.timerRoom = truma.wantTRoom;
+    if (truma.wantTWater.length()) truma.timerWater = truma.wantTWater;
+    truma.wantHeat = -1; truma.wantRoom = NAN; truma.wantWater = ""; truma.wantFan = ""; truma.wantEnergy = "";
+    truma.wantPower = -1; truma.wantTimer = -1; truma.wantTStart = ""; truma.wantTStop = ""; truma.wantTRoom = NAN;
+    truma.wantTWater = ""; truma.wantPending = false;
     if (truma.errClass == 'E' && truma.error) truma.heating = false;   // blocked until the error is cleared
   }
   float outside = MAX_TEMPS > 1 && tempPresent[1] && !isnan(tempC[1]) ? tempC[1] : 8.0f;
@@ -890,6 +930,17 @@ static void trumaSimStep() {
   else truma.roomC = max(outside, truma.roomC - 0.01f * dt);
   float wantWater = truma.water == "eco" ? 40 : truma.water == "hot" || truma.water == "boost" ? 60 : 15;
   float rate = truma.water == "boost" ? 0.3f : 0.1f;
+  // what the panel would report: working (gas, or electric on a Combi E), status, voltage
+  bool roomWork = truma.heating && truma.roomC < truma.roomSet - 0.1f;
+  bool waterWork = truma.waterC < wantWater - 0.5f;
+  bool work = roomWork || waterWork;
+  bool el = truma.energy != "gas" && truma.elPower > 0;
+  truma.burnGas = work && truma.energy != "electricity";
+  truma.burnEl = work && el;
+  truma.op = truma.error ? (truma.errClass == 'E' ? "error" : "warning") : (truma.heating || truma.water != "off") ? "on" : "off";
+  truma.volts = 12.9f - (work ? 0.2f : 0.0f);
+  truma.vent = truma.heating ? (truma.fan == "high" ? "High" : "Eco") : "Off";
+  if (truma.fan == "high" && roomWork) truma.roomC = min(truma.roomSet, truma.roomC + 0.05f * dt);   // high fan heats faster
   truma.waterC = truma.waterC < wantWater ? min(wantWater, truma.waterC + rate * dt) : max(wantWater, truma.waterC - 0.02f * dt);
   truma.lastFrame = now;
 }
@@ -898,7 +949,8 @@ static String trumaSim(String a) {
   a.trim(); a.toLowerCase();
   if (a == "on") {
     truma.sim = true; trumaSimSince = millis();
-    if (isnan(truma.roomC)) { truma.roomC = 12.0f; truma.waterC = 15.0f; truma.roomSet = 20.0f; }
+    if (isnan(truma.roomC)) { truma.roomC = 12.0f; truma.waterC = 15.0f; truma.roomSet = 20.0f; truma.timerRoom = 18.0f;
+                              truma.timerStart = "06:30"; truma.timerStop = "08:00"; }
     dlog("Truma simulation on");
     return "ok truma simulation on: a simulated heater answers (room warms to the set point)";
   }
@@ -1358,7 +1410,9 @@ static void printHelp() {
     "  dlog [clear]        debug log: Bluetooth, Wi-Fi and updates\n"
     "  bt on|off           Bluetooth on/off (off: the Pi talks over Wi-Fi; restarts)\n"
     "  truma               Truma heater status (preparation, docs/truma.md)\n"
-    "  truma set heat=on|off room=5..30 water=off|eco|hot|boost\n"
+    "  truma set heat=on|off room=5..30 fan=eco|high water=off|eco|hot|boost\n"
+    "            energy=gas|electricity|mix power=0|900|1800 (Combi E), timer=on|off tstart=HH:MM\n"
+    "            tstop=HH:MM troom=5..30 twater=off|eco|hot|boost\n"
     "  truma sim on|off    simulated heater (try it without the heater)\n"
     "  truma sim err W42|E112|0   simulate a warning / error code");
 }
@@ -2059,13 +2113,27 @@ function heater(t){
  const code=t.err?tcode(t):null;
  b.innerHTML=(code?'<div class="warnbox'+(t.ecls==='W'?' w':'')+'"><b>'+esc(code.title)+'</b><div class="mut">'+esc(code.help)+'</div>'+(code.ack?'<div class="mut" style="margin-top:4px">'+esc(code.ack)+'</div>':'')+'</div>':'')+
   '<div class="hz"><div><div class="big">'+f(t.room)+'<span style="font-size:20px"> °C</span></div><div class="mut">room'+(t.heat?' · heating to '+f(t.set)+' °C':' · heating off')+'</div></div>'+
-  '<button class="pwr'+(t.heat?' on':'')+'" title="Heating '+(t.heat?'off':'on')+'" aria-label="Heating '+(t.heat?'off':'on')+'" onclick="cmd(\'truma set heat='+(t.heat?'off':'on')+'\')">⏻</button></div>'+
+  '<button class="pwr'+(t.heat?' on':'')+'" title="Heating '+(t.heat?'off':'on')+'" aria-label="Heating '+(t.heat?'off':'on')+'" onclick="cmd(\'truma set heat='+(t.heat?'off':'on')+' room='+trSet+' fan='+(t.fan||'eco')+'\')">⏻</button></div>'+
   '<div class="hz"><span class="mut">Room set point</span><div class="stp"><button onclick="trStep(-1)" aria-label="colder">−</button><b id="trsetv">'+trSet+' °C</b><button onclick="trStep(1)" aria-label="warmer">+</button></div></div>'+
+  '<div class="hz"><span class="mut">Fan</span><div class="seg" style="margin:0">'+[['eco','Eco'],['high','High']].map(([m,l])=>'<button class="'+(t.fan===m?'on':'')+'" onclick="cmd(\'truma set heat='+(t.heat?'on':'off')+' room='+trSet+' fan='+m+'\')">'+l+'</button>').join('')+'</div></div>'+
   '<div class="mut" style="margin-top:6px">Hot water'+(t.wt!=null?' · '+f(t.wt)+' °C':'')+'</div>'+
   '<div class="seg" style="display:flex">'+[['off','Off'],['eco','Eco 40°'],['hot','Hot 60°'],['boost','Boost']].map(([m,l])=>'<button style="flex:1" class="'+(t.water===m?'on':'')+'" onclick="cmd(\'truma set water='+m+'\')">'+l+'</button>').join('')+'</div>'+
-  '<div class="mut">'+(t.pend?'Change on its way to the heater… ':'')+(t.ago>=0?'Last report '+ago(t.ago)+' ago.':'')+'</div>'+
+  '<div class="mut" style="margin-top:6px">'+[{off:'Off',on:'On',starting:'Starting',warning:'Warning',error:'Error'}[t.op]||t.op,
+    t.burn?({gas:'gas burning',el:'electric heating',mix:'gas + electric'}[t.burn]):'',t.v!=null?t.v.toFixed(1)+' V':'',t.vent&&t.vent!=='Off'?'panel: '+t.vent:''].filter(Boolean).join(' · ')+'</div>'+
+  '<div class="mut">'+(t.pend?'Change on its way to the heater (up to a minute)… ':'')+(t.ago>=0?'Last report '+ago(t.ago)+' ago.':'')+'</div>'+
+  '<details style="margin-top:8px"><summary class="mut">Timer'+(t.tmr&&t.tmr.on?' · on '+esc(t.tmr.start)+'–'+esc(t.tmr.stop):'')+'</summary>'+
+   '<div class="row"><input id="trts" type="time" value="'+esc(t.tmr?t.tmr.start:'')+'"><input id="trte" type="time" value="'+esc(t.tmr?t.tmr.stop:'')+'"></div>'+
+   '<div class="row"><input id="trtr" type="number" min="5" max="30" placeholder="room °C" value="'+(t.tmr&&t.tmr.room!=null?t.tmr.room:'')+'"><select id="trtw">'+['off','eco','hot','boost'].map(m=>'<option'+(t.tmr&&t.tmr.water===m?' selected':'')+'>'+m+'</option>').join('')+'</select></div>'+
+   '<div class="row"><button onclick="trTimerSet(1)">Timer on</button><button onclick="trTimerSet(0)">Timer off</button></div></details>'+
+  '<details style="margin-top:4px"><summary class="mut">Combi E (electric heating)'+(t.energy!=='gas'?' · '+esc(t.energy)+(t.elw?' '+t.elw+' W':''):'')+'</summary>'+
+   '<div class="mut">Only for a Combi E (heats on 230 V too).</div>'+
+   '<div class="seg" style="display:flex">'+[['gas','Gas'],['mix','Mix'],['electricity','Electric']].map(([m,l])=>'<button style="flex:1" class="'+(t.energy===m?'on':'')+'" onclick="cmd(\'truma set energy='+m+(m==='gas'?' power=0':' power='+(t.elw||900))+'\')">'+l+'</button>').join('')+'</div>'+
+   '<div class="seg" style="display:flex">'+[0,900,1800].map(w=>'<button style="flex:1" class="'+(t.elw===w?'on':'')+'" onclick="cmd(\'truma set energy='+(w?(t.energy==='gas'?'mix':t.energy):'gas')+' power='+w+'\')">'+(w?w+' W':'0 W')+'</button>').join('')+'</div></details>'+
   (t.sim?'<details style="margin-top:8px"><summary class="mut">Simulation</summary><div class="row"><button onclick="cmd(\'truma sim err W42\')">Warning W 42</button><button onclick="cmd(\'truma sim err E112\')">Error E 112</button><button onclick="cmd(\'truma sim err 0\')">Clear code</button><button onclick="cmd(\'truma sim off\')">Stop simulation</button></div></details>':'');
 }
+function trTimerSet(on){const a=$('trts').value,b=$('trte').value,r=$('trtr').value,w=$('trtw').value;
+ if(on&&(!a||!b)){alert('Enter the start and stop time');return}
+ cmd('truma set timer='+(on?'on':'off')+(on?' tstart='+a+' tstop='+b+(r?' troom='+r:'')+' twater='+w:''))}
 // − / +: the number changes at once, the command goes out a second after the last tap
 function trStep(d){trSet=Math.max(5,Math.min(30,trSet+d));const e=$('trsetv');if(e)e.textContent=trSet+' °C';
  clearTimeout(trTimer);trTimer=setTimeout(()=>{trTimer=null;cmd('truma set room='+trSet)},1000)}

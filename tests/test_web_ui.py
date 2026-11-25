@@ -560,7 +560,8 @@ class StarlinkApiTests(AppTestCase):
         for c in ('wifi mode ap', 'wifi scan', 'wifi join MOS\tpw 1', 'wifi forget MOS', 'reboot'):
             self.assertEqual(self.post('/api/sender_cmd', {'c': c}).status, 200, c)
             self.assertEqual(sent[-1][1:], ('/Hydro/Command', c))
-        for c in ('truma', 'truma set heat=on room=21', 'truma set water=boost'):
+        for c in ('truma', 'truma set heat=on room=21', 'truma set water=boost', 'truma set heat=on room=21 fan=high',
+                  'truma set energy=mix power=1800', 'truma set timer=on tstart=06:30 tstop=08:00 troom=19 twater=eco'):
             self.assertEqual(self.post('/api/sender_cmd', {'c': c}).status, 200, c)
         for c in ('cal save x', 'wifi mode fast', 'fwget http://x', 'reset', 'truma set room=21; reboot', 'truma set heat=maybe'):
             self.assertEqual(self.post('/api/sender_cmd', {'c': c}).status, 400, c)

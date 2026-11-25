@@ -139,17 +139,35 @@ def parse(reply):
     return d if isinstance(d, dict) else None
 
 
-def set_command(heat=None, room=None, water=None):
-    """The sensor command for a change ('truma set heat=on room=21 water=eco'), or None."""
+FAN_MODES = ('eco', 'high')                       # heating fan; Truma's "boost" is shown as High
+ENERGY = ('gas', 'electricity', 'mix')            # Combi E only
+EL_POWER = (0, 900, 1800)                         # W, Combi E only
+
+
+def set_command(heat=None, room=None, water=None, fan=None, energy=None, power=None):
+    """The sensor command for a change ('truma set heat=on room=21 fan=eco water=eco'), or None.
+    The CP plus wants heating on/off, room temperature and fan together: pass them together."""
     parts = []
     if heat is not None:
         parts.append('heat=%s' % ('on' if heat else 'off'))
     if room is not None:
         parts.append('room=%d' % max(ROOM_MIN, min(ROOM_MAX, int(round(float(room))))))
+    if fan is not None:
+        if fan not in FAN_MODES:
+            raise ValueError('fan %r' % fan)
+        parts.append('fan=%s' % fan)
     if water is not None:
         if water not in WATER_MODES:
             raise ValueError('water mode %r' % water)
         parts.append('water=%s' % water)
+    if energy is not None:
+        if energy not in ENERGY:
+            raise ValueError('energy %r' % energy)
+        parts.append('energy=%s' % energy)
+    if power is not None:
+        if int(power) not in EL_POWER:
+            raise ValueError('power %r' % power)
+        parts.append('power=%d' % int(power))
     return ('truma set ' + ' '.join(parts)) if parts else None
 
 
@@ -206,17 +224,25 @@ class TrumaHeater(object):
 
     def _add_controls(self, svc):
         # the switch pane sorts by name
-        self._add_channel(svc, 'heat', 'Heating', self.TYPE_TOGGLE,
-                          lambda p, v: self.request(heat=bool(int(v))))
+        self._add_channel(svc, 'heat', 'Heating', self.TYPE_TOGGLE, lambda p, v: self._heat(heat=bool(int(v))))
+        self._add_channel(svc, 'fan', 'Heating fan high', self.TYPE_TOGGLE,
+                          lambda p, v: self._heat(fan='high' if int(v) else 'eco'))
         self._add_channel(svc, 'room', 'Room set point', self.TYPE_SETPOINT,
-                          lambda p, v: self.request(room=v), ROOM_MIN, ROOM_MAX)
+                          lambda p, v: self._heat(room=v), ROOM_MIN, ROOM_MAX)
         self._add_channel(svc, 'water', 'Hot water (0 off, 1 eco, 2 hot, 3 boost)', self.TYPE_SETPOINT,
                           lambda p, v: self.request(water=WATER_MODES[max(0, min(3, int(round(float(v)))))]), 0, 3)
 
-    def request(self, heat=None, room=None, water=None):
+    def _heat(self, heat=None, room=None, fan=None):
+        """Heating, room or fan from the switch pane: the CP plus wants all three together."""
+        d = self.state or {}
+        return self.request(heat=bool(d.get('heat')) if heat is None else heat,
+                            room=(d.get('set') or 20) if room is None else room,
+                            fan=(d.get('fan') if d.get('fan') in FAN_MODES else 'eco') if fan is None else fan)
+
+    def request(self, heat=None, room=None, water=None, fan=None, energy=None, power=None):
         """A change from the switch pane or the page: one command to the sensor."""
         try:
-            cmd = set_command(heat, room, water)
+            cmd = set_command(heat, room, water, fan, energy, power)
         except (TypeError, ValueError) as e:
             log.warning('heater: %s', e)
             return False
@@ -236,13 +262,14 @@ class TrumaHeater(object):
             if d.get('room') is not None:
                 self.room.publish(d['room'])
             s[so('heat', 'State')] = 1 if d.get('heat') else 0
+            s[so('fan', 'State')] = 1 if d.get('fan') == 'high' else 0
             s[so('room', 'Dimming')] = d.get('set')
             s[so('room', 'Measurement')] = d.get('room')
             water = d.get('water')
             s[so('water', 'Dimming')] = WATER_MODES.index(water) if water in WATER_MODES else None
             self.switch.publish()
             self._frost(d)
-        for ch in ('heat', 'room', 'water'):
+        for ch in ('heat', 'fan', 'room', 'water'):
             s[so(ch, 'Status')] = 0x09 if live else 0x20   # on/ok, or "not available"
         self._alarm(d if live else {})
 

@@ -86,6 +86,30 @@ In `trumaPoll()` in the sketch, with `USE_TRUMA 1`:
 4. Test at the heater step by step: first only listen and log the frames (`dlog`),
    then answer, then send one setting.
 
+## Settings and status (what the CP plus exchanges with an iNet box)
+
+From the open-source iNet box emulations (inetbox.py, esphome truma_inetbox; tested by their
+authors on a Combi 4 with an "inet ready" CP plus):
+
+| Setting | Values | Sensor command |
+|---|---|---|
+| Heating on/off + room temperature | off, 5–30 °C | `heat=on room=21` |
+| Heating fan (heating_mode) | Eco, High (Truma "boost") | `fan=eco` / `fan=high` |
+| Hot water | off, eco 40 °C, hot 60 °C, boost | `water=eco` |
+| Energy source (Combi E) | gas, electricity, mix | `energy=mix` |
+| Electric power (Combi E) | 0, 900, 1800 W | `power=900` |
+| Timer | on/off, start, stop, own room temp and hot water | `timer=on tstart=06:30 tstop=08:00 troom=19 twater=eco` |
+
+Reported: room and water temperature, operating status (off / starting / on / warning),
+error code, supply voltage at the heater, which source is working (gas / electric), the
+ventilation mode shown on the panel (Vent 1–10 can be read but not set over the bus), the
+clock and the timer.
+
+Rules of the CP plus: heating on/off, room temperature and fan are taken together (the
+pages and the switch pane always send all three); energy and power together; a change is
+taken over when the CP plus next asks (up to about a minute). All of this works now in the
+simulation; the LIN part will map it onto the frames.
+
 ## Codes
 
 The CP plus shows codes like **W 42 H** (W = warning: the heater keeps running and the
