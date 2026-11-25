@@ -192,7 +192,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.9"
+#define FW_VERSION           "4.10"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -266,11 +266,23 @@ static bool simActive() {
 
 // Debug log of the link (Bluetooth, Wi-Fi, updates), newest DLOG_N lines in RAM: "dlog" prints it,
 // the page shows it, the Venus OS page fetches it over Bluetooth. Times are the sensor's uptime.
-#define DLOG_N 120
-#define DLOG_W 110
-static char dlogLines[DLOG_N][DLOG_W];
-static uint16_t dlogHead = 0, dlogCount = 0;
-static uint32_t dlogTotal = 0, dlogMark = 0;   // lines ever written / handed to the Pi ("dlog new")
+// Kept in RTC memory that a restart does not clear: after a crash, a watchdog reset or the
+// RST button the lines before it are still there (only a power cut erases them).
+#define DLOG_N 64
+#define DLOG_W 96
+#define DLOG_MAGIC 0x444C4F47UL
+RTC_NOINIT_ATTR static char dlogLines[DLOG_N][DLOG_W];
+RTC_NOINIT_ATTR static uint16_t dlogHead, dlogCount;
+RTC_NOINIT_ATTR static uint32_t dlogTotal, dlogMagic;
+static uint32_t dlogMark = 0;                  // lines handed to the Pi ("dlog new")
+
+// at start: keep the lines from before a restart, unless the power was off (then RTC memory is random)
+static void dlogInit(bool keep) {
+  if (!keep || dlogMagic != DLOG_MAGIC || dlogHead >= DLOG_N || dlogCount > DLOG_N) {
+    dlogHead = 0; dlogCount = 0; dlogTotal = 0; dlogMagic = DLOG_MAGIC;
+  }
+  dlogMark = dlogTotal >= dlogCount ? dlogTotal - dlogCount : 0;   // the Pi fetches the kept lines too
+}
 static portMUX_TYPE dlogMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void dlog(const char *fmt, ...) {
@@ -1497,7 +1509,7 @@ static void handleCommand(String line) {
       out->println("tank use <n> | rename <n> <name> | delete <n>");
     }
   } else if (cmd == "dlog") {
-    if (rest == "clear") { portENTER_CRITICAL(&dlogMux); dlogCount = 0; portEXIT_CRITICAL(&dlogMux); out->print("ok log cleared"); }
+    if (rest == "clear") { portENTER_CRITICAL(&dlogMux); dlogCount = 0; dlogHead = 0; portEXIT_CRITICAL(&dlogMux); out->print("ok log cleared"); }
     else if (rest == "new") out->print(dlogNew());
     else out->print(dlogText());
   } else if (cmd == "reboot" || cmd == "restart") {
@@ -2265,6 +2277,9 @@ static const char *resetReason() {
 
 void setup() {
   setCpuFrequencyMhz(CPU_MHZ);
+  esp_reset_reason_t rr = esp_reset_reason();
+  dlogInit(rr != ESP_RST_POWERON && rr != ESP_RST_BROWNOUT);
+  if (dlogCount) dlog("---- restart; the lines above are from before it ----");
   dlog("start: firmware " FW_VERSION ", last reset: %s", resetReason());
   Serial.begin(115200);
   ledWrite(0, 0, 0);                    // off until the web page runs
