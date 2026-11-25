@@ -147,6 +147,7 @@ class Esp32HydroDriver(BleDriver):
     # the shared adapter power-cycled: see BlueZScanner.power_cycle_if_dead for its safeguards.
     SCAN_WATCH_S = 30
     SILENT_S = 60
+    GAP_S = 30          # BlueZ reports a device it knows about every 10 s, not every broadcast: only longer gaps count
 
     def _scan_watch(self):
         scanner = getattr(self, 'scanner', None)
@@ -172,8 +173,11 @@ class Esp32HydroDriver(BleDriver):
             scanner.restart()
         if self._silent_kicks >= 6:            # 3 minutes without any device
             why = scanner.power_cycle_if_dead()
-            if why and self._silent_kicks == 6:
+            if why is None:
+                self.link_log.write('scan', 'nothing heard for %d s: Bluetooth adapter switched off and on' % silent)
+            elif self._silent_kicks == 6 or self._silent_kicks % 10 == 0:
                 log.warning('Bluetooth adapter not reset: %s', why)
+                self.link_log.write('scan', 'Bluetooth adapter not reset: %s' % why)
         return True
 
     def _writable_paths(self, svc):
@@ -357,8 +361,9 @@ class Esp32HydroDriver(BleDriver):
         st, self.stats = self.stats, self._new_stats()
         ex = ', '.join('%s %d ok / %d failed' % (m, st['ok'].get(m, 0), st['failed'].get(m, 0))
                        for m in sorted(set(st['ok']) | set(st['failed']))) or 'no exchanges'
-        self.link_log.write('stats', 'last hour: %d broadcasts (about 1800 expected), %d gaps over 10 s (longest %d s), %s, %d scan restarts'
-                            % (st['adv'], st['gaps'], st['longest_gap'], ex, st['scan_restarts']))
+        self.link_log.write('stats', 'last hour: %d broadcasts heard (BlueZ reports about 1 per 10 s, so ~330 is normal), '
+                            '%d gaps over %d s (longest %d s), %s, %d scan restarts'
+                            % (st['adv'], st['gaps'], self.GAP_S, st['longest_gap'], ex, st['scan_restarts']))
         return True
 
     @staticmethod
@@ -628,10 +633,10 @@ class Esp32HydroDriver(BleDriver):
         if self._last_adv is not None and r.sequence != self._last_seq:
             self.stats['adv'] += 1
             gap = now - self._last_adv
-            if gap > 10:
+            if gap > self.GAP_S:
                 self.stats['gaps'] += 1
                 self.stats['longest_gap'] = max(self.stats['longest_gap'], int(gap))
-        if self._last_adv is None or now - self._last_adv > 10:
+        if self._last_adv is None or now - self._last_adv > self.GAP_S:
             self.link_log.write('adv', 'broadcast %s, rssi %s' % (
                 'heard (first since start)' if self._last_adv is None else 'heard again after %d s' % (now - self._last_adv), rssi))
         self._last_adv = now
