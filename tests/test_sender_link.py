@@ -208,6 +208,21 @@ class LiveViewTests(unittest.TestCase):
         d._scan_watch()
         self.assertEqual(len(calls), 4)                                    # not while live holds the connection
 
+    def test_failing_live_view_waits_and_gives_up(self):
+        d = self.driver()
+        d._on_live_set('/Hydro/Live', 1)
+        d._live_poll()
+        d.gatt.done(False, 'device not known to BlueZ yet')
+        n = len(d.gatt.sent)
+        d._live_poll()
+        self.assertEqual(len(d.gatt.sent), n)                              # waits after a failure, no flood
+        for _ in range(d.LIVE_MAX_FAILS - 1):                               # 20 in a row with the first
+            d._live_pause_until = 0
+            d._live_poll()
+            d.gatt.done(False, 'device not known to BlueZ yet')
+        self.assertEqual((d.live_until, d.tank.service['/Hydro/Live']), (0, 0))   # stopped by itself
+        self.assertIn('live view stopped', d.tank.service['/Hydro/LinkStatus'])
+
     def test_live_view_needs_a_sender(self):
         d = Esp32HydroDriver('s', section(''))
         self.assertFalse(d._on_live_set('/Hydro/Live', 1))                 # nothing received yet
