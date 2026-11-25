@@ -388,16 +388,15 @@ function renderTabs() {
   }
 }
 
-// low supply voltage: a small warning top right; a tap shows the card on the Overview tab
+// low supply voltage: a small warning top right (only while there is a problem)
 function renderPower() {
   const box = $('#powerchip');
   if (!box) return;
   clear(box);
   const pw = S.state && S.state.power;
   if (!powerBad(pw)) return;
-  box.append(h('button', { type: 'button', class: 'chip chipbtn ' + (pw.now ? 'bad' : 'warn'), style: 'margin-right:10px',
-    title: 'The Pi gets too little power (below 4.63 V' + (pw.count ? ', ' + pw.count + '× since it started' : '') + (pw.now ? ', right now' : ', last ' + ago(pw.last_ago) + ' ago') + '). It makes its Bluetooth hang until a reboot.',
-    onclick: async () => { await selectTab('overview'); const c = [...document.querySelectorAll('.card')].find(x => /Pi power supply/i.test(x.textContent)); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' }); } },
+  box.append(h('span', { class: 'chip ' + (pw.now ? 'bad' : 'warn'), style: 'margin-right:10px',
+    title: 'The Pi gets too little power (below 4.63 V' + (pw.count ? ', ' + pw.count + '× since it started' : '') + (pw.now ? ', right now' : ', last ' + ago(pw.last_ago) + ' ago') + '). It makes its Bluetooth hang until a reboot: use a 5.1 V supply of 3 A or more with a short, thick cable.' },
     '⚡ Low power'));
 }
 
@@ -495,18 +494,6 @@ function batteryCard(d) {
 
 // The Pi's own 5 V supply: the firmware flags below ~4.63 V (a Pi 5 also measures it)
 function powerBad(p) { return !!(p && (p.now || (p.last_ago != null && p.last_ago < 3600))); }
-function powerCard(p) {
-  if (!p || !p.known) return null;
-  const bad = powerBad(p), ever = p.since_boot || p.count > 0;
-  const state = p.now ? 'too low now' : bad ? 'too low ' + ago(p.last_ago) + ' ago' : ever ? 'ok now' : 'ok';
-  return h('div', { class: 'card' },
-    h('h3', {}, 'Pi power supply ', h('span', { class: 'chip ' + (bad ? 'bad' : ever ? 'warn' : 'ok') }, state)),
-    h('div', { class: 'stats' },
-      stat('Voltage', p.volts != null ? p.volts.toFixed(2) + ' V' : p.now ? 'below 4.63 V' : 'above 4.63 V', p.volts != null ? 'measured (Pi 5)' : 'this Pi only reports too low or ok', true),
-      stat('Too low since start', p.count ? p.count + '×' : ever ? 'yes' : 'never', p.last_ago != null ? 'last ' + ago(p.last_ago) + ' ago' : '', true)),
-    bad || ever ? h('div', { class: 'muted', style: 'margin-top:6px' },
-      'A weak supply makes the Pi\'s Bluetooth hang until a reboot (the water sensor, gas sensor and fridge drop out). Use a proper 5.1 V supply of 3 A or more with a short, thick cable, and don\'t power the sensor from the Pi\'s USB.') : null);
-}
 
 async function tabOverview(main) {
   const st = S.state;
@@ -521,7 +508,7 @@ async function tabOverview(main) {
       h('h3', {}, su.data.first_run ? 'Welcome' : 'Add more devices'), h('div', {}, su.data.first_run ? 'Let\'s add your devices. The guide finds them over Bluetooth and puts them in Venus OS.' : 'Not added yet: ' + missing.map(k => ({ gas: 'gas sensor', fridge: 'fridge', water: 'water tank' })[k]).join(', ') + '.')),
       primary(su.data.first_run ? 'Start the setup guide' : 'Open the setup guide', () => openSetup())));
   }
-  const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard), [starlinkCard(st.starlink), powerCard(st.power)]).filter(Boolean);
+  const cards = (st.devices || []).map(deviceCard).filter(Boolean).concat((st.batteries || []).map(batteryCard), [starlinkCard(st.starlink)]).filter(Boolean);
   main.append(h('h2', {}, 'Now'));
   main.append(cards.length ? h('div', { class: 'grid' }, cards) :
     h('div', { class: 'banner' }, 'No device is reporting yet. Enable the drivers below and give them a minute.'));
