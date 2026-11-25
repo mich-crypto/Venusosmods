@@ -37,10 +37,28 @@ SHA=$( (curl -fsSL -m 10 https://api.github.com/repos/mich-crypto/Venusosmods/co
       | sed -n 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)
 [ -n "$SHA" ] && echo "$SHA" > /data/shared_drivers/.version
 
+# Restart every running driver so it runs the new code: stop it, wait until it is really
+# down (a busy driver may take a moment), kill it after 10 s if it still runs, start it again.
+# This page (web_ui) last: the update runs in its own session and goes on meanwhile.
+restart() {
+    s=/service/$1
+    svc -d "$s"
+    i=0
+    while svstat "$s" 2>/dev/null | grep -q ': up'; do
+        i=$((i + 1))
+        if [ $i -eq 10 ]; then
+            pid=$(svstat "$s" | sed -n 's/.*(pid \([0-9]*\)).*/\1/p')
+            [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null && echo "$1 did not stop by itself: killed"
+        fi
+        [ $i -ge 15 ] && break
+        sleep 1
+    done
+    svc -u "$s" && echo "Restarted $1"
+}
 for svc in /data/etc/init.d/*; do
     name=$(basename "$svc")
-    if [ -e "/service/$name" ]; then
-        svc -t "/service/$name" && echo "Restarted $name"
-    fi
+    [ "$name" = web_ui ] && continue
+    [ -e "/service/$name" ] && restart "$name"
 done
+[ -e /service/web_ui ] && restart web_ui
 echo "Update finished"

@@ -1203,7 +1203,13 @@ class ServiceTests(AppTestCase):
     def test_states(self):
         states = dict((s['name'], s) for s in self.app.service_states())
         self.assertEqual(states['fridge'], {'name': 'fridge', 'enabled': True, 'state': 'up',
-                                            'seconds': 12, 'pid': 99})
+                                            'seconds': 12, 'pid': 99, 'old_code': False})
+
+    def test_driver_running_old_code_after_an_update(self):
+        self.app.code_mtime = lambda: time.time()                          # files just updated, driver up 12 s
+        self.app._states = None
+        states = dict((s['name'], s) for s in self.app.service_states())
+        self.assertTrue(states['fridge']['old_code'])
         self.assertEqual(states['mopeka_standard']['state'], 'off')
         self.assertFalse(states['mopeka_standard']['enabled'])
 

@@ -522,7 +522,8 @@ async function tabOverview(main) {
     h('div', { class: 'banner' }, 'No device is reporting yet. Enable the drivers below and give them a minute.'));
   main.append(h('h2', {}, 'Drivers'));
   const rows = (st.services || []).map(s => {
-    const chip = s.state === 'up' ? h('span', { class: 'chip ok' }, 'running ' + ago(s.seconds))
+    const chip = s.state === 'up' && s.old_code ? h('span', { class: 'chip warn', title: 'It has been running since before the last update: restart it to use the new version' }, 'old version: restart')
+      : s.state === 'up' ? h('span', { class: 'chip ok' }, 'running ' + ago(s.seconds))
       : s.enabled ? h('span', { class: 'chip bad' }, 'stopped') : h('span', { class: 'chip' }, 'off');
     const held = senderBusy() && s.name === 'esp32_hydro';    // stopped on purpose during the sender update
     return h('tr', {},
