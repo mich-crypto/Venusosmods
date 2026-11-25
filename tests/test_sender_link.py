@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -580,3 +581,125 @@ class TrumaHeaterTests(unittest.TestCase):
         d._client = lambda: d.gatt
         d._link_tick()
         self.assertNotIn(b'Ctruma', d.gatt.sent[-1])
+
+
+class WifiTransportTests(unittest.TestCase):
+    """Connection over the Wi-Fi network: a fake sensor web server, the real curl requests."""
+
+    def setUp(self):
+        import http.server
+        import threading
+        test = self
+        self.cmds, self.uploads = [], []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, text, ctype='text/plain'):
+                b = text.encode()
+                self.send_response(200)
+                self.send_header('Content-Type', ctype)
+                self.send_header('Content-Length', str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def do_GET(self):
+                test.assertIn('pi=1', self.path)
+                self._send(json.dumps({'version': '4.12', 'height_mm': 305.2, 'litres': 15.1, 'capacity': 100.0,
+                                       'level': 15.1, 'fault': False, 'filling': True,
+                                       'temps': [{'n': 1, 'c': 7.5}, {'n': 2, 'c': 3.25}]}), 'application/json')
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                if self.path.startswith('/update'):
+                    test.uploads.append(body)
+                    return self._send('Update OK. The sender restarts; reload the page in ~10 s.')
+                import urllib.parse
+                c = urllib.parse.parse_qs(body.decode())['c'][0]
+                test.cmds.append(c)
+                self._send('{"fw":"4.12","mode":"van","ip":"127.0.0.1","ssid":"Moss","up":5,"bt":0}' if c == 'info'
+                           else 'dlog new' if c == 'dlog new' else 'ok ' + c)
+
+        self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.host = '127.0.0.1:%d' % self.server.server_address[1]
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def run_loop(self, until, seconds=8):
+        """A tiny main loop: runs the timers the driver and run_async set, until until() or time is up."""
+        import esp32_hydro_tank
+        import starlink_hub
+        timers = []
+
+        class Loop(object):
+            @staticmethod
+            def timeout_add(ms, fn, *args):
+                timers.append([time.time() + ms / 1000.0, ms / 1000.0, fn, args])
+                return len(timers)
+
+            @staticmethod
+            def timeout_add_seconds(sec, fn, *args):
+                return Loop.timeout_add(sec * 1000, fn, *args)
+
+            @staticmethod
+            def idle_add(fn, *args):
+                return Loop.timeout_add(0, fn, *args)
+
+            source_remove = staticmethod(lambda *a: None)
+        old = (esp32_hydro_tank.GLib, starlink_hub.GLib)
+        esp32_hydro_tank.GLib = starlink_hub.GLib = Loop
+        self._loop = Loop
+        try:
+            for fn in self._pending_start:
+                fn()
+            self._pending_start = []
+            deadline = time.time() + seconds
+            while not until() and time.time() < deadline:
+                now = time.time()
+                for t in [t for t in timers if t[0] <= now]:
+                    timers.remove(t)
+                    if t[2](*t[3]) and t[1] > 0:
+                        t[0] = now + t[1]
+                        timers.append(t)
+                time.sleep(0.02)
+        finally:
+            esp32_hydro_tank.GLib, starlink_hub.GLib = old
+
+    _pending_start = []
+
+    def test_reading_checkin_command_and_update_over_wifi(self):
+        d = Esp32HydroDriver('s', section('connection = wifi\nsensor_host = %s\ntemperature_service = yes\n' % self.host))
+        self.assertFalse(d.USES_SCANNER)                                   # no Bluetooth at all
+        self._pending_start = [d.start]
+        self.run_loop(lambda: d.tank.service['/Level'] is not None)
+        s = d.tank.service
+        self.assertEqual((s['/Level'], s['/Hydro/HeightMm'], s['/Hydro/Filling'], s['/Hydro/Transport']), (15.1, 305, 1, 'wifi'))
+        self.assertEqual(d.temp.service['/Temperature'], 7.5)
+        self._pending_start = [d._link_tick]                               # check-in: hb, wifi push, log, info
+        self.run_loop(lambda: s.get('/FirmwareVersion') == '4.12')
+        self.assertEqual(s['/FirmwareVersion'], '4.12')
+        self.assertEqual(s['/Hydro/LinkStatus'], 'ok')
+        self.assertIn('hb', self.cmds)
+        self.assertNotIn('auth watertank', ' '.join(self.cmds))             # no password over the web server
+        self.assertFalse([c for c in self.cmds if c.startswith('wifi mode')])   # never pushes "Bluetooth only" over Wi-Fi
+        self._pending_start = [lambda: d._on_command_set('/Hydro/Command', 'reboot')]
+        self.run_loop(lambda: s.get('/Hydro/CommandResult') is not None)
+        self.assertEqual(s['/Hydro/CommandResult'], 'ok reboot')
+        path = os.path.join(tempfile.mkdtemp(), 'fw.bin')
+        image = bytearray(2000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(path, 'wb') as f:
+            f.write(image)
+        self._pending_start = [lambda: d._on_command_set('/Hydro/Command', 'ota ' + path)]
+        self.run_loop(lambda: s.get('/Hydro/OtaProgress') == 100)
+        self.assertEqual(s['/Hydro/CommandResult'], 'ok ota done, restarting')
+        self.assertIn(bytes(image), self.uploads[0])                        # the whole file in one multipart body
+
+    def test_sensor_not_answering(self):
+        d = Esp32HydroDriver('s', section('connection = wifi\nsensor_host = 127.0.0.1:9\n'))
+        self._pending_start = [d.start]
+        self.run_loop(lambda: (d.tank.service['/Hydro/LinkStatus'] or '').startswith('no answer'), 10)
+        self.assertIn('no answer over Wi-Fi', d.tank.service['/Hydro/LinkStatus'])

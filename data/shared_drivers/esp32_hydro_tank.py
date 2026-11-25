@@ -19,6 +19,7 @@ import subprocess
 import time
 
 import esp32_hydro_protocol as proto
+import esp32_wifi_link as wifilink
 import rawlog
 import truma_heater
 from gi.repository import GLib
@@ -65,6 +66,7 @@ class Esp32HydroDriver(BleDriver):
                          '/Hydro/WifiMode', '/Hydro/AccessPoint', '/Hydro/WifiIp',
                          '/Hydro/WifiSsid', '/Hydro/WifiKnown', '/Hydro/Uptime',
                          '/Hydro/Truma',   # the heater's last status as JSON, for the settings page
+                         '/Hydro/Transport',   # 'bluetooth' or 'wifi': how the Pi reaches the sensor
                          '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac',
                          # live view: raw reading over the Bluetooth link
                          '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
@@ -113,6 +115,19 @@ class Esp32HydroDriver(BleDriver):
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
         self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
 
+        # Connection: Bluetooth (broadcasts + link) or the Wi-Fi network (the sensor's web server).
+        # Over Wi-Fi nothing uses Bluetooth: no scanning, no connections.
+        self.transport = 'wifi' if config.get('connection', 'bluetooth').strip().lower() == 'wifi' else 'bluetooth'
+        self.ip_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state', '%s.ip' % uid)
+        self.sensor_host = config.get('sensor_host', '').strip() or self._saved_ip() or 'watertank.local'
+        self.tank['/Hydro/Transport'] = self.transport
+        self._wifi_ok = None
+        if self.transport == 'wifi':
+            self.USES_SCANNER = False
+            self.seen_mac = 'WIFI'
+            self.tank['/Hydro/Mac'] = 'Wi-Fi %s' % self.sensor_host
+            self.link_interval = min(self.link_interval, 60)    # a request over the network costs nothing
+
         # Truma heater through the same sensor (in preparation, docs/truma.md)
         self.heater = None
         if config.getboolean('heater', False):
@@ -135,7 +150,17 @@ class Esp32HydroDriver(BleDriver):
 
     # ------------------------------------------------------- Bluetooth link
 
+    def _saved_ip(self):
+        try:
+            with open(self.ip_file) as f:
+                return f.read().strip()
+        except OSError:
+            return ''
+
     def start(self):
+        if self.transport == 'wifi':
+            self.link_log.write('wifi', 'connection over the Wi-Fi network to %s (Bluetooth not used)' % self.sensor_host)
+            wifilink.StatusPoller(self.sensor_host, 5, self._on_wifi_status, self._on_wifi_error).start(GLib)
         if self.link:
             if not self.seen_mac:
                 self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sensor yet'
@@ -240,6 +265,8 @@ class Esp32HydroDriver(BleDriver):
     def _ota_start(self, path):
         if self.ota:
             return False
+        if self.transport == 'wifi':
+            return self._wifi_upload(path)
         try:
             with open(path, 'rb') as f:
                 data = f.read()
@@ -349,6 +376,11 @@ class Esp32HydroDriver(BleDriver):
         GLib.timeout_add(0, self._ota_step)
 
     def _client(self):
+        if self.transport == 'wifi':
+            if self.gatt is None:
+                self.gatt = wifilink.WifiClient(self.sensor_host, self._on_link_notify)
+                self.gatt.trace = self._trace
+            return self.gatt
         if self.gatt is None or self.gatt.mac != self.seen_mac.upper():
             from ble_gatt import GattClient
             self.gatt = GattClient(self.bus, self.seen_mac, proto.LINK_CMD_UUID, proto.LINK_REPLY_UUID,
@@ -459,7 +491,8 @@ class Esp32HydroDriver(BleDriver):
             return True
         if monotonic_s() < self._link_quiet_until:
             return True                        # each try pauses the other drivers' scanning: not every 5 min
-        push = self._wifi_sum != self._wifi_sent()
+        # over Wi-Fi the Pi never pushes its old Wi-Fi setting: "Bluetooth only" would cut the only link
+        push = self.transport == 'bluetooth' and self._wifi_sum != self._wifi_sent()
         self._wifi_pending = self._wifi_sum if push else None
         if push:
             frames = proto.link_commands(self.sender_password, self.wifi_mode, self.wifi_ssid, self.wifi_password)
@@ -602,7 +635,7 @@ class Esp32HydroDriver(BleDriver):
                 self._link_quiet_until = monotonic_s() + self.FWGET_QUIET_S
                 delays = (self.FWGET_QUIET_S + 10, self.FWGET_QUIET_S + 60)
             else:
-                delays = ((3, 25) if self._last_cmd.startswith(('wifi ', 'truma set')) else (20, 60) if self._last_cmd == 'reboot'
+                delays = ((3, 25) if self._last_cmd.startswith(('wifi ', 'truma set', 'truma sim')) else (20, 60) if self._last_cmd == 'reboot'
                           else () if self._last_cmd in ('truma', 'dlog') else (45, 90))
             for s in delays:
                 GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
@@ -658,6 +691,13 @@ class Esp32HydroDriver(BleDriver):
             self._wifi_pending = None
         self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
         self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
+        if info.get('ip') and info.get('ip') != self._saved_ip():
+            try:
+                os.makedirs(os.path.dirname(self.ip_file), exist_ok=True)
+                with open(self.ip_file, 'w') as f:
+                    f.write(info['ip'] + '\n')
+            except OSError:
+                pass
         self.tank['/Hydro/WifiSsid'] = info.get('ssid') or ''
         self.tank['/Hydro/Uptime'] = info.get('up')       # seconds since the sensor started: a restart shows
         if 'kn' in info:
@@ -670,6 +710,86 @@ class Esp32HydroDriver(BleDriver):
     def shutdown(self):
         if self.gatt is not None:
             self.gatt.close()
+
+    # ------------------------------------------------------- over the Wi-Fi network
+    def _on_wifi_status(self, d):
+        """/api/status of the sensor: the same as a broadcast, plus a little more."""
+        if self._wifi_ok is not True:
+            self.link_log.write('wifi', 'sensor answers at %s' % self.sensor_host)
+            self._wifi_ok = True
+        self._last_adv = monotonic_s()
+        self.stats['adv'] += 1
+        temps = dict((t.get('n'), t.get('c')) for t in (d.get('temps') or []))
+        self._last_temp = temps.get(1)
+        height = d.get('height_mm')
+        fault = bool(d.get('fault'))
+        volume_l, capacity_l, level = d.get('litres'), d.get('capacity'), d.get('level')
+        if self.level_table and self.capacity_l and height is not None:
+            volume_l = max(0.0, interpolate(self.level_table, height))
+            capacity_l = self.capacity_l
+            level = min(100.0, 100.0 * volume_l / capacity_l)
+        self.tank.publish(
+            level=None if fault or level is None else level,
+            remaining_m3=None if fault or volume_l is None else volume_l / 1000.0,
+            capacity_m3=capacity_l / 1000.0 if capacity_l else None,
+            temperature=temps.get(1), raw_value=None if height is None else int(round(height)), raw_unit='mm',
+            status=TankDevice.STATUS_ERROR if fault else TankDevice.STATUS_OK,
+            extra={
+                '/Hydro/HeightMm': None if height is None else int(round(height)),
+                '/Hydro/Filling': int(bool(d.get('filling'))),
+                '/Hydro/Draining': int(bool(d.get('draining'))),
+                '/Hydro/Sloshing': int(bool(d.get('sloshing'))),
+                '/Hydro/Fault': int(fault),
+                '/Hydro/Temperature2': temps.get(2),
+            })
+        if self.temp is not None and temps.get(1) is not None:
+            self.temp.publish(temps[1])
+        if self.temp2 is not None and temps.get(2) is not None:
+            self.temp2.publish(temps[2])
+        if d.get('truma') and self.heater:
+            self.tank['/Hydro/Truma'] = json.dumps(d['truma'])
+            self.heater.apply(d['truma'])
+
+    def _on_wifi_error(self, text):
+        if self._wifi_ok is not False:
+            self.link_log.write('wifi', 'no answer from %s: %s' % (self.sensor_host, text))
+            log.warning('sensor at %s does not answer: %s', self.sensor_host, text)
+            self._wifi_ok = False
+        self.tank['/Hydro/LinkStatus'] = 'no answer over Wi-Fi from %s' % self.sensor_host
+
+    def _wifi_upload(self, path):
+        """Firmware over Wi-Fi: the whole file to the sensor's /update, like its own page does."""
+        self.ota = {'wifi': True}
+        self.tank['/Hydro/OtaProgress'] = 0
+        self.tank['/Hydro/CommandResult'] = 'ota: sending the file over Wi-Fi'
+        self.link_log.write('tx', 'ota: firmware file to http://%s/update' % self.sensor_host)
+
+        body = '/tmp/venusosmods-fw-upload.bin'
+        try:
+            ctype = wifilink.multipart_file(path, body)
+        except OSError as e:
+            self.ota = None
+            self.tank['/Hydro/CommandResult'] = 'error ota: could not read %s: %s' % (path, e)
+            return True
+
+        def done(ok, answer):
+            self.ota = None
+            try:
+                os.remove(body)
+            except OSError:
+                pass
+            self.link_log.write('rx', 'ota: %s' % (answer.strip()[:160] if ok else 'FAILED (%s)' % answer))
+            if ok and answer.startswith('Update OK'):
+                self.tank['/Hydro/OtaProgress'] = 100
+                self.tank['/Hydro/CommandResult'] = 'ok ota done, restarting'
+                for s in (20, 45, 90):
+                    GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
+            else:
+                self.tank['/Hydro/OtaProgress'] = None
+                self.tank['/Hydro/CommandResult'] = 'error ota: ' + (answer.strip() or 'no answer')[:200]
+
+        wifilink.http(done, 'http://%s/update' % self.sensor_host, timeout=180, post_file=body, content_type=ctype)
+        return True
 
     def handle_advertisement(self, mac, manufacturer_data, rssi):
         r = proto.parse(manufacturer_data.get(proto.COMPANY_ID))

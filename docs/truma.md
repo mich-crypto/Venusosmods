@@ -11,6 +11,7 @@ with the **CP plus** panel from Venus OS, VRM and the Venus OS mods page, throug
 | Sensor firmware: LIN bus (talking to the CP plus) | **to do**: needs the transceiver wired and tests at the heater |
 | Pi driver: reads the heater at every check-in, Venus OS services, commands, frost guard | ready (setting *Truma heater* = yes) |
 | Mods page: Heater tab (status, control, automations) | ready |
+| Simulation (`truma sim on`, codes `truma sim err W42`) | ready: try Venus OS and both pages without the heater |
 | Heating up before arrival (Telegram / geofence) | planned, after the LIN part |
 
 ## How it works
@@ -84,3 +85,11 @@ In `trumaPoll()` in the sketch, with `USE_TRUMA 1`:
    (multi-frame, like the iNet box), then clear it.
 4. Test at the heater step by step: first only listen and log the frames (`dlog`),
    then answer, then send one setting.
+
+## Codes
+
+The CP plus shows codes like **W 42 H** (W = warning: the heater pauses and starts
+again by itself) or **E 112 H** (E = error: fix the cause, then reset on the CP plus).
+The pages name the codes in `TRUMA_CODES` (Venus OS mods page) and `TCODES` (sensor
+page); any other code is shown with its class and a pointer to the Truma manual.
+Add codes from your heater's manual there.

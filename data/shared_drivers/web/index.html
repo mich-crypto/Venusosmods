@@ -853,31 +853,60 @@ async function heaterCmd(c, label) {
   else if (/^ok/.test(result)) toast(result.replace(/^ok truma/, 'Heater:'));
   setTimeout(async () => { await refreshState(); if (S.tab === 'heater') renderTab(); }, 1500);
 }
+// Truma codes as the CP plus shows them ("W 42 H"): W = warning (clears itself), E = error (reset on the CP plus).
+// Only codes we are sure of are named; the others point to the heater's manual. Add more from your manual here.
+const TRUMA_CODES = {
+  W42: ['Window above the heater cowl is open', 'Close that window: the window switch stops the heater.'],
+  W255: ['The heater has no 12 V supply', 'Check the heater\'s 12 V supply and fuse.'],
+};
+function trumaCode(t) {
+  const c = TRUMA_CODES[(t.ecls || 'W') + t.err];
+  return { title: (t.ecls || 'W') + ' ' + t.err + ' H' + (c ? ': ' + c[0] : ''),
+    help: c ? c[1] : t.ecls === 'E' ? 'Error: the heater stops. Fix the cause and reset it on the CP plus (see the Truma manual).'
+      : 'Warning: the heater pauses and starts again by itself once the cause is gone (see the Truma manual).' };
+}
 async function tabHeater(main) {
   const t = heaterStatus(), live = t && t.lin === 'ok';
   const f = x => x == null ? '–' : Number(x).toFixed(1);
+  const code = t && t.err ? trumaCode(t) : null;
+  if (S.heatSet == null || !S.heatTimer) S.heatSet = t && t.set != null ? t.set : 20;
+  const setEl = h('b', { style: 'font-size:1.8rem;min-width:84px;text-align:center' }, S.heatSet + ' °C');
+  const step = d => {
+    S.heatSet = Math.max(5, Math.min(30, S.heatSet + d)); setEl.textContent = S.heatSet + ' °C';
+    clearTimeout(S.heatTimer);
+    S.heatTimer = setTimeout(() => { S.heatTimer = null; heaterCmd('truma set room=' + S.heatSet, 'Room set point ' + S.heatSet + ' °C…'); }, 1000);
+  };
+  const round = (label, onclick, extra) => h('button', Object.assign({ type: 'button', class: 'btn', style: 'width:46px;height:46px;border-radius:50%;padding:0;font-size:1.4rem', disabled: !canEdit() || !live, onclick, 'aria-label': label }, extra || {}), label === 'colder' ? '−' : '+');
   main.append(h('div', { class: 'card' },
-    h('h3', {}, 'Truma heater ', h('span', { class: 'chip ' + (live ? 'ok' : 'warn') }, live ? 'connected' : 'in preparation')),
+    h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;margin:0' },
+      h('h3', { style: 'margin:0' }, 'Truma heater'),
+      h('span', { class: 'chip ' + (t && t.sim ? 'bad' : live ? 'ok' : 'warn') }, t && t.sim ? 'simulation' : live ? 'connected' : 'in preparation')),
     !live ? h('div', { class: 'banner warn', style: 'margin:8px 0' }, h('div', {},
       h('b', {}, t ? 'No data from the heater yet: ' + t.lin : 'The sensor has not reported the heater yet.'),
-      h('div', { class: 'muted' }, 'The heater talks to the water level sensor over its LIN bus (CP plus panel). The wiring and the LIN part of the sensor firmware are described in docs/truma.md; until they are done, changes are kept on the sensor but not sent to the heater.'))) : null,
-    h('div', { class: 'hero', style: 'grid-template-columns:repeat(2,1fr);margin:8px 0 0' },
-      metric('Room', f(t && t.room), '°C', t && t.set != null ? 'set to ' + f(t.set) + ' °C' : ''),
-      metric('Heating', t ? (t.heat ? 'on' : 'off') : '–', '', t && t.err ? 'error ' + t.err : ''),
-      metric('Hot water', t ? t.water : '–', '', t && t.wt != null ? f(t.wt) + ' °C' : ''),
-      metric('Last report', t && t.ago >= 0 ? ago(t.ago) : '–', '', t && t.pend ? 'a change is waiting' : ''))));
-  const room = h('input', { type: 'number', min: 5, max: 30, step: 1, placeholder: 'room °C', style: 'width:110px', disabled: !canEdit() });
-  main.append(h('div', { class: 'card' }, h('h3', {}, 'Control'),
+      h('div', { class: 'muted' }, 'The heater talks to the water level sensor over its LIN bus (CP plus panel); wiring and status in docs/truma.md. To see how it works now, start the simulation below.'))) : null,
+    code ? h('div', { class: 'banner ' + (t.ecls === 'E' ? 'bad' : 'warn'), style: 'margin:8px 0' }, h('div', {}, h('b', {}, code.title), h('div', { class: 'muted' }, code.help))) : null,
+    h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;margin:12px 0' },
+      h('div', {}, h('div', { class: 'big' }, f(t && t.room), h('small', {}, ' °C')),
+        h('div', { class: 'muted' }, 'room' + (t ? (t.heat ? ' · heating to ' + f(t.set) + ' °C' : ' · heating off') : ''))),
+      h('button', { type: 'button', class: 'btn', title: 'Heating ' + (t && t.heat ? 'off' : 'on'), 'aria-label': 'Heating ' + (t && t.heat ? 'off' : 'on'), disabled: !canEdit() || !live,
+        style: 'width:68px;height:68px;border-radius:50%;padding:0;font-size:1.8rem;' + (t && t.heat ? 'background:#e8590c;border-color:#e8590c;color:#fff' : ''),
+        onclick: () => heaterCmd('truma set heat=' + (t && t.heat ? 'off' : 'on'), 'Heating ' + (t && t.heat ? 'off' : 'on') + '…') }, '⏻')),
+    h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('span', { class: 'muted' }, 'Room set point'),
+      h('div', { class: 'row', style: 'gap:8px;align-items:center;margin:0' }, round('colder', () => step(-1)), setEl, round('warmer', () => step(1)))),
+    h('div', { class: 'muted', style: 'margin-top:10px' }, 'Hot water' + (t && t.wt != null ? ' · ' + f(t.wt) + ' °C' : '')),
+    h('div', { class: 'seg', role: 'radiogroup', style: 'display:flex' }, [['off', 'Off'], ['eco', 'Eco 40°'], ['hot', 'Hot 60°'], ['boost', 'Boost']].map(([m, l]) =>
+      h('button', { type: 'button', role: 'radio', 'aria-checked': !!(t && t.water === m), class: 'segbtn' + (t && t.water === m ? ' on' : ''), style: 'flex:1', disabled: !canEdit() || !live,
+        onclick: () => heaterCmd('truma set water=' + m) }, l))),
+    h('div', { class: 'muted', style: 'margin-top:6px' }, (t && t.pend ? 'A change is on its way to the heater. ' : '') + (t && t.ago >= 0 ? 'Last report ' + ago(t.ago) + ' ago. ' : '') + 'Also on the Venus OS switch pane ("Truma heater").'),
+    h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => heaterCmd('truma', 'Asking the heater…') }, 'Refresh now'))));
+  main.append(h('details', { class: 'card', open: !!(t && t.sim) || !live }, h('summary', {}, h('b', {}, 'Simulation')),
+    h('div', { class: 'muted', style: 'margin:6px 0' }, 'Without the heater, the sensor can play one: the room warms toward the set point, the boiler heats up, and you can show a warning or error code. Venus OS and VRM show it like the real heater.'),
     h('div', { class: 'row' },
-      h('button', { type: 'button', class: 'btn small primary', disabled: !canEdit(), onclick: () => heaterCmd('truma set heat=on', 'Heating on…') }, 'Heating on'),
-      h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => heaterCmd('truma set heat=off', 'Heating off…') }, 'Heating off'),
-      room, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => { const v = parseInt(room.value, 10); if (v >= 5 && v <= 30) heaterCmd('truma set room=' + v); else toast('5 to 30 °C', true); } }, 'Set room')),
-    h('div', { class: 'muted', style: 'margin-top:8px' }, 'Hot water'),
-    h('div', { class: 'seg', role: 'radiogroup' }, ['off', 'eco', 'hot', 'boost'].map(m =>
-      h('button', { type: 'button', role: 'radio', 'aria-checked': !!(t && t.water === m), class: 'segbtn' + (t && t.water === m ? ' on' : ''), disabled: !canEdit(),
-        onclick: () => heaterCmd('truma set water=' + m) }, m))),
-    h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: () => heaterCmd('truma', 'Asking the heater…') }, 'Refresh now')),
-    h('div', { class: 'muted' }, 'Also on the Venus OS switch pane ("Truma heater"): Heating, Room set point, Hot water.')));
+      h('button', { type: 'button', class: 'btn small primary', disabled: !canEdit() || !!(t && t.sim), onclick: () => heaterCmd('truma sim on', 'Starting the simulated heater…') }, 'Start simulation'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err W42', 'Warning W 42…') }, 'Warning W 42'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err E112', 'Error E 112…') }, 'Error E 112'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim err 0', 'Code cleared…') }, 'Clear code'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !(t && t.sim), onclick: () => heaterCmd('truma sim off', 'Simulation off…') }, 'Stop'))));
   // automations: settings of the water driver (saved with the save bar, the driver restarts)
   if (!canEdit()) return;
   const r = await loadDriver();
@@ -898,7 +927,7 @@ async function tabHeater(main) {
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
   esp32: { title: 'Water tank', what: 'water level sensor', add: flowWater, simple: [],
-    groups: [['Connection', ['sender_password']], ['Truma heater', ['heater', 'heater_name']],
+    groups: [['Connection', ['connection', 'sensor_host', 'sender_password']], ['Truma heater', ['heater', 'heater_name']],
              ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']]] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
@@ -954,11 +983,12 @@ function tankSvg(hmm, litres, cap, id) {
 function sensorLights(dev) {
   const v = dev.values, when = v['/Hydro/LinkTime'], age = when ? Math.max(0, Math.round(Date.now() / 1000 - when)) : null;
   const ok = val(dev, '/Connected') === 1 && v['/Hydro/LinkStatus'] === 'ok' && age != null && age < 900;
+  const wifiLink = v['/Hydro/Transport'] === 'wifi';
   const ip = v['/Hydro/WifiIp'], ap = !!v['/Hydro/AccessPoint'], ssid = v['/Hydro/WifiSsid'];
   const wifiOn = !!ip || ap;
   return h('span', { class: 'lights' },
-    h('span', { class: 'lpill', title: ok ? 'Bluetooth: the Pi reached the sensor ' + ago(age) + ' ago' : 'Bluetooth: no connection to the sensor' + (v['/Hydro/LinkStatus'] ? ' (' + v['/Hydro/LinkStatus'] + ')' : '') },
-      h('i', { class: 'ldot' + (ok ? ' br' : ''), style: 'background:' + (ok ? '#4d94ff' : 'var(--bad)') }), 'Bluetooth' + (age != null ? ' ' + ago(age) : '')),
+    h('span', { class: 'lpill', title: (wifiLink ? 'Wi-Fi link' : 'Bluetooth') + (ok ? ': the Pi reached the sensor ' + ago(age) + ' ago' : ': no connection to the sensor' + (v['/Hydro/LinkStatus'] ? ' (' + v['/Hydro/LinkStatus'] + ')' : '')) },
+      h('i', { class: 'ldot' + (ok ? ' br' : ''), style: 'background:' + (ok ? (wifiLink ? 'var(--ok)' : '#4d94ff') : 'var(--bad)') }), (wifiLink ? 'Wi-Fi link' : 'Bluetooth') + (age != null ? ' ' + ago(age) : '')),
     v['/Hydro/WifiMode'] == null ? null : h('span', { class: 'lpill', style: 'color:' + (wifiOn ? 'var(--ok)' : 'var(--faint)'),
         title: (ip ? 'Sensor on Wi-Fi “' + (ssid || '') + '” (' + ip + ')' : 'Sensor not on a Wi-Fi network') + ' · own network (AP) ' + (ap ? 'on' : 'off') },
       wifiIcon(), ip ? (ssid || 'Wi-Fi') + (ap ? ' + AP' : '') : ap ? 'AP on' : 'Wi-Fi off'));
@@ -1053,7 +1083,7 @@ async function tabDevice(kind) {
     for (const [title, keys] of spec.groups) {
       const rows = keys.map(k => byKey[k]).filter(Boolean).map(row);
       if (kind === 'esp32' && title === 'Connection') {
-        rows.forEach(r => r.querySelectorAll('.help').forEach(e => e.remove()));
+        rows.slice(2).forEach(r => r.querySelectorAll('.help').forEach(e => e.remove()));   // keep the help of connection / address
         card.append(h('h4', { class: 'group' }, title), sensorWifiBlock(), ...rows);
       } else card.append(h('h4', { class: 'group' }, title), ...rows);
     }
@@ -2533,7 +2563,8 @@ function senderCard() {
   // over Wi-Fi when the sensor knows a network (its own, 4.5+, or the one in the Pi's settings)
   const ssid = v['/Hydro/WifiSsid'] || (sec && (sec.values.wifi_ssid || '').trim()) || '';
   const go = via => confirmThen((via === 'bluetooth'
-      ? 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over Bluetooth? It takes a few minutes; a dropped connection only pauses it. '
+      ? (v['/Hydro/Transport'] === 'wifi' ? 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over the Wi-Fi network (under a minute)? '
+         : 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over Bluetooth? It takes a few minutes; a dropped connection only pauses it. ')
       : 'Update the sensor firmware' + (latest ? ' to ' + latest : '') + ' over Wi-Fi? The sensor joins “' + ssid + '” and downloads it from the Pi (about a minute). ')
       + 'If anything fails it keeps its old firmware.', async () => {
     const x = await api('/api/sender_update', { via });
@@ -2541,14 +2572,15 @@ function senderCard() {
     if (x.ok) watchSenderUpdate(body);
   });
   const label = newer || !inst ? 'Update' : 'Reinstall';
+  const overWifi = v['/Hydro/Transport'] === 'wifi';      // the Pi sends the file over the network itself
   return h('div', { class: 'card' }, h('h3', {}, 'Firmware ', newer ? h('span', { class: 'chip warn' }, 'update available') : null),
     h('div', { class: 'stats' },
       stat('Installed', inst || '–', '', true),
       stat('Latest', latest || '–', newer ? 'newer than installed' : latest && inst ? 'up to date' : '', true)),
     noData ? noDataHelp(svc) : link && link !== 'ok' && dev && val(dev, '/Connected') === 1 ? linkHelp(link, inst) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
-      h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(), onclick: () => go('bluetooth') }, label + ' over Bluetooth'),
-      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !ssid, title: ssid ? 'via “' + ssid + '”' : 'Connect the sensor to a Wi-Fi network first (Settings → Connection)',
+      h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(), onclick: () => go('bluetooth') }, label + (overWifi ? '' : ' over Bluetooth')),
+      overWifi ? null : h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !ssid, title: ssid ? 'via “' + ssid + '”' : 'Connect the sensor to a Wi-Fi network first (Settings → Connection)',
         onclick: () => go('wifi') }, label + ' over Wi-Fi'),
       h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !dev, onclick: ev => rebootSensor(ev.target) }, 'Restart sensor'),
@@ -2634,7 +2666,7 @@ function drawSensorWifi(box) {
     sensorCmd('wifi join ' + name + (pw == null ? '' : '\t' + pw), 'Connecting the sensor to “' + name + '”…'); };
   const items = [];
   items.push(h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Sensor Wi-Fi', style: 'display:flex;flex-wrap:nowrap' },
-    [['ap', 'AP only'], ['van', 'Wi-Fi network'], ['auto', 'Bluetooth only']].map(([m, l]) =>
+    [['ap', 'AP only'], ['van', 'Wi-Fi network'], ['auto', 'Bluetooth only']].filter(([m]) => !(m === 'auto' && v['/Hydro/Transport'] === 'wifi')).map(([m, l]) =>
       h('button', { type: 'button', role: 'radio', 'aria-checked': cur === m, class: 'segbtn' + (cur === m ? ' on' : ''), style: 'flex:1;padding:8px 6px', disabled: off, onclick: () => setMode(m) }, l))));
   if (cur === 'van') {
     items.push(h('div', { class: 'muted', style: 'margin-top:6px' }, 'Known networks'));
@@ -2678,6 +2710,11 @@ function drawSensorWifi(box) {
         })));
     }
   }
+  if (v['/Hydro/Transport'] === 'wifi')
+    items.push(h('div', { class: 'row', style: 'margin:6px 0 0' },
+      h('button', { type: 'button', class: 'btn small', disabled: off, title: 'Bluetooth is not used for the connection: switching it off gives Wi-Fi the whole radio (the sensor restarts)',
+        onclick: () => confirmThen('Switch the sensor\'s Bluetooth off? The Pi reaches it over the Wi-Fi network. The sensor restarts.', () => sensorCmd('bt off', 'Switching Bluetooth off…')) }, 'Switch the sensor\'s Bluetooth off'),
+      h('button', { type: 'button', class: 'btn small', disabled: off, onclick: () => sensorCmd('bt on', 'Switching Bluetooth on…') }, 'Bluetooth on')));
   items.push(h('div', { class: 'muted', style: 'margin:6px 0 12px' }, sw.busy ? sw.busy
     : !mode ? 'The sensor\'s Wi-Fi is not known yet.'
     : (ip ? 'On “' + ssid + '”: ' + ip + '. ' : cur === 'van' && ssid ? 'Joining “' + ssid + '”… ' : '') + 'Own network (AP) ' + (v['/Hydro/AccessPoint'] ? 'on.' : 'off.')));
