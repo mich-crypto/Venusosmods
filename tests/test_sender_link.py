@@ -320,6 +320,23 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(d.tank.service['/FirmwareVersion'], '4.9')        # info still read from the last answer
         self.assertTrue(rawlog.path_of('link').startswith(rawlog.PERSIST_DIR))   # kept across reboots
 
+    def test_total_silence_records_the_system_state(self):
+        import rawlog
+        import venus_service
+        d = self.driver()
+        d.SNAPSHOT_CMDS = (('echo', ['echo', 'hci0: UP RUNNING']), ('none', ['no-such-command-here']))
+        d.scanner = type('S', (), {'heard_any_within': lambda inner, s: False, 'restart': lambda inner: None,
+                                   'power_cycle_if_dead': lambda inner: 'test'})()
+        d._last_adv = venus_service.monotonic_s() - 120
+        d._scan_watch()
+        text = '\n'.join(rawlog.read_tail('link'))
+        self.assertIn('nothing heard for 120 s: system state', text)
+        self.assertIn('hci0: UP RUNNING', text)
+        self.assertIn('not available', text)
+        n = len(rawlog.read_tail('link'))
+        d._scan_watch()
+        self.assertEqual(len([l for l in rawlog.read_tail('link')[n:] if 'system state' in l]), 0)   # once per silence
+
     def test_link_log_hides_passwords(self):
         t = Esp32HydroDriver.frames_text([b'Cauth secret', b'Cwifi pass hunter2', b'Cwifi join MOS\tpw', b'D\x00\x00\x00\x00ab', b'Cinfo'])
         self.assertNotIn('secret', t)
