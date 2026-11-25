@@ -550,11 +550,30 @@ class StarlinkApiTests(AppTestCase):
         self.connman(joined=False)                                           # Pi on cable
         self.assertEqual(self.post('/api/sender_use_pi_wifi', {}).status, 409)
 
-    def test_sensor_update_needs_the_van_wifi(self):
+    def test_sensor_update_over_wifi_needs_the_wifi(self):
         self.sensor_ready(wifi=False)
-        r = self.post('/api/sender_update', {})
+        r = self.post('/api/sender_update', {'via': 'wifi'})
         self.assertEqual(r.status, 400)
         self.assertIn('Settings → Connection', body_of(r)['error'])
+
+    def test_sensor_update_over_bluetooth(self):
+        sent = self.sensor_ready(wifi=False)
+        self.assertEqual(self.post('/api/sender_update', {}).status, 200)                # no Wi-Fi set: Bluetooth
+        image = bytearray(200000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(self.app.FW_FILE, 'wb') as f:
+            f.write(image)
+        self.started[-1][1](0, b'')
+        self.assertEqual(sent[-1][1:], ('/Hydro/Command', 'ota ' + self.app.FW_FILE))     # the driver sends it
+        self.values.update({'/Hydro/OtaProgress': 50, '/Hydro/CommandResult': 'ota: sending 195 kB in 177-byte packets'})
+        log = body_of(self.get('/api/sender_update_log'))
+        self.assertEqual(log['state'], 'sent')
+        self.assertIn('Sent 50 %', log['text'])
+        self.values.update({'/Hydro/OtaProgress': 100, '/Hydro/CommandResult': 'ok ota done, restarting',
+                            '/FirmwareVersion': '4.2', '/Hydro/LinkTime': time.time() + 1})
+        log = body_of(self.get('/api/sender_update_log'))
+        self.assertEqual(log['state'], 'done')
+        self.assertIn('now runs firmware 4.2', log['text'])
 
     def test_sensor_update_over_wifi(self):
         sent = self.sensor_ready()

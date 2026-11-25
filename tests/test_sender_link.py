@@ -222,6 +222,108 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(d.tank.service['/Hydro/FwError'], "could not join the Wi-Fi 'Camper'")
 
 
+class BluetoothOtaTests(unittest.TestCase):
+    """The driver's firmware upload against a simulated sensor that behaves like firmware 4.2."""
+
+    class Sensor(object):
+        def __init__(self, fail_every=0, keep_on_fail=True, drop_round=None, mtu=185):
+            self.busy, self.keep_connected = False, False
+            self.got, self.active, self.size, self.rounds = b'', False, 0, 0
+            self.fail_every, self.keep_on_fail, self.drop_round, self.mtu = fail_every, keep_on_fail, drop_round, mtu
+            self.packet_sizes, self.installed = set(), None
+
+        def exchange(self, frames, done):
+            import struct
+            self.rounds += 1
+            replies = []
+            authed = False
+            for i, f in enumerate(frames):
+                if self.drop_round == self.rounds and i == len(frames) // 2:
+                    done(False, 'device disconnected')                  # connection lost half-way
+                    return
+                if f.startswith(b'Cauth '):
+                    authed = f == b'Cauth watertank'
+                elif f.startswith(b'D'):
+                    self.packet_sizes.add(len(f))
+                    off = struct.unpack('<I', f[1:5])[0]
+                    if self.active and authed and off == len(self.got):
+                        self.got += f[5:]
+                else:
+                    cmd = f[1:].decode()
+                    if not authed:
+                        replies.append('denied: auth first')
+                    elif cmd.startswith('ota begin'):
+                        self.active, self.got, self.size = True, b'', int(cmd.split()[2])
+                        replies.append('ok ota begin mtu=%d' % self.mtu)
+                    elif cmd == 'ota status':
+                        replies.append('ota active %d/%d' % (len(self.got), self.size))
+                    elif cmd == 'ota end':
+                        self.installed = self.got
+                        replies.append('ok ota done, restarting')
+            if self.fail_every and self.rounds % self.fail_every == 0:
+                done(False, 'Operation failed with ATT error: 0x0e')      # an answer that never came
+                return
+            self.reply_queue = replies
+            self.done = done
+            for r in replies:
+                self.notify(r.encode() + b'\x04')
+
+        def finish(self):
+            self.done(True, None)
+
+    def run_ota(self, sensor, size=60000):
+        import esp32_hydro_tank, tempfile
+        d = Esp32HydroDriver('s', section(''))
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        d.gatt = sensor
+        d._client = lambda: sensor
+        sensor.notify = d._on_link_notify
+        queue = []
+        saved = (esp32_hydro_tank.GLib.timeout_add, esp32_hydro_tank.GLib.timeout_add_seconds)
+        esp32_hydro_tank.GLib.timeout_add = lambda ms, f, *a: queue.append(f) or 1
+        esp32_hydro_tank.GLib.timeout_add_seconds = lambda s, f, *a: queue.append(f) or 1
+        try:
+            data = bytearray(os.urandom(size))
+            data[0], data[27] = 0xE9, 0x3C
+            path = os.path.join(tempfile.mkdtemp(), 'fw.bin')
+            with open(path, 'wb') as f:
+                f.write(data)
+            self.assertTrue(d._on_command_set('/Hydro/Command', 'ota ' + path))
+            for _ in range(5000):                                   # run the timers until it settles
+                if not queue:
+                    break
+                f = queue.pop(0)
+                if getattr(f, '__name__', '') == '<lambda>':
+                    continue                                         # the version check-ins after the end
+                f()
+        finally:
+            esp32_hydro_tank.GLib.timeout_add, esp32_hydro_tank.GLib.timeout_add_seconds = saved
+        return d, bytes(data)
+
+    def test_upload_survives_refused_rounds_and_a_dropped_connection(self):
+        sensor = self.Sensor(fail_every=7, drop_round=12)
+        d, data = self.run_ota(sensor)
+        self.assertEqual(sensor.installed, data)                     # complete, nothing twice
+        self.assertEqual(d.tank.service['/Hydro/CommandResult'], 'ok ota done, restarting')
+        self.assertEqual(d.tank.service['/Hydro/OtaProgress'], 100)
+        self.assertLessEqual(max(sensor.packet_sizes), 185 - 3)     # every packet fits one frame
+        self.assertIsNone(d.ota)
+
+    def test_old_sensor_firmware_gets_a_clear_message(self):
+        class Old(BluetoothOtaTests.Sensor):
+            def exchange(self, frames, done):
+                self.done = done
+                self.notify(b"Unknown command 'ota' - type help\x04")
+        d, data = self.run_ota(Old())
+        self.assertIn('older than 4.2', d.tank.service['/Hydro/CommandResult'])
+
+    def test_small_mtu_still_works(self):
+        sensor = self.Sensor(mtu=23)
+        d, data = self.run_ota(sensor, size=3000)
+        self.assertEqual(sensor.installed, data)
+        self.assertEqual(max(sensor.packet_sizes), 20)               # 15 data bytes + 'D' + offset
+
+
 class ShippedFilesTests(unittest.TestCase):
     def test_shipped_files_match_the_sketch(self):
         with open(os.path.join(ROOT, 'firmware', 'esp32_hydro_tank', 'esp32_hydro_tank.ino')) as f:

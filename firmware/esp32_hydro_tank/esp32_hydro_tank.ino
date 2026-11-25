@@ -189,7 +189,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.1"
+#define FW_VERSION           "4.2"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -680,7 +680,20 @@ static String fwUrl, fwSsid, fwPass;       // set by the command, used by fwGet(
 static bool fwPending = false, fwBusy = false;
 static volatile bool webOtaActive = false; // an upload on the sensor's own page
 
-static bool otaBusy() { return fwBusy || webOtaActive; }
+// Firmware over Bluetooth (4.2+), in batches over the same connection as the live reading:
+//   "ota begin <size> <md5>"   -> "ok ota begin mtu=<n>"   (n: the packet size that fits one frame)
+//   'D' + offset (uint32 LE) + data, any number      (no answer; repeats and gaps are harmless)
+//   "ota status"               -> "ota active <got>/<size>"   the Pi carries on from <got>
+//   "ota end"                  -> "ok ota done, restarting" | "error ..."
+// A dropped connection doesn't end it: the Pi reconnects and asks "ota status". With no
+// data for OTA_IDLE_MS it is given up and the old firmware stays.
+#define OTA_IDLE_MS (3UL * 60UL * 1000UL)
+static volatile bool otaActive = false;
+static volatile bool otaFailed = false;
+static volatile uint32_t otaSize = 0, otaGot = 0, otaLastData = 0;
+static uint32_t otaRestartAt = 0;
+
+static bool otaBusy() { return fwBusy || webOtaActive || otaActive || otaRestartAt; }
 
 static void linkSetReply(const String &text) {
   if (linkReply) linkReply->setValue(text);
@@ -731,6 +744,18 @@ class LinkCmdCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *c) override {
     String v = c->getValue();
     if (v.length() < 1) return;
+    if (v[0] == 'D') {                       // firmware data (see "Firmware over Bluetooth")
+      if (!otaActive || !linkAuthed || otaFailed || v.length() < 5) return;
+      const uint8_t *d = (const uint8_t *)v.c_str() + 1;
+      uint32_t off = d[0] | (d[1] << 8) | (d[2] << 16) | ((uint32_t)d[3] << 24);
+      const uint8_t *data = d + 4;
+      size_t n = v.length() - 5;
+      if (off != otaGot) return;             // a repeat or a gap: "ota status" tells the Pi where to go on
+      if (off == 0 && n >= 28 && data[27] != 0x3C) { otaFailed = true; return; }   // not an app image
+      if (Update.write((uint8_t *)data, n) != n) otaFailed = true;
+      else { otaGot += n; otaLastData = millis(); }
+      return;
+    }
     if (v[0] != 'C') return;
     String cmd = v.substring(1);
     cmd.trim();
@@ -746,6 +771,16 @@ static void handleCommand(String line);
 
 // Queued commands run here, in loop(), like serial commands
 static void linkPoll() {
+  if (otaActive && millis() - otaLastData > OTA_IDLE_MS) {
+    Update.abort();                          // the Pi did not come back: keep the old firmware
+    otaActive = false;
+    Serial.println("Bluetooth firmware upload given up (no data for 3 minutes); keeping the old firmware.");
+  }
+  if (otaRestartAt && (int32_t)(millis() - otaRestartAt) >= 0) {
+    Serial.println("New firmware installed over Bluetooth: restarting.");
+    delay(100);
+    ESP.restart();
+  }
   while (true) {
     String cmd;
     portENTER_CRITICAL(&linkMux);
@@ -924,6 +959,7 @@ static void printHelp() {
     "  wifi pass <text>    van Wi-Fi password\n"
     "  info                state as JSON (used by the Pi)\n"
     "  fwget <url>[\\t<wifi>\\t<password>]  download and install firmware over Wi-Fi\n"
+    "  ota begin|status|end|abort   firmware over Bluetooth (used by the Pi)\n"
     "  live                raw reading as JSON (the Pi's live view)\n"
     "  sim <mm> | <n>%     broadcast this level instead of the sensor (15 min)\n"
     "  sim off             back to the sensor\n"
@@ -959,6 +995,45 @@ static void handleCommand(String line) {
     out->print("ok");
   } else if (cmd == "info") {
     out->print(infoJson());
+  } else if (cmd == "ota") {
+    // runs in loop() (queued from Bluetooth); only the data packets are handled in the Bluetooth task
+    if (rest.startsWith("begin ")) {
+      if (fwBusy || webOtaActive) { out->print("error ota: another update is running"); return; }
+      String a = rest.substring(6);
+      int sp = a.indexOf(' ');
+      uint32_t size = (uint32_t)(sp < 0 ? a : a.substring(0, sp)).toInt();
+      String md5 = sp < 0 ? String() : a.substring(sp + 1);
+      md5.trim();
+      if (otaActive) Update.abort();
+      otaActive = false; otaFailed = false; otaGot = 0; otaSize = size; otaLastData = millis();
+      if (size == 0 || !Update.begin(size)) { out->print(String("error ota begin: ") + Update.errorString()); return; }
+      if (md5.length() == 32) Update.setMD5(md5.c_str());
+      otaActive = true;
+      uint16_t mtu = linkServer ? linkServer->getPeerMTU(linkServer->getConnId()) : 23;
+      out->printf("ok ota begin mtu=%u", (unsigned)mtu);
+    } else if (rest == "status") {
+      if (!otaActive) out->print("ota idle");
+      else out->printf("ota %s %lu/%lu", otaFailed ? "failed" : "active", (unsigned long)otaGot, (unsigned long)otaSize);
+    } else if (rest == "end") {
+      if (!otaActive) { out->print("error ota: not started"); return; }
+      otaActive = false;
+      if (otaFailed || otaGot != otaSize) {
+        Update.abort();
+        out->printf("error ota: %s", otaFailed ? "not an app image, or flash write failed" : "file incomplete");
+      } else if (!Update.end(true)) {
+        out->print(String("error ota end: ") + Update.errorString());
+      } else {
+        otaRestartAt = millis() + 1500;      // after this answer has gone out
+        if (!otaRestartAt) otaRestartAt = 1;
+        out->print("ok ota done, restarting");
+      }
+    } else if (rest == "abort") {
+      if (otaActive) Update.abort();
+      otaActive = false;
+      out->print("ok ota aborted");
+    } else {
+      out->print("ota begin <size> <md5> | status | end | abort");
+    }
   } else if (cmd == "fwget") {
     // url, then (separated by tabs) the van Wi-Fi to join for the download
     int t1 = rest.indexOf('\t');
@@ -967,6 +1042,7 @@ static void handleCommand(String line) {
     int t2 = creds.indexOf('\t');
     url.trim();
     if (!url.startsWith("http://")) { out->print("error fwget: needs an http:// address"); return; }
+    if (otaActive) { out->print("error fwget: a Bluetooth update is running"); return; }
     fwUrl = url;
     fwSsid = t2 < 0 ? creds : creds.substring(0, t2);
     fwPass = t2 < 0 ? String() : creds.substring(t2 + 1);
@@ -1564,7 +1640,7 @@ static bool wrongImage = false;
 static void handleUpdateDone() {
   bool ok = !Update.hasError() && !wrongImage;
   server.send(200, "text/plain", ok ? "Update OK. The sender restarts; reload the page in ~10 s."
-              : wrongImage ? (fwBusy ? "Refused: an update from the Venus OS page is running. Nothing was changed."
+              : wrongImage ? (fwBusy || otaActive ? "Refused: an update from the Venus OS page is running. Nothing was changed."
                                         : "Wrong file: this is the FLASH-AT-0x0 file for the USB flasher. Upload WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin here. Nothing was changed.")
                            : String("Update failed: ") + Update.errorString());
   if (ok) { delay(500); ESP.restart(); }
@@ -1575,7 +1651,7 @@ static void handleUpdateUpload() {
   if (u.status == UPLOAD_FILE_START) {
     Serial.printf("Firmware update: %s\n", u.filename.c_str());
     wrongImage = false;
-    if (fwBusy) { wrongImage = true; Serial.println("Refused: an update from the Pi is running."); return; }
+    if (fwBusy || otaActive) { wrongImage = true; Serial.println("Refused: an update from the Pi is running."); return; }
     webOtaActive = true;
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_WRITE) {
