@@ -324,6 +324,51 @@ class BluetoothOtaTests(unittest.TestCase):
         self.assertEqual(max(sensor.packet_sizes), 20)               # 15 data bytes + 'D' + offset
 
 
+class WifiPushTests(unittest.TestCase):
+    """The Pi sends its Wi-Fi setting only when it changed there: the sensor's own page can change it too."""
+
+    class Client(object):
+        busy, keep_connected = False, False
+
+        def __init__(self):
+            self.sent = []
+
+        def exchange(self, frames, done):
+            self.sent.append(list(frames))
+
+    def driver(self, state, cfg):
+        d = Esp32HydroDriver('s', section(cfg))
+        d.wifi_state_file = state
+        d.seen_mac = 'AA:BB:CC:DD:EE:01'
+        d.gatt = self.Client()
+        d._client = lambda: d.gatt
+        return d
+
+    def test_sent_once_then_only_after_a_change(self):
+        state = os.path.join(tempfile.mkdtemp(), 'state', 'esp32_hydro.wifi-sent')
+        d = self.driver(state, 'wifi_mode = van\nwifi_ssid = Camper\nwifi_password = s3cret\n')
+        d._link_tick()
+        self.assertIn(b'Cwifi mode van', d.gatt.sent[-1])
+        d.apply_info(json.dumps({'fw': '4.3', 'mode': 'van'}))           # the sensor confirmed
+        with open(state) as f:
+            self.assertNotIn('s3cret', f.read())                          # a checksum, not the password
+        d._link_tick()
+        self.assertEqual(d.gatt.sent[-1], [b'Cauth watertank', b'Chb', b'Cinfo'])   # left alone
+        d2 = self.driver(state, 'wifi_mode = van\nwifi_ssid = Camper\nwifi_password = s3cret\n')
+        d2._link_tick()
+        self.assertNotIn(b'Cwifi mode van', d2.gatt.sent[-1])             # a Pi restart doesn't resend it
+        d3 = self.driver(state, 'wifi_mode = ap\n')                       # changed on the Venus OS page
+        d3._link_tick()
+        self.assertIn(b'Cwifi mode ap', d3.gatt.sent[-1])
+
+    def test_not_confirmed_is_sent_again(self):
+        state = os.path.join(tempfile.mkdtemp(), 'wifi-sent')
+        d = self.driver(state, 'wifi_mode = ap\n')
+        d._link_tick()
+        d._link_tick()                                                    # the first check-in got no answer
+        self.assertIn(b'Cwifi mode ap', d.gatt.sent[-1])
+
+
 class ShippedFilesTests(unittest.TestCase):
     def test_shipped_files_match_the_sketch(self):
         with open(os.path.join(ROOT, 'firmware', 'esp32_hydro_tank', 'esp32_hydro_tank.ino')) as f:

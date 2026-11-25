@@ -187,6 +187,11 @@ It never switches off while a phone is connected to it. The **green flash**
 | **Wi-Fi network** | also joins your van Wi-Fi (*Wi-Fi network name / password*); its page is then on the van network (link on the Water tab); own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
 | **AP on** | the own Wi-Fi "Watertank-1" is always on | highest |
 
+**On the sensor itself** (firmware 4.3+): its own page has the same switch in
+the card *Wi-Fi of this sensor*, with *Scan* for the networks around, the
+network name and password, and *Save Wi-Fi*. The last change wins: the Pi only
+sends its own setting again when you change it on the Venus OS page.
+
 Set it under Water → Settings → *Connection*. The sensor follows at its next
 Bluetooth check-in (within a minute after saving), so the Pi must be receiving
 it. A phone that is only joined to the sensor's Wi-Fi doesn't keep it on; the
