@@ -2453,7 +2453,8 @@ function senderCard() {
       h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !ssid, title: ssid ? 'via “' + ssid + '”' : 'Connect the sensor to a Wi-Fi network first (Settings → Connection)',
         onclick: () => go('wifi') }, label + ' over Wi-Fi'),
       h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
-      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !dev, onclick: ev => rebootSensor(ev.target) }, 'Restart sensor')),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !dev, onclick: ev => rebootSensor(ev.target) }, 'Restart sensor'),
+      h('button', { type: 'button', class: 'btn small', onclick: () => { S.dbgView = 'raw'; S.rawSource = 'link'; selectTab('debug'); } }, 'Connection log')),
     body);
 }
 
@@ -2819,7 +2820,7 @@ function starlinkCard(sl) {
 }
 
 // ------------------------------------------------------------- raw data
-const RAW_SOURCES = [['gas', 'Gas (Mopeka)'], ['fridge', 'Fridge'], ['water', 'Water (ESP32)']];
+const RAW_SOURCES = [['gas', 'Gas (Mopeka)'], ['fridge', 'Fridge'], ['water', 'Water (ESP32)'], ['link', 'Water link']];
 const FRIDGE_BYTES = { 0: 'locked', 1: 'power on', 2: 'eco mode', 3: 'battery saver', 4: 'left set point', 5: 'left highest set point',
   6: 'left lowest set point', 9: 'unit (0 °C, 1 °F)', 14: 'left temperature', 15: 'battery % (127 = none)', 16: 'supply volts', 17: 'supply volts, tenths',
   18: 'right set point', 19: 'right highest set point', 20: 'right lowest set point', 26: 'right temperature', 27: 'running status', 28: 'model' };
@@ -2836,6 +2837,42 @@ async function tabRaw(main) {
   S.rawTimer = setInterval(() => { if (!document.hidden && S.tab === 'debug' && S.dbgView === 'raw' && !S.rawPaused && !$('#dlg').open) rawView(box); }, 3000);
 }
 
+// the whole log as a file (the link log is kept across reboots, up to ~2 MB)
+async function downloadLog(source) {
+  const headers = { 'X-Requested-With': 'venussettings' };
+  if (S.auth) headers['Authorization'] = S.auth;
+  try {
+    const r = await fetch('/api/rawlog_download?source=' + source, { headers });
+    if (!r.ok) { toast('Download failed (' + r.status + ')', true); return; }
+    const cd = r.headers.get('Content-Disposition') || '', m = /filename="([^"]+)"/.exec(cd);
+    const url = URL.createObjectURL(await r.blob());
+    const a = h('a', { href: url, download: m ? m[1] : source + '.log' });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) { toast('Download failed: ' + e, true); }
+}
+
+// ask the sensor for its own log over Bluetooth (the "dlog" command)
+async function fetchSensorLog(btn, box) {
+  btn.disabled = true; btn.textContent = 'Asking the sensor…';
+  S.rawPaused = true;
+  const x = await api('/api/sender_cmd', { c: 'dlog' });
+  let result = null;
+  if (!x.ok) toast(x.data.error, true);
+  else {
+    for (let i = 0; i < 80 && result == null; i++) {
+      await new Promise(r => setTimeout(r, 700));
+      const y = await api('/api/sender_cmd');
+      if (y.ok) result = y.data.result;
+    }
+    if (result == null) toast('No answer from the sensor over Bluetooth (its log is also on its own page: Debug log).', true);
+    else if (/^unknown/i.test(result)) toast('The sensor firmware is older than 4.9 and has no log yet.', true);
+    else S.sensorLog = result;
+  }
+  S.rawPaused = false;
+  rawView(box);
+}
+
 function rawLine(text) {
   const m = /^(\S+ \S+) (\S+)\s+(.*)$/.exec(text);
   if (!m) return h('div', {}, text);
@@ -2850,13 +2887,18 @@ async function rawView(box) {
   const lines = r.data.lines, old = $('.rawbox'), stick = !old || old.scrollTop + old.clientHeight >= old.scrollHeight - 30;
   const note = { gas: 'Every Mopeka advertisement of your sensor: the raw bytes (data=), what they decode to, and the level that was published.',
     fridge: 'What the Pi sends to the fridge (tx) and what comes back (rx), with the decoded status. A status payload is a row of bytes; the table below names them.',
-    water: 'Every new ESP32 advertisement with its raw bytes and what they decode to.' }[S.rawSource];
+    water: 'Every new ESP32 advertisement with its raw bytes and what they decode to.',
+    link: 'The Bluetooth connection to the water level sensor, step by step: what the Pi sent (tx), each step (step), the answer (rx), broadcast gaps (adv), what the sensor itself logged (sensor, collected at every check-in, firmware 4.9+) and a summary every hour (stats). Kept across reboots; Download gives the whole file.' }[S.rawSource];
   out.append(h('div', { class: 'row', style: 'margin-bottom:8px' }, h('div', { class: 'muted' }, note), h('span', { class: 'spacer' }),
     h('button', { type: 'button', class: 'btn small', onclick: () => { S.rawPaused = !S.rawPaused; renderTab(); } }, S.rawPaused ? 'Resume' : 'Pause'),
-    h('button', { type: 'button', class: 'btn small', onclick: () => copyText(lines.join('\n')) }, 'Copy'),
+    S.rawSource === 'link' ? h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: ev => fetchSensorLog(ev.target, box) }, 'Get the sensor\'s log') : null,
+    h('button', { type: 'button', class: 'btn small', onclick: () => copyText(lines.join('\n') + (S.rawSource === 'link' && S.sensorLog ? '\n\n--- sensor ---\n' + S.sensorLog : '')) }, 'Copy'),
+    h('button', { type: 'button', class: 'btn small', onclick: () => downloadLog(S.rawSource) }, 'Download'),
     h('button', { type: 'button', class: 'btn small danger', disabled: !canEdit(), onclick: async () => { await api('/api/rawlog_clear', { source: S.rawSource }); rawView(box); } }, 'Clear')));
-  const view = h('div', { class: 'rawbox' }, lines.length ? lines.map(rawLine) : h('div', { class: 'muted' }, 'Nothing logged yet. The log lives in ' + r.data.dir + ' on the Pi (lost at a reboot) and fills as the sensor sends data. Update the drivers and restart them if it stays empty.'));
+  const view = h('div', { class: 'rawbox' }, lines.length ? lines.map(rawLine) : h('div', { class: 'muted' }, 'Nothing logged yet. The log lives in ' + r.data.dir + ' on the Pi (' + (S.rawSource === 'link' ? 'kept across reboots' : 'lost at a reboot') + ') and fills as the sensor sends data. Update the drivers and restart them if it stays empty.'));
   out.append(view);
+  if (S.rawSource === 'link' && S.sensorLog) out.append(h('div', { class: 'muted', style: 'margin-top:10px' }, 'The sensor\'s own log (times since it started):'),
+    h('pre', { class: 'rawbox', style: 'height:auto;max-height:40vh' }, S.sensorLog));
   if (S.rawSource === 'fridge') {
     const last = lines.slice().reverse().map(l => /payload=([0-9a-f]+)/.exec(l)).find(Boolean);
     if (last) {

@@ -9,6 +9,7 @@ import tempfile
 import types
 
 os.environ.setdefault('VENUSOSMODS_RAWLOG_DIR', tempfile.mkdtemp(prefix='rawlog_'))
+os.environ.setdefault('VENUSOSMODS_PERSIST_LOG_DIR', tempfile.mkdtemp(prefix='persistlog_'))
 
 
 class FakeService(dict):

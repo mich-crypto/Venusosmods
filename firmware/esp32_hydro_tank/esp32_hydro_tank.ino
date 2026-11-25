@@ -192,7 +192,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.8"
+#define FW_VERSION           "4.9"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -262,6 +262,78 @@ static bool advNow = false;            // send the next broadcast right away
 static bool simActive() {
   if (!isnan(simHeight) && (int32_t)(simUntil - millis()) <= 0) simHeight = NAN;
   return !isnan(simHeight);
+}
+
+// Debug log of the link (Bluetooth, Wi-Fi, updates), newest DLOG_N lines in RAM: "dlog" prints it,
+// the page shows it, the Venus OS page fetches it over Bluetooth. Times are the sensor's uptime.
+#define DLOG_N 120
+#define DLOG_W 110
+static char dlogLines[DLOG_N][DLOG_W];
+static uint16_t dlogHead = 0, dlogCount = 0;
+static uint32_t dlogTotal = 0, dlogMark = 0;   // lines ever written / handed to the Pi ("dlog new")
+static portMUX_TYPE dlogMux = portMUX_INITIALIZER_UNLOCKED;
+
+static void dlog(const char *fmt, ...) {
+  char buf[DLOG_W];
+  uint32_t t = millis() / 1000;
+  int n = snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu ", (unsigned long)(t / 3600), (unsigned long)(t / 60 % 60), (unsigned long)(t % 60));
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
+  va_end(ap);
+  portENTER_CRITICAL(&dlogMux);
+  memcpy(dlogLines[(dlogHead + dlogCount) % DLOG_N], buf, sizeof(buf));
+  if (dlogCount < DLOG_N) dlogCount++; else dlogHead = (dlogHead + 1) % DLOG_N;
+  dlogTotal++;
+  portEXIT_CRITICAL(&dlogMux);
+}
+
+static String dlogText() {
+  uint32_t t = millis() / 1000;
+  String o = "sensor log, firmware " FW_VERSION ", uptime now " + String(t / 3600) + "h" + String(t / 60 % 60) + "m" + String(t % 60) + "s\n";
+  char line[DLOG_W];
+  for (uint16_t i = 0; ; i++) {
+    portENTER_CRITICAL(&dlogMux);
+    bool more = i < dlogCount;
+    if (more) memcpy(line, dlogLines[(dlogHead + i) % DLOG_N], sizeof(line));
+    portEXIT_CRITICAL(&dlogMux);
+    if (!more) break;
+    line[DLOG_W - 1] = 0;
+    o += line; o += '\n';
+  }
+  return o;
+}
+
+// The lines the Pi has not fetched yet (it stores them with its own log, for long-term tests)
+static String dlogNew() {
+  String o = "dlog new";
+  char line[DLOG_W];
+  portENTER_CRITICAL(&dlogMux);
+  uint32_t total = dlogTotal, first = dlogTotal - dlogCount;
+  uint32_t from = dlogMark > first ? dlogMark : first;
+  if (total - from > 60) from = total - 60;      // keep one answer small
+  uint32_t skipped = from > dlogMark ? from - dlogMark : 0;
+  dlogMark = total;
+  portEXIT_CRITICAL(&dlogMux);
+  if (skipped) o += "\n(" + String(skipped) + " older lines not fetched)";
+  for (uint32_t i = from; i < total; i++) {
+    portENTER_CRITICAL(&dlogMux);
+    bool ok = i >= dlogTotal - dlogCount;
+    if (ok) memcpy(line, dlogLines[(dlogHead + (i - (dlogTotal - dlogCount))) % DLOG_N], sizeof(line));
+    portEXIT_CRITICAL(&dlogMux);
+    if (!ok) continue;
+    line[DLOG_W - 1] = 0;
+    o += '\n'; o += line;
+  }
+  return o;
+}
+
+// a command for the log, without passwords
+static String dlogCmd(const String &c) {
+  if (c.startsWith("wifi pass")) return "wifi pass ***";
+  int tab = c.indexOf('\t');
+  String x = tab < 0 ? c : c.substring(0, tab) + " (+password)";
+  return x.length() > 70 ? x.substring(0, 70) + "..." : x;
 }
 
 // Where command replies go: the serial port, or a web request's reply text
@@ -752,7 +824,7 @@ static void linkSetReply(const String &text) {
 
 // Reply to a queued command: notify in MTU-sized chunks, then EOT
 static void linkNotify(const String &text) {
-  if (!linkReply || !linkConnected) return;
+  if (!linkReply || !linkConnected) { dlog("reply lost: the Pi was gone (%u bytes)", text.length()); return; }
   size_t chunk = 20;
   if (linkServer) {
     uint16_t mtu = linkServer->getPeerMTU(linkServer->getConnId());
@@ -773,6 +845,7 @@ static void linkNotify(const String &text) {
 static String linkImmediate(const String &cmd) {
   if (cmd.startsWith("auth ")) {
     linkAuthed = cmd.substring(5) == apPassword;
+    dlog("auth %s", linkAuthed ? "ok" : "DENIED (wrong sensor password on the Pi)");
     return linkAuthed ? "ok auth" : "denied: wrong password";
   }
   return String();
@@ -788,7 +861,16 @@ class LinkServerCallbacks : public BLEServerCallbacks {
   }
   void onDisconnect(BLEServer *s) override {
     linkConnected = false; linkAuthed = false;
+    dlog("BT disconnected after %.1f s", (millis() - linkConnectedAt) / 1000.0f);
   }
+#if defined(CONFIG_NIMBLE_ENABLED)
+  void onConnect(BLEServer *s, ble_gap_conn_desc *d) override {
+    dlog("BT connected (interval %u ms, latency %u, timeout %u ms)", d->conn_itvl * 5 / 4, d->conn_latency, d->supervision_timeout * 10);
+  }
+  void onMtuChanged(BLEServer *s, ble_gap_conn_desc *d, uint16_t mtu) override { dlog("BT packet size (MTU) %u", mtu); }
+#else
+  void onConnect(BLEServer *s, esp_ble_gatts_cb_param_t *p) override { dlog("BT connected"); }
+#endif
 };
 
 class LinkCmdCallbacks : public BLECharacteristicCallbacks {
@@ -813,8 +895,10 @@ class LinkCmdCallbacks : public BLECharacteristicCallbacks {
     String now = linkImmediate(cmd);
     if (now.length()) { linkSetReply(now); return; }
     portENTER_CRITICAL(&linkMux);
-    if (linkQCount < 8) { linkQueue[(linkQHead + linkQCount) % 8] = cmd; linkQCount++; }
+    bool queued = linkQCount < 8;
+    if (queued) { linkQueue[(linkQHead + linkQCount) % 8] = cmd; linkQCount++; }
     portEXIT_CRITICAL(&linkMux);
+    if (!queued) dlog("command dropped (queue full): %s", dlogCmd(cmd).c_str());
   }
 };
 
@@ -825,6 +909,7 @@ static void linkPoll() {
   if (otaActive && millis() - otaLastData > OTA_IDLE_MS) {
     Update.abort();                          // the Pi did not come back: keep the old firmware
     otaActive = false;
+    dlog("BT update given up: no data for 3 min (%lu of %lu bytes)", (unsigned long)otaGot, (unsigned long)otaSize);
     Serial.println("Bluetooth firmware upload given up (no data for 3 minutes); keeping the old firmware.");
   }
   if (rebootAt && (int32_t)(millis() - rebootAt) >= 0) {
@@ -844,6 +929,18 @@ static void linkPoll() {
     if (have) { cmd = linkQueue[linkQHead]; linkQHead = (linkQHead + 1) % 8; linkQCount--; }
     portEXIT_CRITICAL(&linkMux);
     if (!have) return;
+    {
+      // the live view sends hb/fast/live twice a second: fold repeats into one line
+      static String lastLogged; static uint32_t lastAt = 0, reps = 0;
+      bool repeat = (cmd == "hb" || cmd == "fast" || cmd == "live") && cmd == lastLogged && millis() - lastAt < 10000;
+      if (repeat) reps++;
+      else {
+        if (reps) dlog("  (%lu more like this)", (unsigned long)reps);
+        reps = 0;
+        dlog("cmd %s", dlogCmd(cmd).c_str());
+      }
+      lastLogged = cmd; lastAt = millis();
+    }
     StringOut reply;
     if (!linkAuthed && cmd != "info") {
       reply.print("denied: auth first");
@@ -1096,7 +1193,8 @@ static void printHelp() {
     "  tank use <n>        use tank n (0 = built-in)\n"
     "  tank rename <n> <name> | tank delete <n>\n"
     "  reset               built-in tank and zero offset 0 (saved tanks are kept)\n"
-    "  reboot              restart the sensor (settings are kept)");
+    "  reboot              restart the sensor (settings are kept)\n"
+    "  dlog [clear]        debug log: Bluetooth, Wi-Fi and updates");
 }
 
 static void handleCommand(String line) {
@@ -1130,6 +1228,7 @@ static void handleCommand(String line) {
       if (size == 0 || !Update.begin(size)) { out->print(String("error ota begin: ") + Update.errorString()); return; }
       if (md5.length() == 32) Update.setMD5(md5.c_str());
       otaActive = true;
+      dlog("BT update started: %lu bytes", (unsigned long)size);
       uint16_t mtu = linkServer ? linkServer->getPeerMTU(linkServer->getConnId()) : 23;
       out->printf("ok ota begin mtu=%u", (unsigned)mtu);
     } else if (rest == "status") {
@@ -1144,6 +1243,7 @@ static void handleCommand(String line) {
       } else if (!Update.end(true)) {
         out->print(String("error ota end: ") + Update.errorString());
       } else {
+        dlog("BT update complete: restarting");
         otaRestartAt = millis() + 1500;      // after this answer has gone out
         if (!otaRestartAt) otaRestartAt = 1;
         out->print("ok ota done, restarting");
@@ -1396,9 +1496,14 @@ static void handleCommand(String line) {
           out->printf("  %s%d  %-24s %6.1f L\n", activeTank == i ? "*" : " ", i + 1, tankNames[i].c_str(), tankCaps[i]);
       out->println("tank use <n> | rename <n> <name> | delete <n>");
     }
+  } else if (cmd == "dlog") {
+    if (rest == "clear") { portENTER_CRITICAL(&dlogMux); dlogCount = 0; portEXIT_CRITICAL(&dlogMux); out->print("ok log cleared"); }
+    else if (rest == "new") out->print(dlogNew());
+    else out->print(dlogText());
   } else if (cmd == "reboot" || cmd == "restart") {
     if (fwBusy || webOtaActive || otaRestartAt) { out->print("error reboot: a firmware update is being written"); return; }
     if (otaActive) { Update.abort(); otaActive = false; }   // an unfinished Bluetooth upload: dropped, old firmware stays
+    dlog("restart asked for");
     rebootAt = millis() + 1500;              // after this answer has gone out (web page, Bluetooth)
     if (!rebootAt) rebootAt = 1;
     out->print("ok rebooting: back in about 10 s");
@@ -1577,6 +1682,11 @@ dialog::backdrop{background:rgba(0,0,0,.55)}ol{padding-left:20px;margin:6px 0}ol
  <button onclick="cmdsToggle()" id="cmdsb">Show commands</button>
  <div id="cmds" class="list" hidden></div>
 </div>
+
+<div class="card"><details id="dlogd" ontoggle="if(this.open)dlogLoad()"><summary>Debug log</summary>
+ <div class="mut">What happened on Bluetooth, Wi-Fi and updates (times = time since the sensor started). Copy it to share it.</div>
+ <div class="row"><button onclick="dlogLoad()">Refresh</button><button onclick="dlogCopy()">Copy</button></div>
+ <pre id="dlog">…</pre></details></div>
 
 <div class="card"><details><summary>Firmware update</summary>
  <div class="mut">Choose the <b>WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin</b> file (not the FLASH-AT-0x0 one). Calibration and settings are kept.</div>
@@ -1773,6 +1883,8 @@ async function wjoin(name,pw){
  $('hpass').value='';
 }
 function wforget(i){const n=S.known[i];if(confirm('Forget “'+n+'”?'))cmd('wifi forget '+n)}
+async function dlogLoad(){try{$('dlog').textContent=await (await fetch('/api/dlog')).text();const p=$('dlog');p.scrollTop=p.scrollHeight}catch(e){$('dlog').textContent='Failed: '+e}}
+async function dlogCopy(){const t=$('dlog').textContent;try{await navigator.clipboard.writeText(t);alert('Copied')}catch(e){const r=document.createRange();r.selectNodeContents($('dlog'));const s=getSelection();s.removeAllRanges();s.addRange(r);alert('Selected: copy it now (the browser blocked automatic copying)')}}
 async function reboot(){if(!confirm('Restart the sensor? Settings and calibration are kept; it is back in about 10 s.'))return;
  await cmd('reboot');busy=true;$('foot').textContent='Restarting… the page reconnects by itself.';
  setTimeout(()=>{busy=false},9000)}
@@ -1782,7 +1894,7 @@ const CMDS=[['status','reading and table in use'],['help','all commands with det
  ['cal add 10','calibration: 10 L poured in'],['cal undo','calibration: remove the last point'],['cal show','calibration: points so far'],['cal save My tank','calibration: save as a tank and use it'],
  ['cal cancel','calibration: throw away'],['table','table in use, as code for the sketch'],['wifi','Wi-Fi state'],['wifi known','remembered networks'],
  ['wifi mode auto','Wi-Fi mode: auto | van | ap | off'],['fast','test mode: no smoothing for 15 min'],['fast off','normal smoothing'],['sim 50%','broadcast a fake level for 15 min'],
- ['sim off','back to the real sensor'],['reboot','restart the sensor'],['live','raw reading as JSON'],['info','state as JSON (what the Pi reads)'],['log','serial log on / off']];
+ ['sim off','back to the real sensor'],['reboot','restart the sensor'],['dlog','debug log'],['live','raw reading as JSON'],['info','state as JSON (what the Pi reads)'],['log','serial log on / off']];
 function cmdsToggle(){const l=$('cmds');l.hidden=!l.hidden;$('cmdsb').textContent=l.hidden?'Show commands':'Hide commands';
  if(!l.innerHTML)l.innerHTML=CMDS.map((c,i)=>'<div class="item pick" onclick="$(\'con\').value=CMDS['+i+'][0];$(\'con\').focus()"><code class="nm" style="flex:none">'+esc(c[0])+'</code><span class="mut nm">'+esc(c[1])+'</span></div>').join('')}
 // 4 updates a second in test mode, every 2 s otherwise
@@ -1930,14 +2042,15 @@ static void updateWifi() {
 
   if (wantAp != apOn || wantSta != staOn || staDirty) {
     wifi_mode_t m = wantAp && wantSta ? WIFI_AP_STA : wantAp ? WIFI_AP : wantSta ? WIFI_STA : WIFI_OFF;
-    if (!wantAp && apOn) { dns.stop(); WiFi.softAPdisconnect(true); Serial.println("Own Wi-Fi off (the Pi or the van Wi-Fi is there)."); }
+    if (!wantAp && apOn) { dns.stop(); WiFi.softAPdisconnect(true); Serial.println("Own Wi-Fi off (the Pi or the van Wi-Fi is there)."); dlog("own Wi-Fi (AP) off"); }
     if ((!wantSta || staDirty) && staOn) WiFi.disconnect(false);
     WiFi.mode(m);
-    if (wantAp && !apOn) { startAp(); apOnSince = now; }
+    if (wantAp && !apOn) { startAp(); apOnSince = now; dlog("own Wi-Fi (AP) on: %s", wifiReason); }
     if (wantSta && (!staOn || staDirty)) {
       WiFi.setAutoReconnect(true);
       WiFi.begin(staSsid.c_str(), staPass.c_str());
       Serial.printf("Joining the van Wi-Fi '%s'\n", staSsid.c_str());
+      dlog("joining Wi-Fi '%s'", staSsid.c_str());
     }
     apOn = wantAp; staOn = wantSta; staDirty = false;
     if (m == WIFI_OFF && mdnsUp) { MDNS.end(); mdnsUp = false; }
@@ -1950,6 +2063,8 @@ static void updateWifi() {
   if (staConnected() != wasStaUp) {
     wasStaUp = staConnected();
     if (wasStaUp) Serial.printf("Van Wi-Fi connected: http://%s\n", WiFi.localIP().toString().c_str());
+    if (wasStaUp) dlog("Wi-Fi '%s' connected: %s, signal %d dBm", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    else dlog("Wi-Fi network lost");
   }
   webUp = apOn || staConnected();
 }
@@ -2036,6 +2151,7 @@ static void fwGet() {
   if (linkServer && linkServer->getConnectedCount()) linkServer->disconnect(linkServer->getConnId());
   if (advertising) advertising->stop();
   esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+  dlog("Wi-Fi update: joining '%s'", fwSsid.length() ? fwSsid.c_str() : WiFi.SSID().c_str());
   if (!staConnected()) {
     WiFi.mode(apOn ? WIFI_AP_STA : WIFI_STA);
     WiFi.begin(fwSsid.c_str(), fwPass.c_str());
@@ -2053,6 +2169,7 @@ static void fwGet() {
       ledWrite(((done >> 14) & 1) ? 0 : STATUS_LED_MAX, ((done >> 14) & 1) ? STATUS_LED_MAX : 0, 0);
     });
     client.setTimeout(20);
+    dlog("Wi-Fi update: joined (signal %d dBm), downloading", WiFi.RSSI());
     t_httpUpdate_return r = httpUpdate.update(client, fwUrl);
     if (r == HTTP_UPDATE_NO_UPDATES) fwError = "the Pi had no file";
     else fwError = httpUpdate.getLastError() > 0 ? fwErrorText(httpUpdate.getLastError())
@@ -2060,6 +2177,7 @@ static void fwGet() {
   }
   esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
   if (advertising) advertising->start();
+  dlog("Wi-Fi update failed: %s", fwError.c_str());
   Serial.printf("Firmware download failed: %s\n", fwError.c_str());
   staDirty = true;                      // back to the Wi-Fi the mode asks for
   fwBusy = false;
@@ -2099,6 +2217,7 @@ static void webStart() {
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/cmd", HTTP_POST, handleCmd);
   server.on("/api/wifiscan", HTTP_GET, handleWifiScan);
+  server.on("/api/dlog", HTTP_GET, []() { server.sendHeader("Cache-Control", "no-store"); server.send(200, "text/plain; charset=utf-8", dlogText()); });
   server.on("/api/password", HTTP_POST, handlePassword);
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   // Phones test for internet with fixed addresses (captive.apple.com/hotspot-detect.html,
@@ -2124,8 +2243,22 @@ static String wifiScanJson(int) { return "[]"; }
 
 // ------------------------------------------------------------ setup / loop
 
+static const char *resetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_SW: return "restart (command or update)";
+    case ESP_RST_PANIC: return "CRASH (panic)";
+    case ESP_RST_INT_WDT: case ESP_RST_TASK_WDT: case ESP_RST_WDT: return "CRASH (watchdog)";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (supply voltage dropped)";
+    case ESP_RST_EXT: return "reset button";
+    case ESP_RST_DEEPSLEEP: return "deep sleep";
+    default: return "other";
+  }
+}
+
 void setup() {
   setCpuFrequencyMhz(CPU_MHZ);
+  dlog("start: firmware " FW_VERSION ", last reset: %s", resetReason());
   Serial.begin(115200);
   ledWrite(0, 0, 0);                    // off until the web page runs
   delay(500);
@@ -2167,7 +2300,7 @@ void loop() {
   if (!settling && (advRestart || now - tAdvCheck >= 5000)) {
     tAdvCheck = now;
     if (advRestart || !advertising->isAdvertising()) {
-      if (!advRestart) { advRestarts++; Serial.println("Bluetooth broadcast had stopped: started again."); }
+      if (!advRestart) { advRestarts++; Serial.println("Bluetooth broadcast had stopped: started again."); dlog("BT broadcast had stopped: started again"); }
       advRestart = false;
       advertising->start();
     }

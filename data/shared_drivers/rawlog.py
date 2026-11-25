@@ -11,7 +11,18 @@ import os
 import time
 
 DEFAULT_DIR = os.environ.get('VENUSOSMODS_RAWLOG_DIR', '/tmp/venusosmods-raw')
-SOURCES = ('gas', 'fridge', 'water')
+SOURCES = ('gas', 'fridge', 'water', 'link')   # link: the water sensor's Bluetooth connection, step by step
+# Logs kept across reboots (long-term tests): on the data partition, bigger, still cut in half when full
+PERSISTENT = {'link': 2000000}
+PERSIST_DIR = os.environ.get('VENUSOSMODS_PERSIST_LOG_DIR', '/data/log/venusosmods')
+
+
+def _dir(name, directory):
+    return PERSIST_DIR if name in PERSISTENT else (directory or DEFAULT_DIR)
+
+
+def path_of(name, directory=None):
+    return os.path.join(_dir(name, directory), name + '.log')
 
 
 def stamp(now=None):
@@ -21,8 +32,8 @@ def stamp(now=None):
 
 class RawLog(object):
     def __init__(self, name, directory=None, max_bytes=200000):
-        self.path = os.path.join(directory or DEFAULT_DIR, name + '.log')
-        self.max_bytes = max_bytes
+        self.path = path_of(name, directory)
+        self.max_bytes = PERSISTENT.get(name, max_bytes)
 
     def write(self, kind, text):
         """One line: '<time> <kind> <text>'. kind is short, e.g. rx, tx, adv, status."""
@@ -53,7 +64,7 @@ def hexs(data):
 
 def read_tail(name, lines=300, directory=None):
     """Newest `lines` lines of a source, oldest first ([] when nothing was logged yet)."""
-    path = os.path.join(directory or DEFAULT_DIR, name + '.log')
+    path = path_of(name, directory)
     try:
         with open(path, 'rb') as f:
             f.seek(0, os.SEEK_END)
@@ -70,6 +81,6 @@ def read_tail(name, lines=300, directory=None):
 
 def clear(name, directory=None):
     try:
-        os.remove(os.path.join(directory or DEFAULT_DIR, name + '.log'))
+        os.remove(path_of(name, directory))
     except OSError:
         pass

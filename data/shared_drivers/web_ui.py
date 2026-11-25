@@ -390,6 +390,7 @@ class App(object):
             'GET /api/sender_cmd': self.api_sender_cmd_result,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
+            'GET /api/rawlog_download': self.api_rawlog_download,
             'GET /api/serialbattery': self.api_serialbattery,
             'POST /api/serialbattery': self.api_serialbattery_save,
             'GET /api/raw': self.api_raw,
@@ -599,12 +600,25 @@ class App(object):
         sources = []
         for name in rawlog.SOURCES:
             try:
-                size = os.path.getsize(os.path.join(self.rawlog_dir, name + '.log'))
+                size = os.path.getsize(rawlog.path_of(name, self.rawlog_dir))
             except OSError:
                 size = 0
             sources.append({'name': name, 'bytes': size})
-        return jsonr({'ok': True, 'source': source, 'sources': sources, 'dir': self.rawlog_dir,
+        return jsonr({'ok': True, 'source': source, 'sources': sources, 'dir': os.path.dirname(rawlog.path_of(source, self.rawlog_dir)),
                       'lines': rawlog.read_tail(source, count, self.rawlog_dir)})
+
+    def api_rawlog_download(self, req):
+        """The whole log of a source as a file (long-term tests)."""
+        source = req.query.get('source', '')
+        if source not in rawlog.SOURCES:
+            return jsonr({'ok': False, 'error': 'unknown source'}, 400)
+        try:
+            with open(rawlog.path_of(source, self.rawlog_dir), 'rb') as f:
+                body = f.read()
+        except OSError:
+            body = b''
+        name = 'venusosmods-%s-%s.log' % (source, time.strftime('%Y%m%d-%H%M'))
+        return Response(200, body, 'text/plain; charset=utf-8', {'Content-Disposition': 'attachment; filename="%s"' % name})
 
     def api_rawlog_clear(self, req):
         source = req.form.get('source', '')
@@ -1516,7 +1530,7 @@ class App(object):
 
     # Wi-Fi commands for the sensor, sent at once over Bluetooth by the water driver (no restart).
     # The answer arrives in /Hydro/CommandResult, which the page asks for with GET.
-    SENDER_CMD = re.compile(r'^(wifi (mode (auto|van|ap|off)|join [^\n\r]{1,100}|forget [^\t\n\r]{1,32}|scan)|reboot)$')
+    SENDER_CMD = re.compile(r'^(wifi (mode (auto|van|ap|off)|join [^\n\r]{1,100}|forget [^\t\n\r]{1,32}|scan)|reboot|dlog)$')
 
     def send_sender_command(self, cmd):
         """(ok, error, status) of handing one command to the water driver."""

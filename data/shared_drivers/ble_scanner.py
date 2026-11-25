@@ -260,13 +260,21 @@ class BlueZScanner(object):
             return 'D-Bus: %s' % e
 
     def _power_on(self):
+        # BlueZ can answer "Busy" right after switching off: try again for up to half a minute
         try:
             obj = self._bus.get_object(BLUEZ, self._adapter_path)
             dbus.Interface(obj, PROPS_IFACE).Set(ADAPTER_IFACE, 'Powered', dbus.Boolean(True))
             self._stuck = 0
+            self._power_tries = 0
             GLib.timeout_add_seconds(2, self._rearm)
         except dbus.exceptions.DBusException as e:
-            log.warning('Could not power the adapter back on: %s', e)
+            self._power_tries = getattr(self, '_power_tries', 0) + 1
+            if self._power_tries < 10:
+                log.info('Adapter not back on yet (%s), trying again in 3 s', e)
+                GLib.timeout_add_seconds(3, self._power_on)
+            else:
+                self._power_tries = 0
+                log.warning('Could not power the adapter back on: %s', e)
         return False
 
     def _rearm(self):

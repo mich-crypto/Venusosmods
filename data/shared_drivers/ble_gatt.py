@@ -8,6 +8,7 @@ finish() -> disconnect (unless keep_connected).
 """
 
 import logging
+import time
 
 import dbus
 from gi.repository import GLib
@@ -50,12 +51,21 @@ class GattClient(object):
         self._done_cb = None
         self._timer = None
         self._receivers = []
+        self.trace = None            # optional callback(text): every step, for the debug log
+        self._t0 = 0
 
         bus.add_signal_receiver(self._on_device_props, dbus_interface=PROPS_IFACE,
                                 signal_name='PropertiesChanged', bus_name=BLUEZ,
                                 path=self.dev_path, arg0=DEVICE_IFACE)
 
     # ------------------------------------------------------------- public
+
+    def _t(self, text):
+        if self.trace is not None:
+            try:
+                self.trace('%5.1fs %s' % (time.monotonic() - self._t0, text))
+            except Exception:
+                pass
 
     def exchange(self, frames, done_cb):
         """
@@ -66,6 +76,8 @@ class GattClient(object):
             done_cb(False, 'busy')
             return
         self.busy = True
+        self._t0 = time.monotonic()
+        self.frames_sent = 0         # frames handed to BlueZ in this exchange (a retry is safe while it is 0 or 1)
         self._pending = list(frames)
         self._done_cb = done_cb
         self._timer = GLib.timeout_add_seconds(self._timeout_s, self._on_timeout)
@@ -80,6 +92,7 @@ class GattClient(object):
             self._fail('device not known to BlueZ yet (not advertising or out of range)')
             return
         if connected:
+            self._t('still connected' + ('' if self._ready else ', setting up'))
             self._after_connect()
         else:
             self._attempt = 0
@@ -101,6 +114,7 @@ class GattClient(object):
         if not self.busy:
             return False
         log.debug('connecting to %s (attempt %d)', self.mac, self._attempt)
+        self._t('connecting (attempt %d)' % self._attempt)
         obj = self._bus.get_object(BLUEZ, self.dev_path)
         dbus.Interface(obj, DEVICE_IFACE).Connect(
             reply_handler=self._after_connect,
@@ -112,6 +126,7 @@ class GattClient(object):
         if not self.busy:
             return
         text = str(e)
+        self._t('connect error: %s' % text)
         if self._attempt < self.connect_attempts and any(r in text for r in self.RETRYABLE):
             log.debug('connect attempt %d failed (%s), retrying', self._attempt, text)
             GLib.timeout_add_seconds(2, self._connect)
@@ -136,6 +151,8 @@ class GattClient(object):
     def _after_connect(self, *args):
         if not self.busy:
             return
+        if args is not None and not self._ready:
+            self._t('connected')
         props = dbus.Interface(self._bus.get_object(BLUEZ, self.dev_path), PROPS_IFACE)
         if props.Get(DEVICE_IFACE, 'ServicesResolved'):
             self._setup_characteristics()
@@ -143,6 +160,7 @@ class GattClient(object):
 
     def _on_device_props(self, interface, changed, invalidated):
         if 'Connected' in changed and not changed['Connected']:
+            self._t('disconnected' + (' (during an exchange)' if self.busy else ''))
             if self._ready:
                 log.debug('%s disconnected', self.mac)
             self._ready = False
@@ -182,6 +200,7 @@ class GattClient(object):
                          error_handler=lambda e: self._fail('StartNotify failed: %s' % e))
 
     def _notify_started(self):
+        self._t('services ready, notify on')
         self._setting_up = False
         self._ready = True
         self._write_next()
@@ -192,11 +211,12 @@ class GattClient(object):
         if not self._pending:
             return   # all written, waiting for notifications / finish()
         chunk = self._pending.pop(0)
+        self.frames_sent += 1
         char = dbus.Interface(self._bus.get_object(BLUEZ, self._write_path), CHAR_IFACE)
         char.WriteValue(dbus.Array(bytearray(chunk), signature='y'),
                         dbus.Dictionary({'type': dbus.String('request')}, signature='sv'),
                         reply_handler=self._write_next,
-                        error_handler=lambda e: self._fail('write failed: %s' % e))
+                        error_handler=lambda e: (self._t('write failed: %s' % e), self._fail('write failed: %s' % e)))
 
     def _on_char_props(self, interface, changed, invalidated):
         if 'Value' in changed:
@@ -214,6 +234,7 @@ class GattClient(object):
 
     def _fail(self, error):
         if self.busy:
+            self._t('failed: %s' % error)
             self._end(False, error)
 
     def _end(self, ok, error):
