@@ -173,7 +173,8 @@ static const TankPoint DEFAULT_TABLE[] = {
 // The own network is also on for BOOT_AP_MS after power-on and BUTTON_AP_MS
 // after pressing the BOOT button, and never switches off while a phone is on it.
 #define WIFI_MODE_DEFAULT    "auto"
-#define PI_SILENT_MS         (15UL * 60UL * 1000UL)
+#define PI_SILENT_MS         (15UL * 60UL * 1000UL)  // Pi only over Bluetooth: check-ins are 5 min apart
+#define PI_WIFI_SILENT_MS    (2UL * 60UL * 1000UL)   // Pi over Wi-Fi: it asks every 5 s, so 2 min is a real loss
 #define BOOT_AP_MS           (10UL * 60UL * 1000UL)
 #define BUTTON_AP_MS         (30UL * 60UL * 1000UL)
 #define AP_MIN_ON_MS         (2UL * 60UL * 1000UL)  // no flapping
@@ -183,8 +184,9 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define CPU_MHZ              80
 
 // ---- Status LED: the board's RGB LED (WS2812) gives one short dim flash every
-//      2 s: blue = Bluetooth sends, green = Wi-Fi on (page reachable), both =
-//      blue and green take turns. Bright green/red = firmware update. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
+//      2 s: blue = Venus OS connected, green = own Wi-Fi (AP) up, both = they take
+//      turns, red = error (sensor fault, or no Venus OS and no AP).
+//      Bright green/red = firmware update. DevKitC-1 v1.0 and most clones: GPIO48, v1.1: GPIO38.
 #define STATUS_LED_PIN       48     // -1 = no LED
 #define STATUS_LED_MAX       40     // brightness during a firmware update (0..255, these LEDs are bright)
 #define STATUS_LED_DIM       6      // brightness of the normal status flash (dim, saves energy)
@@ -192,7 +194,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.12"
+#define FW_VERSION           "4.13"
 
 // ---- Truma Combi heater with CP plus panel (in preparation, see docs/truma.md)
 //      The CP plus is master of a LIN bus; this board will answer like Truma's iNet box
@@ -717,6 +719,8 @@ static volatile bool linkConnected = false;
 static String apPassword;                  // own Wi-Fi password, also the Bluetooth key
 static uint32_t lastPiHeard = 0;           // millis() of the last "hb" or request from the Pi (0 = never)
 static bool btEnabled = true;              // "bt off": no Bluetooth at all, the Pi talks over Wi-Fi (NVS wifi/bt)
+static uint32_t lastPiWifi = 0, lastPiBt = 0;  // the last request from the Pi over Wi-Fi / Bluetooth
+static bool cmdFromWeb = false;            // the running command came in over Wi-Fi
 static String fwError;                     // why the last firmware download failed (shown to the Pi)
 
 // Wi-Fi state, run by updateWifi() (stored in NVS namespace "wifi")
@@ -731,7 +735,13 @@ static uint32_t lastWebUse = 0;             // last request to the page (a phone
 static const char *wifiReason = "";         // why the own Wi-Fi is on, for the page
 #define WEB_IDLE_MS (10UL * 60UL * 1000UL)   // a joined phone keeps the Wi-Fi on only while the page was used this recently
 
-static bool piRecent() { return lastPiHeard && millis() - lastPiHeard < PI_SILENT_MS; }
+// Venus OS in touch: over Wi-Fi (it asks every 5 s) or over Bluetooth (check-ins every 5 min)
+static bool piWifiRecent() { return lastPiWifi && millis() - lastPiWifi < PI_WIFI_SILENT_MS; }
+static bool piRecent() { return piWifiRecent() || (lastPiBt && millis() - lastPiBt < PI_SILENT_MS); }
+
+// Like a Shelly: Bluetooth is for finding and setting up a new sensor. Once Venus OS talks to it
+// over Wi-Fi it stops broadcasting (Wi-Fi gets the radio); without Venus OS for 2 min it comes back.
+static bool btWanted() { return btEnabled && !piWifiRecent(); }
 
 static void loadWifiSettings() {
   prefs.begin("wifi", true);
@@ -1367,6 +1377,7 @@ static void handleCommand(String line) {
   } else if (cmd == "hb") {
     lastPiHeard = millis();
     if (!lastPiHeard) lastPiHeard = 1;
+    if (!cmdFromWeb) lastPiBt = lastPiHeard;   // over Wi-Fi the request itself counts (webSeen)
     out->print("ok");
   } else if (cmd == "info") {
     out->print(infoJson());
@@ -1732,17 +1743,21 @@ static void updateLed() {
   if (now - last < 20) return;              // 50 updates a second is smooth enough
   last = now;
   int r = 0, g = 0, b = 0;
-  // One short, dim flash every 2 s. Blue = Bluetooth sends, green = Wi-Fi on; with both,
-  // the flashes take turns (blue, green, blue, ...).
-  bool bt = advertising && advertising->isAdvertising();
+  // One short, dim flash every 2 s:
+  //   blue  = Venus OS connected (over Wi-Fi or Bluetooth)
+  //   green = own Wi-Fi (AP) up: join it to set the sensor up
+  //   red   = error: sensor fault, or neither Venus OS nor the AP
+  // Blue and green together take turns.
+  bool venus = piRecent();
+  bool err = fault || (!venus && !apOn);
   uint32_t n = now / BLINK_PERIOD_MS;
   bool flash = now % BLINK_PERIOD_MS < BLINK_ON_MS;
   if (otaBusy()) {                          // firmware arriving: green and red alternate, bright
     if ((now / OTA_BLINK_MS) % 2) g = STATUS_LED_MAX; else r = STATUS_LED_MAX;
   } else if (flash) {
-    bool blue = bt && (!webUp || n % 2 == 0);
-    if (blue) b = STATUS_LED_DIM;
-    else if (webUp) g = STATUS_LED_DIM;
+    if (err) r = STATUS_LED_DIM;
+    else if (venus && (!apOn || n % 2 == 0)) b = STATUS_LED_DIM;
+    else if (apOn) g = STATUS_LED_DIM;
   }
   if (r != lastR || g != lastG || b != lastB) { ledWrite(r, g, b); lastR = r; lastG = g; lastB = b; }
 }
@@ -1978,11 +1993,11 @@ async function refresh(){
 }
 // top right: Bluetooth light + when the Pi last checked in, Wi-Fi symbol + network
 function header(s){
- // the light: Venus OS reaches the sensor (blue over Bluetooth, green over Wi-Fi when Bluetooth is off)
- const p=s.pi_ago_s,ok=(s.bt===false||s.ble_adv)&&p>=0&&p<900;
- $('btd').style.background=ok?(s.bt===false?'var(--wf)':'var(--bt)'):'var(--bad)';$('btd').className='dot'+(ok?' br':'');
+ // the light: Venus OS is in touch (over Wi-Fi or Bluetooth): green and breathing, red when not
+ const p=s.pi_ago_s,ok=p>=0&&p<900;
+ $('btd').style.background=ok?'var(--wf)':'var(--bad)';$('btd').className='dot'+(ok?' br':'');
  $('btt').textContent='Venus OS '+(p<0?'–':ago(p));
- $('btp').title=(s.bt===false?'Bluetooth off: Venus OS talks over Wi-Fi':'Bluetooth '+(s.ble_adv?'broadcasting':'NOT broadcasting'))+' · Venus OS '+(p<0?'has not been in touch yet':'in touch '+ago(p)+' ago')+(s.ble_conn?' · connected now':'');
+ $('btp').title='Venus OS '+(p<0?'has not been in touch yet':'in touch '+ago(p)+' ago')+' · Bluetooth '+(s.bt===false?'off':s.ble_adv?'on (fallback)':'NOT broadcasting');
  const w=$('wfp');
  w.style.color=s.sta_ip||s.ap_on?'var(--wf)':'var(--mut)';
  $('wft').textContent=s.sta_ip?s.sta_ssid+(s.ap_on?' + AP':''):s.ap_on?'AP on':s.wifi_mode==='van'&&s.sta_ssid?'joining…':'off';
@@ -2150,7 +2165,13 @@ static void jsonPoints(String &j, const char *key, const TankPoint *t, size_t n)
 // The Pi marks its requests with ?pi=1: they show it is there (like a Bluetooth check-in)
 // and don't count as a phone using the page (that keeps the own Wi-Fi on).
 static void webSeen() {
-  if (server.hasArg("pi")) { lastPiHeard = millis(); if (!lastPiHeard) lastPiHeard = 1; }
+  if (server.hasArg("pi")) {
+    // in the log: Venus OS coming in over Wi-Fi (first time, or after a minute of silence)
+    if (!lastPiHeard || millis() - lastPiHeard > 60000)
+      dlog("Venus OS in touch over Wi-Fi (%s)", lastPiHeard ? "again" : "first time since start");
+    lastPiHeard = millis(); if (!lastPiHeard) lastPiHeard = 1;
+    lastPiWifi = lastPiHeard;
+  }
   else lastWebUse = millis();
 }
 
@@ -2224,9 +2245,16 @@ static void handleStatus() {
 // Run one serial command and send back what it printed
 static void handleCmd() {
   webSeen();
+  if (server.hasArg("pi")) {                  // Venus OS over Wi-Fi: its commands in the log, not the routine ones
+    String c = server.arg("c");
+    if (!(c == "hb" || c == "info" || c == "dlog new" || c == "truma" || c == "live" || c == "fast"))
+      dlog("cmd %s (Wi-Fi)", dlogCmd(c).c_str());
+  }
+  cmdFromWeb = true;
   StringOut reply;
   out = &reply;
   handleCommand(server.arg("c"));
+  cmdFromWeb = false;
   out = &Serial;
   if (reply.text.length() == 0) reply.text = "OK";
   Serial.print(reply.text);   // keep the serial monitor in the picture
@@ -2266,10 +2294,10 @@ static void updateWifi() {
   bool staUp = staConnected();
   // off: only the BOOT button switches the own Wi-Fi on (no start-up window, no fallback)
   bool wantAp = wifiMode == "off" ? button
-              : wifiMode == "ap" || now < BOOT_AP_MS || button || (!piRecent() && !staUp);
+              : wifiMode == "ap" || now < BOOT_AP_MS || button || !piRecent();   // no Venus OS: AP up
   wifiReason = button ? "BOOT button pressed" : wifiMode == "ap" ? "set to always on"
              : wifiMode == "off" ? "" : now < BOOT_AP_MS ? "first 10 minutes after power-on"
-             : !piRecent() && !staUp ? "the Pi has not checked in over Bluetooth for 15 minutes (fallback)" : "";
+             : !piRecent() ? "no contact with Venus OS (fallback)" : "";
   // Phones rejoin a known network by themselves: a joined phone keeps the Wi-Fi on only
   // while the page is in use, else the Wi-Fi would never go off.
   bool phoneUsing = WiFi.softAPgetStationNum() > 0 && lastWebUse && now - lastWebUse < WEB_IDLE_MS;
@@ -2541,7 +2569,16 @@ void loop() {
   bool settling = linkConnected && now - linkConnectedAt < ADV_AFTER_CONNECT_MS;
   if (advertising && !settling && (advRestart || now - tAdvCheck >= 5000)) {
     tAdvCheck = now;
-    if (advRestart || !advertising->isAdvertising()) {
+    static bool wasWanted = true;
+    bool wanted = btWanted();
+    if (wanted != wasWanted) {
+      wasWanted = wanted;
+      dlog(wanted ? "Bluetooth on again: no contact with Venus OS over Wi-Fi" : "Bluetooth broadcast paused: Venus OS talks over Wi-Fi");
+    }
+    if (!wanted) {
+      advRestart = false;
+      if (advertising->isAdvertising()) advertising->stop();
+    } else if (advRestart || !advertising->isAdvertising()) {
       if (!advRestart) { advRestarts++; Serial.println("Bluetooth broadcast had stopped: started again."); dlog("BT broadcast had stopped: started again"); }
       advRestart = false;
       advertising->start();

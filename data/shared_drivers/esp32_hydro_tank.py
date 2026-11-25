@@ -115,14 +115,23 @@ class Esp32HydroDriver(BleDriver):
         self.temp = self._temperature(config, uid, connection, timeout, '', 20, 'Temperature 1')
         self.temp2 = self._temperature(config, uid, connection, timeout, '2', 21, 'Temperature 2')
 
-        # Connection: Bluetooth (broadcasts + link) or the Wi-Fi network (the sensor's web server).
-        # Over Wi-Fi nothing uses Bluetooth: no scanning, no connections.
-        self.transport = 'wifi' if config.get('connection', 'bluetooth').strip().lower() == 'wifi' else 'bluetooth'
+        # Connection to the sensor:
+        #   auto       the Wi-Fi network when the sensor answers there, Bluetooth as fallback (default).
+        #              The sensor's address comes from the setting, or from its own report (check-in).
+        #   wifi       only the Wi-Fi network: no Bluetooth at all (no scanning, no connections)
+        #   bluetooth  only Bluetooth (broadcasts + link)
+        mode = config.get('connection', 'auto').strip().lower()
+        self.conn_mode = mode if mode in ('auto', 'wifi', 'bluetooth') else 'auto'
         self.ip_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state', '%s.ip' % uid)
-        self.sensor_host = config.get('sensor_host', '').strip() or self._saved_ip() or 'watertank.local'
-        self.tank['/Hydro/Transport'] = self.transport
+        self.sensor_host = (config.get('sensor_host', '').strip() or self._saved_ip()
+                            or ('watertank.local' if self.conn_mode == 'wifi' else ''))
+        self._fixed_host = bool(config.get('sensor_host', '').strip())
         self._wifi_ok = None
-        if self.transport == 'wifi':
+        self._wifi_fails = 0
+        self.poller = None
+        self._wclient = self._bclient = None
+        self.tank['/Hydro/Transport'] = self.transport
+        if self.conn_mode == 'wifi':
             self.USES_SCANNER = False
             self.seen_mac = 'WIFI'
             self.tank['/Hydro/Mac'] = 'Wi-Fi %s' % self.sensor_host
@@ -150,6 +159,37 @@ class Esp32HydroDriver(BleDriver):
 
     # ------------------------------------------------------- Bluetooth link
 
+    WIFI_FAILS = 3      # auto: after this many unanswered requests (15 s) Bluetooth takes over
+
+    @property
+    def transport(self):
+        """How the Pi reaches the sensor right now: 'wifi' or 'bluetooth'."""
+        if self.conn_mode == 'wifi' or (self.conn_mode == 'auto' and self._wifi_ok):
+            return 'wifi'
+        return 'bluetooth'
+
+    def _reachable(self):
+        return self.transport == 'wifi' or bool(self.seen_mac)
+
+    def _start_poller(self):
+        if self.poller is None and self.sensor_host and self.conn_mode != 'bluetooth':
+            self.link_log.write('wifi', 'reading the sensor over the Wi-Fi network at %s%s' % (
+                self.sensor_host, ' (Bluetooth not used)' if self.conn_mode == 'wifi' else ', Bluetooth as fallback'))
+            self.poller = wifilink.StatusPoller(self.sensor_host, 5, self._on_wifi_status, self._on_wifi_error)
+            self.poller.start(GLib)
+
+    def _set_host(self, ip):
+        """The sensor reported its address (auto, no fixed address): use it from now on."""
+        if self.conn_mode != 'auto' or self._fixed_host or not ip or ip == self.sensor_host:
+            return
+        self.link_log.write('wifi', 'sensor address is now %s' % ip)
+        self.sensor_host = ip
+        if self.poller is not None:
+            self.poller.host = ip
+        if self._wclient is not None:
+            self._wclient.host = ip
+        self._start_poller()
+
     def _saved_ip(self):
         try:
             with open(self.ip_file) as f:
@@ -158,11 +198,9 @@ class Esp32HydroDriver(BleDriver):
             return ''
 
     def start(self):
-        if self.transport == 'wifi':
-            self.link_log.write('wifi', 'connection over the Wi-Fi network to %s (Bluetooth not used)' % self.sensor_host)
-            wifilink.StatusPoller(self.sensor_host, 5, self._on_wifi_status, self._on_wifi_error).start(GLib)
+        self._start_poller()
         if self.link:
-            if not self.seen_mac:
+            if not self._reachable():
                 self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sensor yet'
             GLib.timeout_add_seconds(20, self._first_link)
 
@@ -227,7 +265,7 @@ class Esp32HydroDriver(BleDriver):
     # The van Wi-Fi name and password are added here, from config.ini, so they never pass the page.
     def _on_command_set(self, path, value):
         cmd = str(value or '').strip()
-        if not cmd or not self.seen_mac:
+        if not cmd or not self._reachable():
             return False
         if cmd == 'ota cancel':                # from the page: stop sending, the sensor drops what it got
             if self.ota:
@@ -376,17 +414,23 @@ class Esp32HydroDriver(BleDriver):
         GLib.timeout_add(0, self._ota_step)
 
     def _client(self):
-        if self.transport == 'wifi':
-            if self.gatt is None:
-                self.gatt = wifilink.WifiClient(self.sensor_host, self._on_link_notify)
-                self.gatt.trace = self._trace
+        """The client for the next exchange: over Wi-Fi when the sensor answers there, else Bluetooth.
+        One that is busy is kept (an exchange is never switched half-way)."""
+        if self.gatt is not None and self.gatt.busy:
             return self.gatt
-        if self.gatt is None or self.gatt.mac != self.seen_mac.upper():
+        if self.transport == 'wifi':
+            if self._wclient is None:
+                self._wclient = wifilink.WifiClient(self.sensor_host, self._on_link_notify)
+                self._wclient.trace = self._trace
+            self.gatt = self._wclient
+            return self.gatt
+        if self._bclient is None or self._bclient.mac != self.seen_mac.upper():
             from ble_gatt import GattClient
-            self.gatt = GattClient(self.bus, self.seen_mac, proto.LINK_CMD_UUID, proto.LINK_REPLY_UUID,
-                                   self._on_link_notify, adapter=self.adapter, timeout_s=40,
-                                   scanner=getattr(self, 'scanner', None), connect_attempts=2)
-            self.gatt.trace = self._trace
+            self._bclient = GattClient(self.bus, self.seen_mac, proto.LINK_CMD_UUID, proto.LINK_REPLY_UUID,
+                                       self._on_link_notify, adapter=self.adapter, timeout_s=40,
+                                       scanner=getattr(self, 'scanner', None), connect_attempts=2)
+            self._bclient.trace = self._trace
+        self.gatt = self._bclient
         return self.gatt
 
     # ------------------------------------------------------------ debug log
@@ -423,16 +467,16 @@ class Esp32HydroDriver(BleDriver):
 
     @staticmethod
     def _new_stats():
-        return {'adv': 0, 'gaps': 0, 'longest_gap': 0, 'ok': {}, 'failed': {}, 'scan_restarts': 0}
+        return {'adv': 0, 'wifi': 0, 'gaps': 0, 'longest_gap': 0, 'ok': {}, 'failed': {}, 'scan_restarts': 0, 'fallbacks': 0}
 
     def _log_stats(self):
         """One line an hour: how the link did (for long-term tests)."""
         st, self.stats = self.stats, self._new_stats()
         ex = ', '.join('%s %d ok / %d failed' % (m, st['ok'].get(m, 0), st['failed'].get(m, 0))
                        for m in sorted(set(st['ok']) | set(st['failed']))) or 'no exchanges'
-        self.link_log.write('stats', 'last hour: %d broadcasts heard (BlueZ reports about 1 per 10 s, so ~330 is normal), '
-                            '%d gaps over %d s (longest %d s), %s, %d scan restarts'
-                            % (st['adv'], st['gaps'], self.GAP_S, st['longest_gap'], ex, st['scan_restarts']))
+        self.link_log.write('stats', 'last hour: %d readings over Wi-Fi (every 5 s: ~720), %d Bluetooth broadcasts (~330 when '
+                            'Bluetooth is the way), %d gaps over %d s (longest %d s), %s, %d times Bluetooth took over, %d scan restarts'
+                            % (st['wifi'], st['adv'], st['gaps'], self.GAP_S, st['longest_gap'], ex, st['fallbacks'], st['scan_restarts']))
         return True
 
     @staticmethod
@@ -466,7 +510,7 @@ class Esp32HydroDriver(BleDriver):
             self._live_n += 1
         self._tx_at = monotonic_s()
         if not self._quiet_live():
-            self.link_log.write('tx', '%s: %s' % (mode, self.frames_text(frames)))
+            self.link_log.write('tx', '%s (%s): %s' % (mode, 'Wi-Fi' if self.transport == 'wifi' else 'Bluetooth', self.frames_text(frames)))
         self._client().exchange(frames, self._on_link_done)
 
     def _retry_soon(self):
@@ -483,8 +527,8 @@ class Esp32HydroDriver(BleDriver):
     def _link_tick(self):
         if self.ota:
             return True                        # a firmware upload uses the link
-        if not self.seen_mac:
-            # without a broadcast the Pi doesn't know where to connect: say so on the page
+        if not self._reachable():
+            # without a broadcast (or an answer over Wi-Fi) the Pi doesn't know where to connect: say so
             self.tank['/Hydro/LinkStatus'] = 'no broadcast received from the sensor yet'
             return True
         if self.gatt is not None and self.gatt.busy:
@@ -528,7 +572,7 @@ class Esp32HydroDriver(BleDriver):
         except (TypeError, ValueError):
             return False
         if on:
-            if not self.seen_mac:
+            if not self._reachable():
                 return False                   # nothing received yet: no address to connect to
             first = not self.live_until
             self.live_until = monotonic_s() + self.LIVE_S
@@ -691,6 +735,7 @@ class Esp32HydroDriver(BleDriver):
             self._wifi_pending = None
         self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
         self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
+        self._set_host(info.get('ip'))
         if info.get('ip') and info.get('ip') != self._saved_ip():
             try:
                 os.makedirs(os.path.dirname(self.ip_file), exist_ok=True)
@@ -714,11 +759,17 @@ class Esp32HydroDriver(BleDriver):
     # ------------------------------------------------------- over the Wi-Fi network
     def _on_wifi_status(self, d):
         """/api/status of the sensor: the same as a broadcast, plus a little more."""
+        self._wifi_fails = 0
+        now = monotonic_s()
+        if self._last_adv is not None and now - self._last_adv > self.GAP_S:
+            self.stats['gaps'] += 1
+            self.stats['longest_gap'] = max(self.stats['longest_gap'], int(now - self._last_adv))
         if self._wifi_ok is not True:
-            self.link_log.write('wifi', 'sensor answers at %s' % self.sensor_host)
+            self.link_log.write('wifi', 'sensor answers at %s: reading it over the Wi-Fi network' % self.sensor_host)
             self._wifi_ok = True
-        self._last_adv = monotonic_s()
-        self.stats['adv'] += 1
+            self.tank['/Hydro/Transport'] = self.transport
+        self._last_adv = now
+        self.stats['wifi'] += 1
         temps = dict((t.get('n'), t.get('c')) for t in (d.get('temps') or []))
         self._last_temp = temps.get(1)
         height = d.get('height_mm')
@@ -751,11 +802,19 @@ class Esp32HydroDriver(BleDriver):
             self.heater.apply(d['truma'])
 
     def _on_wifi_error(self, text):
+        self._wifi_fails += 1
+        if self.conn_mode == 'auto' and self._wifi_ok and self._wifi_fails < self.WIFI_FAILS:
+            return                             # one missed answer is no reason to switch
         if self._wifi_ok is not False:
-            self.link_log.write('wifi', 'no answer from %s: %s' % (self.sensor_host, text))
+            self.link_log.write('wifi', 'no answer from %s: %s%s' % (
+                self.sensor_host, text, ' - Bluetooth takes over' if self.conn_mode == 'auto' else ''))
             log.warning('sensor at %s does not answer: %s', self.sensor_host, text)
+            if self._wifi_ok and self.conn_mode == 'auto':
+                self.stats['fallbacks'] += 1
             self._wifi_ok = False
-        self.tank['/Hydro/LinkStatus'] = 'no answer over Wi-Fi from %s' % self.sensor_host
+            self.tank['/Hydro/Transport'] = self.transport
+        if self.conn_mode == 'wifi':
+            self.tank['/Hydro/LinkStatus'] = 'no answer over Wi-Fi from %s' % self.sensor_host
 
     def _wifi_upload(self, path):
         """Firmware over Wi-Fi: the whole file to the sensor's /update, like its own page does."""
@@ -812,6 +871,9 @@ class Esp32HydroDriver(BleDriver):
         self._last_temp = r.temperature
         if r.sequence == self._last_seq:
             return  # same packet seen again, nothing new
+        if self.transport == 'wifi':
+            self._last_seq = r.sequence
+            return  # the reading comes over Wi-Fi now (one source); Bluetooth stays the fallback
         self._last_seq = r.sequence
         log.debug('%s rssi=%s %r', mac, rssi, r)
         self.raw.write('adv', '%s rssi=%s data=%s -> %r' % (mac, rssi, rawlog.hexs(manufacturer_data.get(proto.COMPANY_ID)), r))

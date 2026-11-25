@@ -46,7 +46,7 @@ import starlink_hub  # noqa: E402
 
 log = logging.getLogger('web_ui')
 
-VERSION = '2.3.0'   # Venus OS mods version, shown at the top of the page
+VERSION = '2.4.0'   # Venus OS mods version, shown at the top of the page
 OUR_PROCESSES = ('mopeka_venus.py', 'esp32_hydro_tank.py', 'fridge_venus.py')
 BUS_ITEM = 'com.victronenergy.BusItem'
 LAN_RANGES = ('192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '100.64.0.0/10')   # incl. Tailscale

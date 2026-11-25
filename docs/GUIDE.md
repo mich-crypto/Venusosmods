@@ -170,8 +170,9 @@ or Venus OS doesn't work. To save energy it is **not on all the time**
 
 * for the first **10 minutes after power-on**,
 * for **30 minutes after pressing the BOOT button** on the ESP32,
-* whenever the **Pi has not checked in over Bluetooth for 15 minutes**
-  (the fallback: Venus OS down, Pi off, Bluetooth broken),
+* whenever **Venus OS is out of touch**: 2 minutes without a request over Wi-Fi, or
+  15 minutes without a Bluetooth check-in when it only uses Bluetooth (the fallback:
+  Venus OS down, Pi off, network broken) – firmware 4.13+,
 * always, if *Sensor Wi-Fi* on the Venus OS page is set to *Own Wi-Fi always on*.
 
 It never switches off while a phone is connected to it. The **green flash**
@@ -253,9 +254,10 @@ It switches itself off after 15 minutes and at a restart.
 
 | Light | Meaning |
 |---|---|
-| **dim flash every 2 s, blue and green taking turns** | Bluetooth sends and Wi-Fi is on (firmware 3.9+) |
-| **dim blue flash every 2 s** | Bluetooth only (saves energy); press BOOT to switch the own Wi-Fi on |
-| **dim green flash every 2 s** | Wi-Fi on, but the Bluetooth broadcast is not running |
+| **dim blue flash every 2 s** | Venus OS connected (over Wi-Fi, or Bluetooth) – normal operation (firmware 4.13+) |
+| **dim green flash every 2 s** | own Wi-Fi (AP) "Watertank-1" up: join it to set the sensor up |
+| **dim flash, blue and green taking turns** | Venus OS connected and the AP up (e.g. the first 10 minutes after power-on) |
+| **dim red flash every 2 s** | error: sensor fault (check the wiring), or no Venus OS and no AP |
 | **green and red, alternating fast (bright)** | new firmware is arriving from the Venus OS page; don't cut the power |
 | off | still starting, or no power |
 
@@ -290,16 +292,26 @@ Check from both ends:
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
 
-**Connection over the Wi-Fi network instead of Bluetooth** (Pi 2.3.0, sensor 4.12):
-when the sensor and the Pi are on the same network, set *Water → Settings →
-Connection to the sensor* to **Wi-Fi network** (and *Sensor address* to its IP, e.g.
-192.168.0.110; best made fixed in the router). The Pi then reads the sensor's web
-page every 5 seconds and sends every command, the live reading, logs, the heater and
-firmware updates over the network; it uses no Bluetooth at all for the sensor. The
-status light on the Water tab says *Wi-Fi link*. Afterwards *Switch the sensor's
-Bluetooth off* (Settings → Connection, or Bluetooth *Off* on the sensor's own page)
-gives Wi-Fi the whole radio; the sensor then refuses "Bluetooth only" so it can't cut
-itself off, and still opens its own Wi-Fi if the Pi stops asking for 15 minutes.
+**Setting up a new or replacement sensor (like a Shelly)** (sensor 4.13): a new
+sensor starts with Bluetooth and its own Wi-Fi (AP) on. The Pi finds it over
+Bluetooth (setup guide, or the Water tab once the sensor ID matches); then *Settings →
+Connection → Use the Pi's Wi-Fi* (or pick a network) sends the network over Bluetooth,
+the sensor joins it, reports its address, and the Pi switches to Wi-Fi by itself.
+From then on the sensor stops broadcasting on Bluetooth while Venus OS talks to it
+over Wi-Fi; after 2 minutes without Venus OS, Bluetooth and the AP come back so it
+can be reached again.
+
+**Connection: Wi-Fi first, Bluetooth as fallback** (Pi 2.3.0, sensor 4.12): by
+default (*Water → Settings → Connection to the sensor: Automatic*) the Pi learns the
+sensor's address from its report and, when the sensor is on the same network,
+reads it over Wi-Fi every 5 seconds: the level, every command, the live reading,
+logs, the heater and firmware updates. When the sensor doesn't answer over Wi-Fi
+for 15 seconds, Bluetooth takes over by itself, and Wi-Fi again as soon as it
+answers. The status light on the Water tab says *Wi-Fi link* or *Bluetooth*.
+*Wi-Fi network only* uses no Bluetooth at all; then *Switch the sensor's Bluetooth
+off* gives Wi-Fi the whole radio (the sensor refuses "Bluetooth only" so it can't
+cut itself off, and opens its own Wi-Fi if the Pi stops asking for 15 minutes).
+*Sensor address* is optional (e.g. 192.168.0.110, best fixed in the router).
 
 **Truma heater (in preparation)**: a Truma Combi with CP plus panel can be connected
 to the water level sensor's ESP32 over its LIN bus, with a small transceiver chip. The
