@@ -65,6 +65,7 @@ class Esp32HydroDriver(BleDriver):
                          # Bluetooth link (firmware 2.7+)
                          '/Hydro/WifiMode', '/Hydro/AccessPoint', '/Hydro/WifiIp',
                          '/Hydro/WifiSsid', '/Hydro/WifiKnown', '/Hydro/Uptime',
+                         '/Hydro/Bluetooth',   # the sensor's own Bluetooth: 1 on, 0 off ("bt off"), None not known
                          '/Hydro/Truma',   # the heater's last status as JSON, for the settings page
                          '/Hydro/Transport',   # 'bluetooth' or 'wifi': how the Pi reaches the sensor
                          '/Hydro/ReadTime',    # last reading over Wi-Fi (unix time): the connection light
@@ -785,6 +786,8 @@ class Esp32HydroDriver(BleDriver):
             self._wifi_mark_sent(self._wifi_pending)   # the sensor has the Pi's setting now
             self._wifi_pending = None
         self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
+        if 'bt' in info:
+            self.tank['/Hydro/Bluetooth'] = int(bool(info.get('bt')))
         self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
         self._set_host(info.get('ip'))
         if info.get('ip') and info.get('ip') != self._saved_ip():
@@ -822,6 +825,8 @@ class Esp32HydroDriver(BleDriver):
         self._last_adv = now
         self.stats['wifi'] += 1
         self.tank['/Hydro/ReadTime'] = int(time.time())
+        if 'bt' in d:
+            self.tank['/Hydro/Bluetooth'] = int(bool(d.get('bt')))
         temps = dict((t.get('n'), t.get('c')) for t in (d.get('temps') or []))
         self._last_temp = temps.get(1)
         height = d.get('height_mm')

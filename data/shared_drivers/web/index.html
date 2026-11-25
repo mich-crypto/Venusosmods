@@ -2866,15 +2866,37 @@ function drawSensorWifi(box) {
         })));
     }
   }
-  if (v['/Hydro/Transport'] === 'wifi')
-    items.push(h('div', { class: 'row', style: 'margin:6px 0 0' },
-      h('button', { type: 'button', class: 'btn small', disabled: off, title: 'Bluetooth is not used for the connection: switching it off gives Wi-Fi the whole radio (the sensor restarts)',
-        onclick: () => confirmThen('Switch the sensor\'s Bluetooth off? The Pi reaches it over the Wi-Fi network. The sensor restarts.', () => sensorCmd('bt off', 'Switching Bluetooth off…')) }, 'Switch the sensor\'s Bluetooth off'),
-      h('button', { type: 'button', class: 'btn small', disabled: off, onclick: () => sensorCmd('bt on', 'Switching Bluetooth on…') }, 'Bluetooth on')));
+  items.push(sensorBtSwitch(v, off));
   items.push(h('div', { class: 'muted', style: 'margin:6px 0 12px' }, sw.busy ? sw.busy
     : !mode ? 'The sensor\'s Wi-Fi is not known yet.'
     : (ip ? 'On “' + ssid + '”: ' + ip + '. ' : cur === 'van' && ssid ? 'Joining “' + ssid + '”… ' : '') + 'Own network (AP) ' + (v['/Hydro/AccessPoint'] ? 'on.' : 'off.')));
   box.replaceChildren(...items.filter(Boolean));
+}
+
+// The sensor's own Bluetooth as one switch. Off only while the Pi reaches it over Wi-Fi (else the
+// Pi would lose it); the sensor restarts to apply it, so the wanted state is shown until it reports back.
+function sensorBtSwitch(v, off) {
+  const sw = S.sw, known = v['/Hydro/Bluetooth'], overWifi = v['/Hydro/Transport'] === 'wifi';
+  if (sw.btWant && (known === sw.btWant.on || Date.now() - sw.btWant.t > 60000)) sw.btWant = null;
+  const on = sw.btWant ? sw.btWant.on : known !== 0;
+  const box = h('input', { type: 'checkbox', role: 'switch', checked: on, 'aria-label': 'Sensor Bluetooth',
+    disabled: off || !!sw.busy || (on && !overWifi) || known == null && !overWifi });
+  box.addEventListener('change', () => {
+    const want = box.checked ? 1 : 0;
+    const go = async () => {
+      const r = await sensorCmd(want ? 'bt on' : 'bt off', want ? 'Switching the sensor\'s Bluetooth on (it restarts)…' : 'Switching the sensor\'s Bluetooth off (it restarts)…');
+      if (r != null && !/^(error|unknown)/i.test(r)) { sw.btWant = { on: want, t: Date.now() }; redrawSensorWifi(); }
+    };
+    if (want) go();
+    else if (window.confirm('Switch the sensor\'s Bluetooth off? The Pi reaches it over the Wi-Fi network; Wi-Fi gets the whole radio. The sensor restarts.')) go();
+    else box.checked = true;
+  });
+  const help = sw.btWant ? 'The sensor restarts and comes back with Bluetooth ' + (sw.btWant.on ? 'on' : 'off') + '…'
+    : known == null ? 'Not known yet (the Pi reads it at its next check-in).'
+    : on ? (overWifi ? 'On, but not needed: the Pi talks to the sensor over Wi-Fi. Off gives Wi-Fi the whole radio.' : 'On: the Pi talks to the sensor over Bluetooth, so it stays on.')
+    : 'Off: the sensor is reached over Wi-Fi only.';
+  return h('div', { class: 'field', style: 'margin:10px 0 0' }, h('label', { class: 'switch' }, box, h('span', {}, 'Sensor Bluetooth')),
+    h('div', { class: 'help' }, help));
 }
 
 // Readings arrive (broadcast) but the two-way connection fails: explain the difference

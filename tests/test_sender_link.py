@@ -637,7 +637,7 @@ class WifiTransportTests(unittest.TestCase):
             def do_GET(self):
                 test.assertIn('pi=1', self.path)
                 self._send(json.dumps({'version': '4.12', 'height_mm': 305.2, 'litres': 15.1, 'capacity': 100.0,
-                                       'level': 15.1, 'fault': False, 'filling': True,
+                                       'level': 15.1, 'fault': False, 'filling': True, 'bt': False,
                                        'temps': [{'n': 1, 'c': 7.5}, {'n': 2, 'c': 3.25}]}), 'application/json')
 
             def do_POST(self):
@@ -714,6 +714,7 @@ class WifiTransportTests(unittest.TestCase):
         self.assertEqual((s['/Level'], s['/Hydro/HeightMm'], s['/Hydro/Filling'], s['/Hydro/Transport']), (15.1, 305, 1, 'wifi'))
         self.assertEqual(d.temp.service['/Temperature'], 7.5)
         self.assertIsNotNone(s['/Hydro/ReadTime'])                          # the connection light follows the readings
+        self.assertEqual(s['/Hydro/Bluetooth'], 0)                          # the sensor's own Bluetooth: the page's switch
         d.raw.path = os.path.join(tempfile.mkdtemp(), 'water.log')         # Debug -> Water shows the Wi-Fi readings
         d._wifi_raw = (None, 0)
         self._pending_start = [d.poller.tick]
