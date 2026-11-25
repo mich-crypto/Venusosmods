@@ -46,7 +46,7 @@ import starlink_hub  # noqa: E402
 
 log = logging.getLogger('web_ui')
 
-VERSION = '2.1.0'   # Venus OS mods version, shown at the top of the page
+VERSION = '2.2.0'   # Venus OS mods version, shown at the top of the page
 OUR_PROCESSES = ('mopeka_venus.py', 'esp32_hydro_tank.py', 'fridge_venus.py')
 BUS_ITEM = 'com.victronenergy.BusItem'
 LAN_RANGES = ('192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '100.64.0.0/10')   # incl. Tailscale
@@ -1658,7 +1658,66 @@ class App(object):
             'serialbattery': bool(sb), 'starlink': self.starlink.summary(),
             'sender_update': self.sender_update_running(),
             'bluetooth': self.bluetooth_state(),
+            'power': self.pi_power(),
         })
+
+    # ------------------------------------------------ the Pi's own power supply
+    # A Raspberry Pi can't measure its 5 V input (a Pi 5 can), but its firmware flags when the
+    # supply drops below ~4.63 V, now and since boot, and the kernel logs each time.
+    THROTTLED_FILE = '/sys/devices/platform/soc/soc:firmware/get_throttled'
+    HWMON_DIR = '/sys/class/hwmon'
+
+    def _run(self, argv):
+        try:
+            return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3).stdout.decode('utf-8', 'replace')
+        except (OSError, subprocess.SubprocessError):
+            return ''
+
+    def pi_power(self):
+        """{'now', 'since_boot', 'count', 'last_ago', 'volts', 'known'}, asked at most every 15 s."""
+        hit = getattr(self, '_power', None)
+        if hit and time.time() - hit[0] < 15:
+            return hit[1]
+        out = {'now': None, 'since_boot': None, 'count': 0, 'last_ago': None, 'volts': None, 'known': False}
+        bits = None
+        try:
+            with open(self.THROTTLED_FILE) as f:
+                bits = int(f.read().strip() or '0', 16)
+        except (OSError, ValueError):
+            m = re.search(r'throttled=0x([0-9a-fA-F]+)', self._run(['vcgencmd', 'get_throttled']))
+            if m:
+                bits = int(m.group(1), 16)
+        if bits is not None:
+            out.update(now=bool(bits & 0x1), since_boot=bool(bits & 0x10000), known=True)
+        else:
+            # rpi_volt hwmon: in0_lcrit_alarm = under-voltage now
+            try:
+                for d in os.listdir(self.HWMON_DIR):
+                    base = os.path.join(self.HWMON_DIR, d)
+                    with open(os.path.join(base, 'name')) as f:
+                        if f.read().strip() != 'rpi_volt':
+                            continue
+                    with open(os.path.join(base, 'in0_lcrit_alarm')) as f:
+                        out.update(now=f.read().strip() == '1', known=True)
+            except OSError:
+                pass
+        # the kernel's own lines: how often, and how long ago the last one was
+        stamps = [float(m) for m in re.findall(r'\[\s*(\d+\.\d+)\]\s*Under-voltage detected', self._run(['dmesg']))]
+        if stamps:
+            out['count'] = len(stamps)
+            out['known'] = True
+            out['since_boot'] = True
+            try:
+                with open('/proc/uptime') as f:
+                    out['last_ago'] = max(0, int(float(f.read().split()[0]) - stamps[-1]))
+            except (OSError, ValueError, IndexError):
+                pass
+        m = re.search(r'EXT5V_V\s+volt\(\d+\)=([\d.]+)V', self._run(['vcgencmd', 'pmic_read_adc', 'EXT5V_V']))   # Pi 5 only
+        if m:
+            out['volts'] = round(float(m.group(1)), 2)
+            out['known'] = True
+        self._power = (time.time(), out)
+        return out
 
     def bluetooth_state(self):
         """'on', 'off' (adapter not powered: no sensor can be heard) or None (no BlueZ / not known).
