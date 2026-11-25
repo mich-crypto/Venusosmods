@@ -1353,7 +1353,9 @@ class App(object):
         if via == 'wifi' and not have_wifi:
             return jsonr({'ok': False, 'error': 'For an update over Wi-Fi, connect the sensor to a Wi-Fi network '
                           'under Settings → Connection first (or update over Bluetooth).'}, 400)
-        if not values.get('/Hydro/Mac'):
+        # reachable: a Bluetooth broadcast was heard, or the driver talks to it over Wi-Fi
+        # (with Wi-Fi the sensor stops broadcasting on Bluetooth, so there may be no address)
+        if not values.get('/Hydro/Mac') and values.get('/Hydro/Transport') != 'wifi':
             return jsonr({'ok': False, 'error': 'no reading from the sensor yet, so the Pi can\'t reach it'}, 409)
         self.fw_job = {'state': 'downloading', 'log': [], 'started': time.time(), 'token': None, 'via': via,
                        'from_version': values.get('/FirmwareVersion'), 'name': name, 'size': 0, 'pct': -10}

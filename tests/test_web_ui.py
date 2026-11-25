@@ -568,6 +568,19 @@ class StarlinkApiTests(AppTestCase):
         self.values['/Hydro/CommandResult'] = '[{"s":"MOS","r":-50}]'
         self.assertEqual(body_of(self.get('/api/sender_cmd'))['result'], '[{"s":"MOS","r":-50}]')
 
+    def test_update_when_the_sensor_is_only_reached_over_wifi(self):
+        self.sensor_ready(wifi=False)
+        self.values.pop('/Hydro/Mac')                                    # no Bluetooth broadcast heard
+        self.assertEqual(self.post('/api/sender_update', {}).status, 409)
+        self.values['/Hydro/Transport'] = 'wifi'                          # but the driver reads it over Wi-Fi
+        import starlink_hub
+        orig = starlink_hub.run_async
+        starlink_hub.run_async = lambda *a, **k: None
+        try:
+            self.assertEqual(self.post('/api/sender_update', {}).status, 200)
+        finally:
+            starlink_hub.run_async = orig
+
     def test_update_over_wifi_with_the_sensors_own_network(self):
         self.sensor_ready(wifi=False)
         self.values['/Hydro/WifiSsid'] = 'MOS'
