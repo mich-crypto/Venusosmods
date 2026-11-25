@@ -858,17 +858,52 @@ async function heaterCmd(c, label) {
   setTimeout(async () => { await refreshState(); if (S.tab === 'heater') renderTab(); }, 1500);
 }
 // Truma codes as the CP plus shows them ("W 42 H"): W = warning (clears itself), E = error (reset on the CP plus).
-// Only codes we are sure of are named; the others point to the heater's manual. Add more from your manual here.
+// Gas Combi (4, 6, 4 E, 6 E), from the troubleshooting guide of the Truma CP plus manual: what it means
+// (Venus OS shows only that) and what to do. 'Code meanings' adds others.
 const TRUMA_CODES = {
-  W42: ['Window above the heater cowl is open', 'Close that window: the window switch stops the heater.'],
-  W255: ['The heater has no 12 V supply', 'Check the heater\'s 12 V supply and fuse.'],
+  W17: ["Water overtemperature (hot water mode with an empty water container)", "Switch the heater off, let it cool down completely, fill the water container, then switch it on again."],
+  W18: ["Air overtemperature: warm-air ducts not connected, outlets or recirculation intake blocked", "Connect all warm-air ducts and check them for kinks, clear the outlets and the recirculation intake, ventilate the installation space."],
+  W24: ["Imminent undervoltage: battery below 10.4 V", "Check with the engine running; charge the battery, check the contacts, replace an old battery."],
+  E29: ["FrostControl heating element draws too much current", "The FrostControl heating element needs replacing."],
+  W42: ["Window above the flue open", "Close and lock the window above or next to the flue cowl: its window switch stops the heater."],
+  E43: ["Overvoltage: 12 V supply above 16.4 V", "Make sure the heater gets a proper 12 V under load; as a test, disconnect the charger and the solar charger."],
+  E44: ["Undervoltage: battery below 10.0 V", "Charge the battery, check the contacts, replace an old battery."],
+  W45: ["No 230 V supply or 230 V overheating protection tripped (Combi E)", "Make sure the heater has 230 V; have the 230 V fuse checked by a qualified person; reset the 230 V overheating protection."],
+  E111: ["Fault in the electronics", "Make sure the heater gets a proper 12 V under load; as a test, disconnect the charger and the solar charger. If it stays: Truma Service."],
+  E112: ["Flame out or not detected, gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer."],
+  E121: ["Flame unstable or out, gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer."],
+  E122: ["Flame not detected, gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer. Also possible: flue blocked, regulator or electronics faulty (then Truma Service)."],
+  E202: ["Flame out or not detected, gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer."],
+  E211: ["Flame out or not detected, gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer."],
+  E212: ["Flame not detected: gas, flue or electronics", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer. Also possible: flue blocked, regulator or electronics faulty (then Truma Service)."],
+  W255: ["No 12 V at the heater or no connection to the control panel", "Switch the heater's 12 V back on (often on the vehicle's own control panel), check that the panel cable sits firmly at the CP plus and the heater, check the fuses. Do NOT run RESET → PR SET. The warning goes away by itself."],
+  W301: ["Overvoltage: 12 V supply too high", "Make sure the heater gets a proper 12 V under load; as a test, disconnect the charger and the solar charger."],
+  W417: ["Overvoltage: 12 V supply too high", "Make sure the heater gets a proper 12 V under load; as a test, disconnect the charger and the solar charger."],
+  W302: ["Undervoltage: battery too low", "Charge the battery, check the contacts, replace an old battery."],
+  W418: ["Undervoltage: battery too low", "Charge the battery, check the contacts, replace an old battery."],
+  W303: ["Imminent undervoltage: battery below 10.4 V", "Check with the engine running; charge the battery, check the contacts, replace an old battery."],
+  W411: ["Imminent undervoltage: battery below 10.4 V", "Check with the engine running; charge the battery, check the contacts, replace an old battery."],
+  W401: ["Hot water mode with an empty water container", "Switch the heater off, let it cool down completely, fill the water container, then switch it on again."],
+  W402: ["Air overtemperature", "Connect all warm-air ducts and check them for kinks, clear the outlets and the recirculation intake, ventilate the installation space."],
+  W407: ["No 230 V supply (Combi E)", "Make sure the heater has 230 V; have the 230 V fuse checked by a qualified person."],
+  W408: ["Gas supply interrupted in mixed mode (Combi E)", "Restore the gas supply, start in gas mode, acknowledge the fault, then switch back to mixed mode."],
+  W412: ["Window above the flue open", "Close and lock the window above or next to the flue cowl: its window switch stops the heater."],
+  E507: ["Gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer."],
+  E516: ["Gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer."],
+  E517: ["Gas supply interrupted", "Check the gas: bottle not empty and open, quick-closing valve in the gas line open, regulator not iced up (a regulator heater such as EisEx helps), propane rather than butane (butane does not work well below 10 °C), and the flue cowl outside free of snow, ice or leaves. A faulty gas regulator is a job for a gas engineer."],
+  E607: ["Heater locked: more than four fault resets within 15 minutes", "Remove the actual cause first, wait 15 minutes, then acknowledge the fault."],
+  E621: ["Room temperature sensor or its cable faulty", "If the code flashes, wait out the 15-minute lockout and acknowledge. If it stays: check the cable and connectors; the sensor reads about 12.6 kΩ at 20 °C; replace it if faulty."],
+  E624: ["Short circuit in the FrostControl heating element", "The FrostControl heating element needs replacing."],
+  E632: ["230 V overheating protection tripped (Combi E)", "Reset the 230 V overheating protection (reset button, see the Combi manual)."],
 };
+const TRUMA_ACK = "Acknowledge on the CP plus: press the knob (from standby twice). Do not switch the CP plus off and on (it locks the heater for 15 minutes), and no more than 4 resets in 15 minutes (E 607 H). A flashing code: a 15-minute lockout is running, wait.";
 function trumaCode(t) {
   const key = (t.ecls || 'W') + t.err, c = TRUMA_CODES[key], mine = S.trumaCodes && S.trumaCodes[key];
   const what = t.ecls === 'E' ? 'Error: the heater stops. Fix the cause and reset it on the CP plus.'
-    : 'Warning: the heater pauses and starts again by itself once the cause is gone.';
+    : 'Warning: the heater keeps running; the warning goes away by itself once the cause is gone.';
   return { title: (t.ecls || 'W') + ' ' + t.err + ' H' + (mine ? ': ' + mine : c ? ': ' + c[0] : ''),
-    help: c && !mine ? c[1] : what + (mine || c ? '' : ' Its meaning is not in the list yet: look it up in the Truma manual and add it below (Code meanings).') };
+    help: (c ? 'What to do: ' + c[1] : what + (mine ? '' : ' This code is not in Truma\'s published list for the gas Combi: note it exactly and contact Truma Service, or add its meaning below (Code meanings).'))
+, ack: t.ecls === 'E' ? TRUMA_ACK : '' };
 }
 // the code list (built in + from your manual), kept on the Pi: also used for the Venus OS notification
 async function loadTrumaCodes() {
@@ -923,7 +958,8 @@ async function tabHeater(main) {
     !live ? h('div', { class: 'banner warn', style: 'margin:8px 0' }, h('div', {},
       h('b', {}, t ? 'No data from the heater yet: ' + t.lin : 'The sensor has not reported the heater yet.'),
       h('div', { class: 'muted' }, 'The heater talks to the water level sensor over its LIN bus (CP plus panel); wiring and status in docs/truma.md. To see how it works now, start the simulation below.'))) : null,
-    code ? h('div', { class: 'banner ' + (t.ecls === 'E' ? 'bad' : 'warn'), style: 'margin:8px 0' }, h('div', {}, h('b', {}, code.title), h('div', { class: 'muted' }, code.help + ' Also shown in Venus OS as ' + (t.ecls === 'E' ? 'an alarm' : 'a warning') + '.'))) : null,
+    code ? h('div', { class: 'banner ' + (t.ecls === 'E' ? 'bad' : 'warn'), style: 'margin:8px 0' }, h('div', {}, h('b', {}, code.title), h('div', { class: 'muted' }, code.help), code.ack ? h('div', { class: 'muted', style: 'margin-top:4px' }, code.ack) : null,
+      h('div', { class: 'muted', style: 'margin-top:4px' }, 'Also shown in Venus OS as ' + (t.ecls === 'E' ? 'an alarm' : 'a warning') + '.'))) : null,
     h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;margin:12px 0' },
       h('div', {}, h('div', { class: 'big' }, f(t && t.room), h('small', {}, ' °C')),
         h('div', { class: 'muted' }, 'room' + (t ? (t.heat ? ' · heating to ' + f(t.set) + ' °C' : ' · heating off') : ''))),

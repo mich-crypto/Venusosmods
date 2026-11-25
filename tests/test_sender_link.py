@@ -779,10 +779,13 @@ class AlarmTests(unittest.TestCase):
         h = d.heater
         h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 1, 'water': 'eco', 'err': 42, 'ecls': 'W'})
         self.assertEqual(h.alarm.service['/Alarm'], 1)                      # W = warning
-        self.assertIn('W 42 H: window above the heater cowl is open', h.alarm.service['/CustomName'])
+        self.assertIn('W 42 H: Window above the flue open', h.alarm.service['/CustomName'])
         h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 112, 'ecls': 'E'})
         self.assertEqual(h.alarm.service['/Alarm'], 2)                      # E = alarm
-        self.assertIn('E 112 H', h.alarm.service['/CustomName'])
+        self.assertIn('E 112 H: Flame out or not detected', h.alarm.service['/CustomName'])   # short meaning only
+        import truma_heater as th
+        self.assertEqual(set(th.BUILTIN_CODES), set(th.BUILTIN_HELP))     # every code has its "what to do"
+        self.assertIn('E517', th.BUILTIN_CODES)
         h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
         self.assertEqual(h.alarm.service['/Alarm'], 0)
         path = os.path.join(tempfile.mkdtemp(), 'codes.json')

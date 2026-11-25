@@ -88,8 +88,17 @@ In `trumaPoll()` in the sketch, with `USE_TRUMA 1`:
 
 ## Codes
 
-The CP plus shows codes like **W 42 H** (W = warning: the heater pauses and starts
-again by itself) or **E 112 H** (E = error: fix the cause, then reset on the CP plus).
-The pages name the codes in `TRUMA_CODES` (Venus OS mods page) and `TCODES` (sensor
-page); any other code is shown with its class and a pointer to the Truma manual.
-Add codes from your heater's manual there.
+The CP plus shows codes like **W 42 H** (W = warning: the heater keeps running and the
+warning goes away by itself) or **E 517 H** (E = error: remove the cause, then
+acknowledge on the CP plus). The full list for the **gas Combi** (4, 6, 4 E, 6 E) from the
+troubleshooting guide of the Truma CP plus manual is built in (`BUILTIN_CODES` /
+`BUILTIN_HELP` in `truma_heater.py`, `TRUMA_CODES` on the settings page, `TCODES` on the
+sensor page):
+
+* Venus OS gets the short meaning as the warning/alarm name.
+* The Venus OS mods page and the sensor's page show the meaning, *What to do*, and for
+  E codes how to acknowledge: press the knob (from standby twice); don't switch the
+  CP plus off and on (15-minute lockout); no more than 4 resets in 15 minutes (E 607 H);
+  a flashing code means a lockout is running.
+* Codes outside the list are shown with their class and "contact Truma Service";
+  *Code meanings* on the Heater tab adds or changes meanings.
