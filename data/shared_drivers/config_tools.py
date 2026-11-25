@@ -229,6 +229,15 @@ SCHEMA = {
               'Probe 2 as its own temperature sensor in Venus OS.', options=YES_NO, default='no'),
             F('temperature2_name', 'text', 'Name of temperature 2', 'Shown in Venus OS and VRM.', default='Temperature 2'),
             F('temperature2_type', 'select', 'Temperature 2 type', '', options=TEMP_TYPES, default='generic'),
+            F('frost_alarm', 'bool', 'Frost alarm', 'Alarm in Venus OS while there is water in the tank and the '
+              'water temperature is at or below the limit.', options=YES_NO, default='yes'),
+            F('frost_alarm_c', 'float', 'Frost alarm at', 'Water temperature; it clears 1 °C above.', unit='°C',
+              min=-10, max=15, default='3'),
+            F('frost_alarm_min_l', 'float', 'Only with more than', 'Litres in the tank (an empty tank does not '
+              'freeze).', unit='L', min=0, max=1000, default='2', advanced=True),
+            F('frost_alarm_probe', 'select', 'Water temperature from', 'The probe in or at the tank.',
+              options=[['1', 'Temperature probe 1'], ['2', 'Temperature probe 2']], default='1', advanced=True),
+            F('frost_instance', 'int', 'Frost alarm VRM instance', '', min=0, max=999, advanced=True, default='27'),
             F('heater', 'bool', 'Truma heater', 'Truma Combi with CP plus on the same sensor (in preparation, '
               'docs/truma.md): room temperature, heating, set point and hot water in Venus OS.', options=YES_NO, default='no'),
             F('heater_name', 'text', 'Heater name', 'Shown in Venus OS and VRM.', default='Truma heater'),

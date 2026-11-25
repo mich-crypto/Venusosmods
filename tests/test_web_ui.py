@@ -621,6 +621,20 @@ class StarlinkApiTests(AppTestCase):
         p = body_of(self.get('/api/state'))['power']
         self.assertEqual((p['now'], p['since_boot'], p['count'], p['volts']), (False, False, 0, 5.13))
 
+    def test_truma_code_meanings_saved_and_checked(self):
+        import truma_heater
+        orig = truma_heater.CODES_FILE
+        truma_heater.CODES_FILE = os.path.join(self.tmp, 'codes.json')
+        try:
+            r = self.post('/api/truma_codes', {'codes': '{"E 112 H": "no flame", "W42": ""}'})
+            self.assertEqual(r.status, 200, r.body)
+            d = body_of(self.get('/api/truma_codes'))
+            self.assertEqual(d['custom'], {'E112': 'no flame'})            # empty meaning: removed
+            self.assertIn('W42', d['builtin'])
+            self.assertEqual(self.post('/api/truma_codes', {'codes': '{"X9": "?"}'}).status, 400)
+        finally:
+            truma_heater.CODES_FILE = orig
+
     def test_hanging_bluetooth_update_can_be_cancelled_and_ends_by_itself(self):
         sent = self.sensor_ready(wifi=False)
         image = bytearray(200000)

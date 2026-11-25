@@ -313,6 +313,17 @@ off* gives Wi-Fi the whole radio (the sensor refuses "Bluetooth only" so it can'
 cut itself off, and opens its own Wi-Fi if the Pi stops asking for 15 minutes).
 *Sensor address* is optional (e.g. 192.168.0.110, best fixed in the router).
 
+**Frost alarm** (Pi 2.5.0, on by default): while there is water in the tank (more
+than 2 L) and the water temperature (probe 1) is 3 °C or lower, Venus OS shows an
+alarm "… water 2.5 °C with 45 L – risk of freezing" (a digital input in alarm, so it
+appears in the notifications and VRM like a bilge or smoke alarm). It clears 1 °C
+above the limit. Limit, litres and probe: *Water → Settings → Frost alarm*.
+
+**Truma codes in Venus OS**: a W code (warning) or E code (error) of the heater shows
+as a warning or alarm in Venus OS, named with the code and its meaning. The Heater
+tab has *Code meanings*: add the codes of your heater from the Truma manual there
+(only W 42 and W 255 are built in); they are used on the page and in Venus OS.
+
 **Truma heater (in preparation)**: a Truma Combi with CP plus panel can be connected
 to the water level sensor's ESP32 over its LIN bus, with a small transceiver chip. The
 Pi side is ready: *Water → Settings → Truma heater* switches it on; a **Heater** tab

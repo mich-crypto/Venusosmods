@@ -18,12 +18,43 @@ nothing is published as measured; the controls are there but greyed out (no read
 
 import json
 import logging
+import os
 
-from venus_service import SwitchDevice, TemperatureDevice, TEMPERATURE_TYPES
+from venus_service import DigitalInputDevice, SwitchDevice, TemperatureDevice, TEMPERATURE_TYPES
 
 log = logging.getLogger('truma')
 
 WATER_MODES = ('off', 'eco', 'hot', 'boost')
+
+# Meanings of the codes the CP plus shows ("W 42 H"). Only codes we are sure of are built in; the
+# Heater tab of the settings page adds the others from the heater's manual (CODES_FILE).
+BUILTIN_CODES = {
+    'W42': 'window above the heater cowl is open',
+    'W255': 'the heater has no 12 V supply',
+}
+CODES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state', 'truma_codes.json')
+
+
+def load_codes(path=None):
+    """{'W42': 'meaning', ...}: built in, overridden / extended by the file."""
+    codes = dict(BUILTIN_CODES)
+    try:
+        with open(path or CODES_FILE) as f:
+            extra = json.load(f)
+        if isinstance(extra, dict):
+            codes.update((str(k).upper().replace(' ', ''), str(v)) for k, v in extra.items() if v)
+    except (OSError, ValueError):
+        pass
+    return codes
+
+
+def code_text(d, codes=None):
+    """'W 42 H: window above the heater cowl is open' (or just the code), '' without a code."""
+    if not d.get('err'):
+        return ''
+    cls = d.get('ecls') or 'W'
+    meaning = (codes if codes is not None else load_codes()).get('%s%s' % (cls, d['err']))
+    return '%s %s H%s' % (cls, d['err'], ': ' + meaning if meaning else '')
 ROOM_MIN, ROOM_MAX = 5, 30
 
 
@@ -73,7 +104,13 @@ class TrumaHeater(object):
             bus, uid + '_truma', product_name='Truma Combi heater', connection=connection,
             default_instance=config.getint('heater_instance', 26),
             custom_name=name, timeout_s=timeout, setup=self._add_controls)
-        self.devices = [self.room, self.switch]
+        # the code as a warning (W) or alarm (E) in Venus OS: a digital input in alarm, named after it
+        self.name = name
+        self.alarm = DigitalInputDevice(
+            bus, uid + '_truma_alarm', product_name='Truma Combi warnings and errors', connection=connection,
+            default_instance=config.getint('heater_instance', 26), custom_name=name, timeout_s=timeout)
+        self._last_code = None
+        self.devices = [self.room, self.switch, self.alarm]
 
     # ------------------------------------------------------------ Venus OS
     def _add_channel(self, svc, ch, name, otype, callback, lo=None, hi=None):
@@ -137,6 +174,19 @@ class TrumaHeater(object):
             self._frost(d)
         for ch in ('heat', 'room', 'water'):
             s[so(ch, 'Status')] = 0x09 if live else 0x20   # on/ok, or "not available"
+        self._alarm(d if live else {})
+
+    def _alarm(self, d):
+        """W code -> warning, E code -> alarm in Venus OS (notification with the code and meaning)."""
+        text = code_text(d)
+        level = 0 if not text else (2 if (d.get('ecls') or 'W') == 'E' else 1)
+        if text != self._last_code:
+            if text:
+                log.warning('heater %s: %s', 'error' if level == 2 else 'warning', text)
+            elif self._last_code:
+                log.info('heater code cleared (%s)', self._last_code)
+            self._last_code = text
+        self.alarm.publish(level, ('%s: %s' % (self.name, text)) if text else self.name)
 
     def _frost(self, d):
         """Frost guard: room too cold with the heating off -> switch it on, once per cold spell."""

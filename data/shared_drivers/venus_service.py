@@ -260,6 +260,33 @@ TEMPERATURE_TYPES = {
 }
 
 
+class DigitalInputDevice(VenusDevice):
+    """com.victronenergy.digitalinput.* used as an alarm input: /Alarm 0 ok, 1 warning, 2 alarm, which
+    Venus OS turns into a notification (like a bilge or smoke alarm) with the device's name."""
+    DEVICE_CLASS = 'digitalinput'
+    STATE_OK, STATE_ALARM = 8, 9          # the GUI's "Ok" / "Alarm"
+    TYPE_GENERIC = 10
+
+    def __init__(self, settings_bus, uid, product_name, connection, input_type=TYPE_GENERIC, **kw):
+        self.input_type = input_type
+        super(DigitalInputDevice, self).__init__(settings_bus, uid, product_name, connection, **kw)
+
+    def add_paths(self, s):
+        s.add_path('/Type', self.input_type)
+        s.add_path('/State', self.STATE_OK)
+        s.add_path('/Alarm', 0)
+        s.add_path('/Count', 0)
+
+    def publish(self, level, name=None):
+        """level 0 ok, 1 warning, 2 alarm; name: shown with the notification (the code and its meaning)."""
+        s = self.service
+        if name is not None:
+            s['/CustomName'] = name
+        s['/State'] = self.STATE_ALARM if level else self.STATE_OK
+        s['/Alarm'] = level
+        self.mark_seen()
+
+
 class TemperatureDevice(VenusDevice):
     """com.victronenergy.temperature.* - shows up under the GUI's environment sensors."""
     DEVICE_CLASS = 'temperature'
