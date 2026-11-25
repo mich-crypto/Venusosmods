@@ -1356,13 +1356,15 @@ class App(object):
         if not values.get('/Hydro/Mac') and values.get('/Hydro/Transport') != 'wifi':
             return jsonr({'ok': False, 'error': 'no reading from the sensor yet, so the Pi can\'t reach it'}, 409)
         self.fw_job = {'state': 'downloading', 'log': [], 'started': time.time(), 'token': None, 'via': via,
-                       'from_version': values.get('/FirmwareVersion'), 'name': name, 'size': 0, 'pct': -10}
+                       'from_version': values.get('/FirmwareVersion'), 'name': name, 'size': 0, 'pct': -10,
+                       # 'bluetooth' = the water driver sends it over its own link, which is Wi-Fi when it talks to the sensor that way
+                       'link': 'Wi-Fi' if values.get('/Hydro/Transport') == 'wifi' else 'Bluetooth'}
         self.fw_log('Downloading the latest sensor firmware from GitHub ...')
         script = ('curl -fsSL -m 120 -o "$2" "$1" 2>&1 && exit 0; '
                   'wget -q -T 120 -O "$2" "$1" 2>&1 && exit 0; exit 1')
         starlink_hub.run_async(['sh', '-c', script, 'fetch', self.FW_URL % self.UPDATE_REPO, self.FW_FILE],
                                self._fw_downloaded, timeout=150, with_errors=True)
-        return jsonr({'ok': True, 'message': 'Update started over %s.' % ('Wi-Fi' if via == 'wifi' else 'Bluetooth')})
+        return jsonr({'ok': True, 'message': 'Update started over %s.' % ('Wi-Fi' if via == 'wifi' else self.fw_job['link'])})
 
     def _fw_downloaded(self, rc, out):
         job = self.fw_job
@@ -1378,8 +1380,9 @@ class App(object):
             return
         job['data'], job['size'] = data, len(data)
         if job['via'] == 'bluetooth':
-            # the water driver sends it over its own Bluetooth connection, in resumable rounds
-            self.fw_log('Got %d kB. Sending it to the sensor over Bluetooth (a few minutes) ...' % (len(data) // 1024))
+            # the water driver sends it over its own link: over Wi-Fi in one go, over Bluetooth in resumable rounds
+            self.fw_log('Got %d kB. Sending it to the sensor %s ...' % (len(data) // 1024, 'over the Wi-Fi network (under a minute)'
+                        if job.get('link') == 'Wi-Fi' else 'over Bluetooth (a few minutes)'))
             try:
                 self.bus.call_blocking(job['name'], '/Hydro/Command', BUS_ITEM, 'SetValue', 'v',
                                        [dbus.String('ota ' + self.FW_FILE, variant_level=1)], timeout=4)
@@ -1397,7 +1400,7 @@ class App(object):
             return
         url = 'http://%s:%d/fw/%s.bin' % (ip, self.http_port, job['token'])
         self.fw_log('Got %d kB. Offering it to the sensor at %s' % (len(data) // 1024, url.rsplit('/', 1)[0] + '/...'))
-        self.fw_log('Asking the sensor over Bluetooth to join the Wi-Fi and download it ...')
+        self.fw_log('Asking the sensor over %s to join the Wi-Fi and download it ...' % job.get('link', 'Bluetooth'))
         try:
             self.bus.call_blocking(job['name'], '/Hydro/Command', BUS_ITEM, 'SetValue', 'v',
                                    [dbus.String('fwget ' + url, variant_level=1)], timeout=4)

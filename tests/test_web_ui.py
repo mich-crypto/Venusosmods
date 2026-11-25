@@ -618,6 +618,21 @@ class StarlinkApiTests(AppTestCase):
         self.assertEqual(log['state'], 'done')
         self.assertIn('now runs firmware 4.2', log['text'])
 
+    def test_sensor_update_says_wifi_when_the_driver_talks_over_wifi(self):
+        sent = self.sensor_ready(wifi=False)
+        self.values['/Hydro/Transport'] = 'wifi'
+        r = body_of(self.post('/api/sender_update', {'via': 'bluetooth'}))
+        self.assertIn('Wi-Fi', r['message'])
+        image = bytearray(200000)
+        image[0], image[27] = 0xE9, 0x3C
+        with open(self.app.FW_FILE, 'wb') as f:
+            f.write(image)
+        self.started[-1][1](0, b'')
+        self.assertEqual(sent[-1][1:], ('/Hydro/Command', 'ota ' + self.app.FW_FILE))     # the driver sends it
+        text = body_of(self.get('/api/sender_update_log'))['text']
+        self.assertIn('over the Wi-Fi network', text)
+        self.assertNotIn('Bluetooth', text)
+
     def test_pi_power_from_firmware_flags_and_kernel_lines(self):
         tmp = os.path.join(self.tmp, 'throttled')
         with open(tmp, 'w') as f:
