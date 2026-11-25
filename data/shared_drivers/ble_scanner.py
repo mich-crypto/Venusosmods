@@ -185,6 +185,29 @@ class BlueZScanner(object):
         except dbus.exceptions.DBusException as e:
             log.warning('Could not unstick BLE discovery: %s', e)
 
+    def restart(self, power_cycle=False):
+        """The scan is said to run but nothing arrives: stop and start it again, or power-cycle
+        the adapter (it comes back on after 2 s and scanning starts again)."""
+        if self._paused or self._ext_paused:
+            return
+        try:
+            if self._adapter_path is None:
+                self._adapter_path = self._find_adapter()
+                if self._adapter_path is None:
+                    return
+            obj = self._bus.get_object(BLUEZ, self._adapter_path)
+            if power_cycle:
+                dbus.Interface(obj, PROPS_IFACE).Set(ADAPTER_IFACE, 'Powered', dbus.Boolean(False))
+                GLib.timeout_add_seconds(2, self._power_on)
+                return
+            try:
+                dbus.Interface(obj, ADAPTER_IFACE).StopDiscovery()
+            except dbus.exceptions.DBusException:
+                pass
+            GLib.timeout_add(700, self._rearm)
+        except dbus.exceptions.DBusException as e:
+            log.warning('Could not restart BLE discovery: %s', e)
+
     def _power_on(self):
         try:
             obj = self._bus.get_object(BLUEZ, self._adapter_path)
