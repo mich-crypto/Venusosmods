@@ -62,6 +62,7 @@ class Esp32HydroDriver(BleDriver):
                          '/Hydro/Sloshing', '/Hydro/Fault', '/Hydro/Temperature2',
                          # Bluetooth link (firmware 2.7+)
                          '/Hydro/WifiMode', '/Hydro/AccessPoint', '/Hydro/WifiIp',
+                         '/Hydro/WifiSsid', '/Hydro/WifiKnown',
                          '/Hydro/LinkStatus', '/Hydro/LinkTime', '/Hydro/TempNames', '/Hydro/Mac',
                          # live view: raw reading over the Bluetooth link
                          '/Hydro/Signal', '/Hydro/SignalUnit', '/Hydro/RawHeightMm',
@@ -95,6 +96,7 @@ class Esp32HydroDriver(BleDriver):
         self._mode = None              # what the running exchange is: checkin | live | stop
         self._link_quiet_until = 0     # old firmware without the link: try only once an hour
         self._command = None           # waiting to be sent to the sensor
+        self._last_cmd = ''
         self.ota = None                # a firmware upload over Bluetooth, see _ota_step
         self.live_until = 0            # monotonic end of the live view (0 = off)
 
@@ -140,8 +142,8 @@ class Esp32HydroDriver(BleDriver):
             return False
         if cmd.startswith('ota '):
             return self._ota_start(cmd[4:].strip())
-        if cmd.startswith('fwget '):
-            cmd += '\t%s\t%s' % (self.wifi_ssid, self.wifi_password)
+        if cmd.startswith('fwget ') and self.wifi_ssid:
+            cmd += '\t%s\t%s' % (self.wifi_ssid, self.wifi_password)   # else the sensor uses its own network (4.5+)
         self._command = cmd
         self.tank['/Hydro/CommandResult'] = None
         GLib.timeout_add(0, self._send_command)
@@ -153,6 +155,7 @@ class Esp32HydroDriver(BleDriver):
             return False
         cmd, self._command = self._command, None
         if cmd:
+            self._last_cmd = cmd
             self._send('command', [proto.link_commands(self.sender_password)[0], b'C' + cmd.encode('utf-8')])
         return False
 
@@ -405,8 +408,8 @@ class Esp32HydroDriver(BleDriver):
             if any(r.startswith('denied') for r in replies):
                 answer = 'wrong sensor password'
             self.tank['/Hydro/CommandResult'] = answer
-            # the sensor restarts with the new firmware: ask for its version soon (twice)
-            for s in (45, 90):
+            # Wi-Fi changes: read the new state back soon; a firmware download: the new version later
+            for s in ((3, 25) if self._last_cmd.startswith('wifi ') else (45, 90)):
                 GLib.timeout_add_seconds(s, lambda: (self._link_tick(), False)[1])
             return
         if mode in ('live', 'stop'):
@@ -450,6 +453,9 @@ class Esp32HydroDriver(BleDriver):
             self._wifi_pending = None
         self.tank['/Hydro/AccessPoint'] = int(bool(info.get('ap')))
         self.tank['/Hydro/WifiIp'] = info.get('ip') or ''
+        self.tank['/Hydro/WifiSsid'] = info.get('ssid') or ''
+        if 'kn' in info:
+            self.tank['/Hydro/WifiKnown'] = json.dumps(info.get('kn') or [])
         self.tank['/Hydro/TempNames'] = json.dumps(info.get('tn') or [])
         self.tank['/Hydro/FwError'] = info.get('fw_err') or ''
         self.tank['/Hydro/LinkStatus'] = 'ok'

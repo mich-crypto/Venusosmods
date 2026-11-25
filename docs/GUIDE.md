@@ -178,23 +178,24 @@ It never switches off while a phone is connected to it. The **green flash**
 (every 2 s, dim) shows when its page is reachable.
 
 **Sensor Wi-Fi** (Venus OS page → Water → Settings → Connection) is one switch:
-*AP on* (own Wi-Fi always on), *Wi-Fi network* (joins your van Wi-Fi) or
+*AP only* (own Wi-Fi always on), *Wi-Fi network* (joins your van Wi-Fi) or
 *Bluetooth only* (saves energy, own Wi-Fi only as fallback). In detail:
 
 | Switch position | What it does | Energy |
 |---|---|---|
 | **Bluetooth only** (default) | Pi and sensor talk over Bluetooth; the own Wi-Fi comes on only as above (power-on, BOOT button, Pi silent for 15 minutes) | lowest |
-| **Wi-Fi network** | also joins your van Wi-Fi (*Wi-Fi network name / password*); its page is then on the van network (link on the Water tab); own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
-| **AP on** | the own Wi-Fi "Watertank-1" is always on | highest |
+| **Wi-Fi network** | also joins one of its known networks; its page is then on the van network (link on the Water tab); own Wi-Fi only if neither the van Wi-Fi nor the Pi is there | medium |
+| **AP only** | the own Wi-Fi "Watertank-1" is always on | highest |
 
-**On the sensor itself** (firmware 4.3+): its own page has the same switch in
-the card *Wi-Fi settings*, with its known networks to connect with one tap and
-*Scan* to add others (4.4). The last change wins: the Pi only
-sends its own setting again when you change it on the Venus OS page.
+Under *Wi-Fi network* both pages show the sensor's **known networks** (it
+remembers up to 6 with their passwords): *Connect* joins one, ✕ forgets it.
+*Scan for networks* lets the sensor look around; tap a network, type its
+password, *Connect*, and it is known from then on. *Use the Pi's Wi-Fi* sends
+the network the Pi is on, password included (it never passes the browser).
 
-Set it under Water → Settings → *Connection*. The sensor follows at its next
-Bluetooth check-in (within a minute after saving), so the Pi must be receiving
-it. A phone that is only joined to the sensor's Wi-Fi doesn't keep it on; the
+On the Venus OS page (sensor firmware 4.5+) every click goes to the sensor at
+once over Bluetooth, in a few seconds: no *Save*, no driver restart. The own
+page of the sensor (4.4+) has the same card. A phone that is only joined to the sensor's Wi-Fi doesn't keep it on; the
 sensor's page must have been used in the last 10 minutes (firmware 3.7+). Its
 page footer says why the Wi-Fi is on.
 
@@ -211,9 +212,9 @@ To use the page:
    `http://`, browsers otherwise try `https://`, which the sender doesn't
    speak. Still nothing: switch mobile data off for a moment.
 
-The page (firmware 4.4) shows at the top right a **blue light** (Bluetooth
-broadcasting) with the time since the Pi last checked in ("Pi 2 min"; amber =
-Pi silent for 15 min, red = not broadcasting) and a **Wi-Fi symbol** with the
+The page (firmware 4.5) shows at the top right a **breathing blue light**
+(Bluetooth) with the time since Venus OS last checked in ("Venus OS 2 min";
+red = no connection: Venus OS silent for 15 min, or not broadcasting) and a **Wi-Fi symbol** with the
 network it is on, "AP on" or "off". Below: a drawing of the tank filling up,
 litres, level, water height and sensor signal, with a small **→0** button
 (tank empty: set zero). Then:
@@ -256,8 +257,8 @@ It switches itself off after 15 minutes and at a restart.
 | off | still starting, or no power |
 
 The Wi-Fi stays on (green) until the Pi has checked in over Bluetooth, which
-needs sender firmware 2.7+ and the current Pi software (Water → Water level sensor shows
-"Bluetooth link: ok"), and always for the first 10 minutes after power-on. Some boards have the
+needs sender firmware 2.7+ and the current Pi software (the Bluetooth light on the
+Water tab breathes blue), and always for the first 10 minutes after power-on. Some boards have the
 LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
 `STATUS_LED_MAX` sets how bright it gets.
 
@@ -286,7 +287,7 @@ Check from both ends:
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
 
-**"Connected" but "Two-way link: device disconnected"** on the Water tab: the
+**"Connected" but a red Bluetooth light** on the Water tab ("the Pi can't connect to the sensor"): the
 readings arrive (the sensor broadcasts, the Pi listens), but the short
 connection for settings and updates fails. Sensor firmware 4.0 or newer fixes
 dropped links with the Raspberry Pi's built-in Bluetooth; until it works the
@@ -672,16 +673,19 @@ if you forget it. Open the address in Safari and add it to the home screen.
   from it, without smoothing, about twice a second for 15 minutes (*Stop live
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches
   the sender's test mode on meanwhile. Needs sender firmware 2.8+.
-* **Water → Water level sensor** – the sensor's firmware (installed and latest),
-  its Wi-Fi state and the two-way link, **Check for update** and two ways to
+* **Water → Water tank** – at the top the **Bluetooth light** (breathes blue while the
+  Pi reaches the sensor, red when not, with the time of the last contact), the
+  sensor's **Wi-Fi** (network name, "AP on" or off) and, when the sensor is on the
+  same network, a link to its own page.
+* **Water → Firmware** – installed and latest version, **Check for update** and two ways to
   update (the old firmware stays if anything fails):
   * **Update over Bluetooth** (sensor firmware 4.2+): the water driver sends the
     file over the same connection as the live reading, in rounds of 40 small
     packets. After each round the sensor says how much it has, so a dropped
     connection or a refused packet only pauses it. A few minutes.
   * **Update over Wi-Fi** (4.1+): over Bluetooth the Pi only sends a short
-    command; the sensor joins the Wi-Fi from *Settings → Connection* (*Use the
-    Pi's Wi-Fi* fills it in) and downloads the file from the Pi in seconds.
+    command; the sensor joins its Wi-Fi network (4.5+: the one it is set to under
+    *Settings → Connection*) and downloads the file from the Pi in seconds.
   Older sensor firmware: update once on the sensor's own page.
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the

@@ -80,6 +80,14 @@ details.adv { margin:6px 0 0; } details.adv > summary { cursor:pointer; color:va
 .segbtn { background:transparent; color:var(--muted); border:0; border-right:1px solid var(--line); padding:8px 14px; font:inherit; font-size:.85rem; cursor:pointer; }
 .segbtn:last-child { border-right:0; }
 .segbtn.on { background:var(--ink); color:var(--bg); font-weight:600; }
+.lights { display:inline-flex; gap:6px; flex-wrap:wrap; vertical-align:middle; }
+.lpill { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); border-radius:99px; padding:2px 9px; font-size:.72rem; letter-spacing:0; text-transform:none; font-weight:500; color:var(--muted); white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis; }
+.ldot { width:8px; height:8px; border-radius:50%; flex:none; }
+.ldot.br { animation:breathe 2.4s ease-in-out infinite; } @keyframes breathe { 0%,100% { opacity:.25; } 50% { opacity:1; } }
+.nlist { border:1px solid var(--line); border-radius:4px; margin:6px 0; }
+.nitem { display:flex; align-items:center; gap:8px; padding:7px 10px; border-bottom:1px solid var(--line-soft); flex-wrap:wrap; }
+.nitem:last-child { border-bottom:0; } .nitem .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nitem.pick { cursor:pointer; }
 .chipbtn { cursor:pointer; background:transparent; font-family:inherit; }
 .lockmenu { position:absolute; right:0; top:calc(100% + 6px); background:var(--card); border:1px solid var(--line); border-radius:4px; padding:6px; z-index:20; min-width:140px; }
 .switch input { width:46px; height:26px; appearance:none; -webkit-appearance:none; background:#262626; border:1px solid var(--line);
@@ -540,6 +548,8 @@ function refreshDeviceTop() {
   const box = $('#devlive'), want = { water: 'esp32', gas: 'mopeka', fridge: 'fridge' }[S.tab];
   if (!box || !S.devTop || S.devTop.kind !== want || $('#dlg').open) return;
   box.replaceChildren(deviceHeader(S.devTop.kind, S.devTop.section));
+  const sw = $('#sensorwifi');
+  if (sw && !sw.contains(document.activeElement)) drawSensorWifi(sw);
 }
 
 async function svcRestart(name) { await post('/api/restart', { target: name }); await refreshState(); }
@@ -789,7 +799,7 @@ async function gasHistoryCard() {
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
   esp32: { title: 'Water tank', what: 'water level sensor', add: flowWater, simple: [],
-    groups: [['Connection', ['wifi_mode', 'wifi_ssid', 'wifi_password', 'sender_password']],
+    groups: [['Connection', ['sender_password']],
              ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']]] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
@@ -841,6 +851,32 @@ function tankSvg(hmm, litres, cap, id) {
   return s;
 }
 
+// Bluetooth light (breathes while the Pi reaches the sensor, red when not) and the sensor's Wi-Fi
+function sensorLights(dev) {
+  const v = dev.values, when = v['/Hydro/LinkTime'], age = when ? Math.max(0, Math.round(Date.now() / 1000 - when)) : null;
+  const ok = val(dev, '/Connected') === 1 && v['/Hydro/LinkStatus'] === 'ok' && age != null && age < 900;
+  const ip = v['/Hydro/WifiIp'], ap = !!v['/Hydro/AccessPoint'], ssid = v['/Hydro/WifiSsid'];
+  const wifiOn = !!ip || ap;
+  return h('span', { class: 'lights' },
+    h('span', { class: 'lpill', title: ok ? 'Bluetooth: the Pi reached the sensor ' + ago(age) + ' ago' : 'Bluetooth: no connection to the sensor' + (v['/Hydro/LinkStatus'] ? ' (' + v['/Hydro/LinkStatus'] + ')' : '') },
+      h('i', { class: 'ldot' + (ok ? ' br' : ''), style: 'background:' + (ok ? '#4d94ff' : 'var(--bad)') }), 'Bluetooth' + (age != null ? ' ' + ago(age) : '')),
+    v['/Hydro/WifiMode'] == null ? null : h('span', { class: 'lpill', style: 'color:' + (wifiOn ? 'var(--ok)' : 'var(--faint)'),
+        title: (ip ? 'Sensor on Wi-Fi “' + (ssid || '') + '” (' + ip + ')' : 'Sensor not on a Wi-Fi network') + ' · own network (AP) ' + (ap ? 'on' : 'off') },
+      wifiIcon(), ip ? (ssid || 'Wi-Fi') + (ap ? ' + AP' : '') : ap ? 'AP on' : 'Wi-Fi off'));
+}
+function wifiIcon() {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('width', '13'); s.setAttribute('height', '13'); s.setAttribute('aria-hidden', 'true');
+  s.innerHTML = '<path d="M2.5 9a14 14 0 0 1 19 0M6 12.5a9 9 0 0 1 12 0M9.4 16a4 4 0 0 1 5.2 0" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="12" cy="19.3" r="1.7" fill="currentColor"/>';
+  return s;
+}
+// the sensor's link is only useful from the same network (the page's address tells, if it is an IP)
+function sameNetwork(ip) {
+  const host = location.hostname;
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(host)) return true;
+  return host.split('.').slice(0, 3).join('.') === String(ip).split('.').slice(0, 3).join('.');
+}
+
 function deviceHeader(kind, section) {
   const st = S.state, spec = DEV[kind];
   const dev = deviceOf(st, { mopeka: 'gas', esp32: 'water', fridge: 'fridge' }[kind]);
@@ -856,7 +892,11 @@ function deviceHeader(kind, section) {
         metric('Temperature', v['/Temperature'] == null ? '–' : v['/Temperature'].toFixed(0), '°C', 'at the sensor')));
     actions.append(primary('Calibrate', () => flowGasCalibrate(), !canEdit()), plain('Change the sensor', open(flowGas)));
   } else if (kind === 'esp32') {
-    card.append(h('h3', {}, 'Water tank ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
+    const ip = v['/Hydro/WifiIp'];
+    card.append(h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;gap:6px;margin:0' },
+        h('h3', { style: 'margin:0;white-space:nowrap' }, 'Water tank ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
+        h('span', { class: 'lights' }, dev ? sensorLights(dev) : null,
+          ip && sameNetwork(ip) ? h('a', { href: 'http://' + ip, target: '_blank', class: 'lpill', title: 'The sensor\'s own page' }, ip + ' ↗') : null)),
       h('div', { class: 'hero', style: 'grid-template-columns:repeat(2,1fr);margin:8px 0 0' },
         metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L of ' + (v['/Capacity'] == null ? '–' : (v['/Capacity'] * 1000).toFixed(0)) + ' L'),
         metric('Water height', v['/Hydro/HeightMm'] == null ? '–' : String(v['/Hydro/HeightMm']), 'mm', section.values.level_table ? 'your calibration' : 'sensor\'s own table'),
@@ -912,59 +952,16 @@ async function tabDevice(kind) {
   if (spec.groups) {
     const card = h('div', { class: 'card' }, h('h3', {}, 'Settings'));
     for (const [title, keys] of spec.groups) {
-      card.append(h('h4', { class: 'group' }, title), ...keys.map(k => byKey[k]).filter(Boolean).map(row));
+      const rows = keys.map(k => byKey[k]).filter(Boolean).map(row);
+      if (kind === 'esp32' && title === 'Connection') {
+        rows.forEach(r => r.querySelectorAll('.help').forEach(e => e.remove()));
+        card.append(h('h4', { class: 'group' }, title), sensorWifiBlock(), ...rows);
+      } else card.append(h('h4', { class: 'group' }, title), ...rows);
     }
     if (kind === 'esp32') {
       card.append(h('h4', { class: 'group' }, 'Calibration'), h('div', { class: 'row' },
         primary('Calibrate', () => flowWaterCalibrate(), !canEdit()),
         plain('Change the water level sensor', () => { const w = wizOpen(spec.title); flowWater(w); w.back = () => openSetup(); })));
-      // Sensor Wi-Fi as one switch: AP on / Wi-Fi network / Bluetooth only
-      const mode = form.fields.wifi_mode && form.fields.wifi_mode.input;
-      if (mode) {
-        const field = mode.closest('.field');
-        const opts = [['ap', 'AP on'], ['van', 'Wi-Fi network'], ['auto', 'Bluetooth only']];
-        const help = { ap: 'The sensor\'s own Wi-Fi "Watertank-1" is always on (uses the most energy).',
-          van: 'The sensor joins the Wi-Fi network below; its page is then reachable in the van network.',
-          auto: 'Saves energy: Wi-Fi off. It only comes on by itself if the Pi can\'t reach the sensor over Bluetooth for 15 minutes, or for 30 minutes after pressing the BOOT button.' };
-        const seg = h('div', { class: 'seg', role: 'radiogroup' });
-        const note = h('div', { class: 'help' });
-        const draw = () => {
-          const cur = mode.value === 'off' || !mode.value ? 'auto' : mode.value;
-          clear(seg).append(...opts.map(([v, label]) => h('button', { type: 'button', role: 'radio', 'aria-checked': cur === v,
-            class: 'segbtn' + (cur === v ? ' on' : ''), disabled: !canEdit(),
-            onclick: () => { mode.value = v; mode.dispatchEvent(new Event('input')); mode.dispatchEvent(new Event('change')); draw(); } }, label)));
-          note.textContent = help[cur];
-        };
-        mode.style.display = 'none';
-        field.querySelectorAll('.help').forEach(el => { el.style.display = 'none'; });
-        field.append(seg, note);
-        draw();
-      }
-      // the Wi-Fi name and password are needed for "Wi-Fi network" and for updates from this page:
-      // take the Pi's own Wi-Fi with one click, or pick a nearby network
-      const ssidField = form.fields.wifi_ssid && form.fields.wifi_ssid.input;
-      if (ssidField && canEdit()) {
-        const pick = h('div', { class: 'row', style: 'margin:4px 0 8px' });
-        const fieldBox = ssidField.closest('.field');
-        fieldBox.insertBefore(pick, fieldBox.children[1] || null);     // under the field's label
-        api('/api/wifi_networks').then(r => {
-          if (!r.ok) return;
-          const { pi, networks } = r.data;
-          if (pi) pick.append(h('button', { type: 'button', class: 'btn small primary', onclick: async () => {
-            const x = await api('/api/sender_use_pi_wifi', {});
-            toast(x.ok ? x.data.message : x.data.error, !x.ok);
-            if (x.ok) { await loadDriver(); await renderTab(); }
-            else if (x.data.ssid) { ssidField.value = x.data.ssid; ssidField.dispatchEvent(new Event('input')); }
-          } }, 'Use the Pi\'s Wi-Fi (' + pi + ')'));
-          if (networks.length) {
-            const sel = h('select', { style: 'max-width:240px' }, h('option', { value: '' }, pi ? 'or pick a network…' : 'Pick a network…'),
-              networks.map(n => h('option', { value: n.name }, n.name + (n.strength ? '  ' + n.strength + ' %' : ''))));
-            sel.addEventListener('change', () => { if (sel.value) { ssidField.value = sel.value; ssidField.dispatchEvent(new Event('input')); } });
-            pick.append(sel);
-          }
-        });
-      }
-      // shown always: the firmware update downloads over this Wi-Fi in every mode
     }
     main.append(card);
   } else if (simple.length || forget) main.append(h('div', { class: 'card' }, h('h3', {}, 'Settings'), simple.map(row), forget));
@@ -2429,52 +2426,139 @@ function senderUpdate() {
 function senderCard() {
   const dev = deviceOf(S.state, 'water'), v = dev ? dev.values : {};
   const inst = v['/FirmwareVersion'], latest = S.senderFw && S.senderFw.latest, newer = senderUpdate();
-  const link = v['/Hydro/LinkStatus'], when = v['/Hydro/LinkTime'];
-  const modes = { auto: 'Bluetooth only, own Wi-Fi as fallback', van: 'van Wi-Fi', ap: 'own Wi-Fi always on', off: 'Wi-Fi off' };
+  const link = v['/Hydro/LinkStatus'];
   const body = h('div', {});
   const sec = S.driver && (S.driver.sections || []).find(x => x.kind === 'esp32');
-  const mode = sec ? (sec.values.wifi_mode || 'auto') : null;
   const svc = (S.state.services || []).find(x => x.name === 'esp32_hydro');
   const noData = !dev || (link || '').indexOf('no broadcast') === 0;
-  const card = h('div', { class: 'card' }, h('h3', {}, 'Water level sensor ', newer ? h('span', { class: 'chip warn' }, 'firmware update available') : null),
+  // over Wi-Fi when the sensor knows a network (its own, 4.5+, or the one in the Pi's settings)
+  const ssid = v['/Hydro/WifiSsid'] || (sec && (sec.values.wifi_ssid || '').trim()) || '';
+  const go = via => confirmThen((via === 'bluetooth'
+      ? 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over Bluetooth? It takes a few minutes; a dropped connection only pauses it. '
+      : 'Update the sensor firmware' + (latest ? ' to ' + latest : '') + ' over Wi-Fi? The sensor joins “' + ssid + '” and downloads it from the Pi (about a minute). ')
+      + 'If anything fails it keeps its old firmware.', async () => {
+    const x = await api('/api/sender_update', { via });
+    toast(x.ok ? x.data.message : x.data.error, !x.ok);
+    if (x.ok) watchSenderUpdate(body);
+  });
+  const label = newer || !inst ? 'Update' : 'Reinstall';
+  return h('div', { class: 'card' }, h('h3', {}, 'Firmware ', newer ? h('span', { class: 'chip warn' }, 'update available') : null),
     h('div', { class: 'stats' },
-      stat('Firmware', inst || '–', latest ? 'latest ' + latest : '', true),
-      stat('Wi-Fi', v['/Hydro/WifiMode'] ? (modes[v['/Hydro/WifiMode']] || v['/Hydro/WifiMode']) : '–',
-        v['/Hydro/WifiMode'] == null ? '' : (v['/Hydro/AccessPoint'] ? 'own Wi-Fi on' : 'own Wi-Fi off') + (v['/Hydro/WifiIp'] ? ' · ' + v['/Hydro/WifiIp'] : ''), true),
-      stat('Two-way link', !dev ? 'no data' : link || 'not checked yet', (when ? 'ok ' + ago(Math.max(0, Math.round(Date.now() / 1000 - when))) + ' ago · ' : '') + 'settings, updates', true)),
-    v['/Hydro/WifiIp'] ? h('div', { class: 'muted', style: 'margin-top:6px' }, 'Sensor page on the van Wi-Fi: ', h('a', { href: 'http://' + v['/Hydro/WifiIp'], target: '_blank' }, 'http://' + v['/Hydro/WifiIp'])) : null,
+      stat('Installed', inst || '–', '', true),
+      stat('Latest', latest || '–', newer ? 'newer than installed' : latest && inst ? 'up to date' : '', true)),
     noData ? noDataHelp(svc) : link && link !== 'ok' && dev && val(dev, '/Connected') === 1 ? linkHelp(link, inst) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
-      ...(() => {
-        // two ways: Bluetooth (always there, a few minutes) or Wi-Fi (seconds, needs the Wi-Fi from the settings)
-        const wifi = !!(sec && (sec.values.wifi_ssid || '').trim());
-        const go = via => confirmThen((via === 'bluetooth'
-            ? 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over Bluetooth? It takes a few minutes; a dropped connection only pauses it. '
-            : 'Update the sensor firmware' + (latest ? ' to ' + latest : '') + ' over Wi-Fi? The sensor joins “' + sec.values.wifi_ssid + '” for a moment and downloads it from the Pi (about a minute). ')
-            + 'If anything fails it keeps its old firmware.', async () => {
-          const x = await api('/api/sender_update', { via });
-          toast(x.ok ? x.data.message : x.data.error, !x.ok);
-          if (x.ok) watchSenderUpdate(body);
-        });
-        const label = newer || !inst ? 'Update' : 'Reinstall';
-        return [
-          h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(), onclick: () => go('bluetooth') }, label + ' over Bluetooth'),
-          h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !wifi, title: wifi ? '' : 'Enter the Wi-Fi under Settings → Connection first',
-            onclick: () => go('wifi') }, label + ' over Wi-Fi'),
-          h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
-          h('span', { class: 'muted' }, wifi ? 'Over Wi-Fi it is faster (“' + sec.values.wifi_ssid + '”).'
-            : 'Over Wi-Fi needs the Wi-Fi under Settings → Connection.')];
-      })()),
+      h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(), onclick: () => go('bluetooth') }, label + ' over Bluetooth'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !ssid, title: ssid ? 'via “' + ssid + '”' : 'Connect the sensor to a Wi-Fi network first (Settings → Connection)',
+        onclick: () => go('wifi') }, label + ' over Wi-Fi'),
+      h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update')),
     body);
-  return card;
 }
 
-// Wi-Fi switch: off = only the BOOT button on the ESP32 switches it on; on = Bluetooth with Wi-Fi as fallback
-async function setSenderWifi(sec, mode) {
-  const x = await api('/api/driver_config', { section: sec.section, 'f.wifi_mode': mode, restart: '1' });
-  toast(x.ok ? (mode === 'off' ? 'Sensor Wi-Fi off' : 'Sensor Wi-Fi on (as fallback)') + ': the sensor switches at its next Bluetooth check-in, within a minute.'
-    : (x.data.error || 'Not saved'), !x.ok);
-  if (x.ok) { await loadDriver(); await renderTab(); }
+// ----- the sensor's Wi-Fi, set straight on the sensor over Bluetooth (no save, no driver restart)
+async function sensorCmd(c, label) {
+  const sw = S.sw;
+  sw.busy = label || 'Sending to the sensor…'; redrawSensorWifi();
+  let result = null;
+  const x = await api('/api/sender_cmd', { c });
+  if (!x.ok) toast(x.data.error, true);
+  else {
+    for (let i = 0; i < 60 && result == null; i++) {
+      await new Promise(r => setTimeout(r, 700));
+      const y = await api('/api/sender_cmd');
+      if (y.ok) result = y.data.result;
+    }
+    if (result == null) toast('No answer from the sensor over Bluetooth.', true);
+    else if (/^(error|wrong|no answer|unknown|usage)/i.test(result)) toast('Sensor: ' + result, true);
+  }
+  sw.busy = false; redrawSensorWifi();
+  // the driver reads the sensor's new Wi-Fi state a few seconds later
+  setTimeout(async () => { await refreshState(); redrawSensorWifi(); refreshDeviceTop(); }, 5000);
+  setTimeout(async () => { await refreshState(); redrawSensorWifi(); refreshDeviceTop(); }, 28000);
+  return result;
+}
+function redrawSensorWifi() {
+  const b = $('#sensorwifi');
+  if (!b) return;
+  const typing = b.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
+  drawSensorWifi(b);
+  if (typing) { const i = b.querySelector('input[type=password]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
+}
+function sensorWifiBlock() {
+  S.sw = S.sw || { scan: null, pick: null, busy: false, want: null };
+  const box = h('div', { id: 'sensorwifi' });
+  drawSensorWifi(box);
+  if (canEdit() && S.piWifi === undefined) {
+    S.piWifi = null;
+    api('/api/wifi_networks').then(r => { S.piWifi = r.ok ? r.data.pi : null; redrawSensorWifi(); });
+  }
+  return box;
+}
+function drawSensorWifi(box) {
+  const sw = S.sw, dev = deviceOf(S.state, 'water'), v = dev ? dev.values : {};
+  const mode = v['/Hydro/WifiMode'], ssid = v['/Hydro/WifiSsid'] || '', ip = v['/Hydro/WifiIp'];
+  if (sw.want && (sw.want.mode === mode || Date.now() - sw.want.t > 60000)) sw.want = null;
+  const cur = sw.want ? sw.want.mode : mode === 'off' || !mode ? 'auto' : mode;
+  let known = [];
+  try { known = JSON.parse(v['/Hydro/WifiKnown'] || '[]'); } catch (e) { known = []; }
+  const off = !canEdit() || !!sw.busy || !dev;
+  const setMode = m => {
+    if (m === 'van' && !ssid) { sw.want = { mode: 'van', t: Date.now(), local: true }; redrawSensorWifi(); return; }
+    sw.want = { mode: m, t: Date.now() };
+    sensorCmd('wifi mode ' + m, 'Switching the sensor…');
+  };
+  const join = (name, pw) => { sw.pick = null; sw.pw = ''; sw.want = { mode: 'van', t: Date.now() };
+    sensorCmd('wifi join ' + name + (pw == null ? '' : '\t' + pw), 'Connecting the sensor to “' + name + '”…'); };
+  const items = [];
+  items.push(h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Sensor Wi-Fi', style: 'display:flex;flex-wrap:nowrap' },
+    [['ap', 'AP only'], ['van', 'Wi-Fi network'], ['auto', 'Bluetooth only']].map(([m, l]) =>
+      h('button', { type: 'button', role: 'radio', 'aria-checked': cur === m, class: 'segbtn' + (cur === m ? ' on' : ''), style: 'flex:1;padding:8px 6px', disabled: off, onclick: () => setMode(m) }, l))));
+  if (cur === 'van') {
+    items.push(h('div', { class: 'muted', style: 'margin-top:6px' }, 'Known networks'));
+    items.push(known.length ? h('div', { class: 'nlist' }, known.map(n => {
+      const sel = n === ssid && mode === 'van';
+      return h('div', { class: 'nitem' }, h('span', { class: 'nm' }, n),
+        sel ? (ip ? h('b', { style: 'color:var(--ok)' }, 'Connected') : h('span', { class: 'muted' }, 'joining…'))
+          : h('button', { type: 'button', class: 'btn small primary', disabled: off, onclick: () => join(n) }, 'Connect'),
+        h('button', { type: 'button', class: 'btn small', disabled: off, title: 'Forget', 'aria-label': 'Forget ' + n,
+          onclick: () => confirmThen('Forget “' + n + '” on the sensor?', () => sensorCmd('wifi forget ' + n)) }, '✕'));
+    })) : h('div', { class: 'muted' }, mode ? 'None saved on the sensor yet: scan and pick your network.' : 'Not known yet (the Pi reads them at its next check-in).'));
+    items.push(h('div', { class: 'row', style: 'margin-top:6px' },
+      h('button', { type: 'button', class: 'btn small', disabled: off, onclick: async () => {
+        const r = await sensorCmd('wifi scan', 'The sensor looks for networks… (about 10 s)');
+        try { sw.scan = JSON.parse(r); } catch (e) { sw.scan = sw.scan || null; }
+        sw.pick = null; redrawSensorWifi();
+      } }, sw.scan ? 'Scan again' : 'Scan for networks'),
+      S.piWifi && known.indexOf(S.piWifi) < 0 ? h('button', { type: 'button', class: 'btn small', disabled: off, onclick: async () => {
+        const x = await api('/api/sender_use_pi_wifi', {});
+        if (!x.ok) { toast(x.data.error, true); return; }
+        sw.want = { mode: 'van', t: Date.now() };
+        toast(x.data.message);
+        setTimeout(async () => { await refreshState(); redrawSensorWifi(); refreshDeviceTop(); }, 8000);
+      } }, 'Use the Pi\'s Wi-Fi (' + S.piWifi + ')') : null));
+    if (sw.scan) {
+      const other = sw.scan.filter(x => known.indexOf(x.s) < 0);
+      items.push(!other.length ? h('div', { class: 'muted' }, sw.scan.length ? 'Only known networks around.' : 'No networks found.')
+        : h('div', { class: 'nlist' }, other.map(x => {
+          const picked = sw.pick === x.s;
+          const pw = h('input', { type: 'password', placeholder: 'password (empty if open)', autocomplete: 'off', style: 'flex:1;min-width:0' });
+          pw.value = sw.pw || '';                            // survives the redraws every few seconds
+          pw.addEventListener('input', () => { sw.pw = pw.value; });
+          pw.addEventListener('click', e => e.stopPropagation());
+          pw.addEventListener('keydown', e => { if (e.key === 'Enter') join(x.s, pw.value); });
+          const row = h('div', { class: 'nitem pick' }, h('span', { class: 'nm' }, x.s),
+            h('span', { class: 'muted' }, (x.r > -60 ? 'strong' : x.r > -75 ? 'good' : 'weak') + ' · ' + x.r + ' dBm' + (picked ? '' : ' ›')),
+            picked ? h('div', { class: 'row', style: 'width:100%;margin:4px 0 0' }, pw,
+              h('button', { type: 'button', class: 'btn small primary', disabled: off, onclick: e => { e.stopPropagation(); join(x.s, pw.value); } }, 'Connect')) : null);
+          row.addEventListener('click', () => { if (sw.pick !== x.s) { sw.pick = x.s; sw.pw = ''; redrawSensorWifi(); const i = $('#sensorwifi input[type=password]'); if (i) i.focus(); } });
+          return row;
+        })));
+    }
+  }
+  items.push(h('div', { class: 'muted', style: 'margin:6px 0 12px' }, sw.busy ? sw.busy
+    : !mode ? 'The sensor\'s Wi-Fi is not known yet.'
+    : (ip ? 'On “' + ssid + '”: ' + ip + '. ' : cur === 'van' && ssid ? 'Joining “' + ssid + '”… ' : '') + 'Own network (AP) ' + (v['/Hydro/AccessPoint'] ? 'on.' : 'off.')));
+  box.replaceChildren(...items.filter(Boolean));
 }
 
 // Readings arrive (broadcast) but the two-way connection fails: explain the difference
@@ -2482,10 +2566,10 @@ function linkHelp(link, inst) {
   if (link.indexOf('older than 2.7') >= 0) return firstInstallHelp(link);
   const raw = 'https://github.com/mich-crypto/Venusosmods/raw/refs/heads/master/firmware/bin/';
   return h('div', { class: 'banner warn', style: 'margin-top:10px' },
-    h('b', {}, 'Readings arrive, but the two-way link fails: ' + link),
+    h('b', {}, 'Readings arrive, but the Pi can\'t connect to the sensor: ' + link),
     h('div', { class: 'muted', style: 'margin-top:4px' },
-      '"Connected" at the top means the level arrives: the sensor broadcasts it and the Pi listens. The two-way link is a short connection every 5 minutes '
-      + 'for the Wi-Fi setting, the firmware version and updates. While it fails, the sensor keeps its own Wi-Fi on (fallback). The Pi tries again in a minute.'),
+      '"Connected" means the level arrives (the sensor broadcasts it). For settings, the firmware version and updates the Pi also connects to the sensor every 5 minutes; '
+      + 'that fails now. Meanwhile the sensor keeps its own Wi-Fi on (fallback). The Pi tries again in a minute.'),
     h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
       h('li', {}, 'Sensor firmware 4.0 or newer fixes dropped links with the Raspberry Pi\'s built-in Bluetooth: install ',
         h('a', { href: raw + 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin' }, 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'),
@@ -2502,7 +2586,7 @@ function noDataHelp(svc) {
     h('div', { class: 'muted', style: 'margin-top:4px' }, running
       ? 'No Bluetooth broadcast from the sensor has arrived since the driver started. Check:' : 'Start it on the Overview tab, then check:'),
     h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
-      h('li', {}, 'Does the sensor broadcast? Its page (press BOOT, join Watertank-1, http://192.168.4.1) shows "Bluetooth: broadcasting"; or scan with the nRF Connect app for "VHT".'),
+      h('li', {}, 'Does the sensor broadcast? Its page (press BOOT, join Watertank-1, http://192.168.4.1) shows a breathing blue light at the top when it broadcasts; or scan with the nRF Connect app for "VHT".'),
       h('li', {}, 'Is the Pi\'s Bluetooth on (Venus OS: Settings → Bluetooth) and the sensor in range (no metal box around it)?'),
       h('li', {}, 'Does the sensor ID match? DEVICE_ID in the firmware (default 1) and "Sensor ID" here.'),
       h('li', {}, 'Debug → Raw data → Water lists every packet the Pi receives; the driver log is on the Overview tab (Log).')));
@@ -2527,15 +2611,19 @@ function firstInstallHelp(link) {
 // Live view: the Pi switches the sender's smoothing off and reads the raw signal twice a second
 function liveCard() {
   const dev = deviceOf(S.state, 'water'), v = dev ? dev.values : {};
-  const on = !!v['/Hydro/Live'];
+  // the state can be a few seconds old: right after a switch, what was asked counts
+  const want = S.liveWant && Date.now() - S.liveWant.t < 15000 ? S.liveWant.on : null;
+  const on = want == null ? !!v['/Hydro/Live'] : want;
   const vals = h('div', { class: 'stats' });
   const note = h('div', { class: 'muted', style: 'margin-top:6px' });
   // a switch: on keeps a Bluetooth connection open, which costs the sensor some power, so it ends after 15 min
   const box = h('input', { type: 'checkbox', checked: on, disabled: !canEdit() || !dev });
   box.addEventListener('change', async () => {
+    box.disabled = true;
     const x = await api('/api/sender_live', { on: box.checked ? '1' : '0' });
-    if (!x.ok) { toast(x.data.error, true); box.checked = on; return; }
-    await refreshState(); await renderTab();
+    if (!x.ok) { toast(x.data.error, true); box.checked = on; box.disabled = false; return; }
+    S.liveWant = { on: box.checked, t: Date.now() };
+    card.replaceWith(liveCard());           // only this card, the rest of the page stays
   });
   const btn = h('label', { class: 'switch' }, box, h('span', {}, 'Live reading'));
   // the last reading stays on screen between updates; the note says how old it is
@@ -2560,12 +2648,14 @@ function liveCard() {
       const r = await api('/api/sender_live');
       if (!document.body.contains(vals)) return;
       if (r.ok) draw(r.data.values, r.data.now);
-      if (!r.ok || r.data.values['/Hydro/Live']) setTimeout(tick, 500); else { await refreshState(); renderTab(); }
+      if (!r.ok || r.data.values['/Hydro/Live']) setTimeout(tick, 500);
+      else { S.liveWant = { on: false, t: Date.now() }; if (document.body.contains(card)) card.replaceWith(liveCard()); }   // ended (15 min)
     };
     setTimeout(tick, 300);
   }
-  return h('div', { class: 'card' }, h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 6px' },
+  const card = h('div', { class: 'card' }, h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 6px' },
     h('h3', { style: 'margin:0' }, 'Live reading ', on ? h('span', { class: 'chip warn' }, 'live') : null), btn), vals, note);
+  return card;
 }
 
 // Ask GitHub now (otherwise every 6 h) and say what it found

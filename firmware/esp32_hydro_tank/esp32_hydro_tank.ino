@@ -191,7 +191,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.4"
+#define FW_VERSION           "4.5"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -698,6 +698,7 @@ static String jsonEsc(String v) { v.replace("\\", "\\\\"); v.replace("\"", "\\\"
 
 static String staIp();                       // in the Wi-Fi part
 static bool staConnected();
+static String wifiScanJson(int maxN);
 
 // What the Pi reads: firmware, Wi-Fi state, probe names
 static String infoJson() {
@@ -707,6 +708,10 @@ static String infoJson() {
   j += ",\"ssid\":\"" + jsonEsc(staSsid) + "\",\"up\":" + String(millis() / 1000);
   j += ",\"pi_ago\":" + String(lastPiHeard ? (long)((millis() - lastPiHeard) / 1000) : -1L);
   j += ",\"fw_err\":\"" + jsonEsc(fwError) + "\"";
+  j += ",\"kn\":[";
+  for (uint8_t i = 0, k = 0; i < MAX_KNOWN; i++)
+    if (knownSsid[i].length()) { if (k++) j += ','; j += "\"" + jsonEsc(knownSsid[i]) + "\""; }
+  j += "]";
   j += ",\"tn\":[";
   for (uint8_t i = 0; i < MAX_TEMPS; i++) {
     if (i) j += ',';
@@ -1154,7 +1159,8 @@ static void handleCommand(String line) {
     fwUrl = url;
     fwSsid = t2 < 0 ? creds : creds.substring(0, t2);
     fwPass = t2 < 0 ? String() : creds.substring(t2 + 1);
-    if (fwSsid.length() == 0 && !staConnected()) { out->print("error fwget: no Wi-Fi to download over (set the van Wi-Fi on the Venus OS page)"); return; }
+    if (fwSsid.length() == 0) { fwSsid = staSsid; fwPass = staPass; }   // the sensor's own Wi-Fi network
+    if (fwSsid.length() == 0 && !staConnected()) { out->print("error fwget: no Wi-Fi to download over (connect the sensor to a Wi-Fi network first)"); return; }
     fwError = "";
     fwPending = true;                     // runs in loop() once this reply has gone out
     out->print("ok fwget: joining the Wi-Fi and downloading");
@@ -1231,6 +1237,8 @@ static void handleCommand(String line) {
       if (!forgetNetwork(arg)) { out->printf("'%s' is not a known network\n", arg.c_str()); return; }
       if (arg == staSsid) { staSsid = ""; staPass = ""; saveWifiSetting("ssid", ""); saveWifiSetting("pass", ""); staDirty = true; }
       out->printf("ok forgot '%s'\n", arg.c_str());
+    } else if (sub == "scan") {
+      out->print(wifiScanJson(15));
     } else if (sub == "known") {
       for (uint8_t i = 0; i < MAX_KNOWN; i++)
         if (knownSsid[i].length()) out->printf("  %s%s\n", knownSsid[i].c_str(), knownSsid[i] == staSsid ? "   (selected)" : "");
@@ -1469,6 +1477,7 @@ header{display:flex;justify-content:space-between;align-items:center;gap:8px;fle
 .stat{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
 .pill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:13px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--mut);flex:none}
+.dot.br{animation:br 2.4s ease-in-out infinite}@keyframes br{0%,100%{opacity:.25}50%{opacity:1}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
 .big{font-size:44px;font-weight:700;line-height:1}.mut{color:var(--mut);font-size:14px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}.grid b{display:block;font-size:18px}
@@ -1656,10 +1665,10 @@ async function refresh(){
 }
 // top right: Bluetooth light + when the Pi last checked in, Wi-Fi symbol + network
 function header(s){
- const p=s.pi_ago_s,ok=p>=0&&p<900;
- $('btd').style.background=!s.ble_adv?'var(--bad)':ok?'var(--bt)':'var(--warn)';
- $('btt').textContent='Pi '+(p<0?'–':ago(p));
- $('btp').title='Bluetooth '+(s.ble_adv?'broadcasting':'NOT broadcasting')+' · the Pi '+(p<0?'has not checked in yet':'checked in '+ago(p)+' ago')+(s.ble_conn?' · connected now':'');
+ const p=s.pi_ago_s,ok=s.ble_adv&&p>=0&&p<900;
+ $('btd').style.background=ok?'var(--bt)':'var(--bad)';$('btd').className='dot'+(ok?' br':'');
+ $('btt').textContent='Venus OS '+(p<0?'–':ago(p));
+ $('btp').title='Bluetooth '+(s.ble_adv?'broadcasting':'NOT broadcasting')+' · Venus OS '+(p<0?'has not checked in yet':'checked in '+ago(p)+' ago')+(s.ble_conn?' · connected now':'');
  const w=$('wfp');
  w.style.color=s.sta_ip||s.ap_on?'var(--wf)':'var(--mut)';
  $('wft').textContent=s.sta_ip?s.sta_ssid+(s.ap_on?' + AP':''):s.ap_on?'AP on':s.wifi_mode==='van'&&s.sta_ssid?'joining…':'off';
@@ -2014,13 +2023,12 @@ static void fwGet() {
 }
 
 // Networks around, for the Wi-Fi card (needs the station side for a moment)
-static void handleWifiScan() {
-  lastWebUse = millis();
+static String wifiScanJson(int maxN) {
   if (!(WiFi.getMode() & WIFI_STA)) WiFi.enableSTA(true);
   int n = WiFi.scanNetworks();
   String j = "[";
   int shown = 0;
-  for (int i = 0; i < n && shown < 25; i++) {
+  for (int i = 0; i < n && shown < maxN; i++) {
     String ssid = WiFi.SSID(i);
     if (ssid.length() == 0) continue;
     bool dup = false;
@@ -2032,7 +2040,12 @@ static void handleWifiScan() {
   j += "]";
   WiFi.scanDelete();
   staDirty = !staOn;                     // back to the Wi-Fi the mode asks for
-  server.send(200, "application/json", j);
+  return j;
+}
+
+static void handleWifiScan() {
+  lastWebUse = millis();
+  server.send(200, "application/json", wifiScanJson(25));
 }
 
 static void webStart() {
@@ -2063,6 +2076,7 @@ static void webStart() {
 #else
 static bool staConnected() { return false; }
 static String staIp() { return String(); }
+static String wifiScanJson(int) { return "[]"; }
 #endif  // USE_WIFI_AP
 
 // ------------------------------------------------------------ setup / loop
