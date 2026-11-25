@@ -293,10 +293,11 @@ class Esp32HydroDriver(BleDriver):
         elif o['phase'] == 'data':
             m = re.match(r'ota (active|failed) (\d+)/(\d+)', answer)
             if not m:
-                if answer.startswith('ota idle') and o['restarts'] < 2:
-                    o['restarts'] += 1         # the sensor lost the upload (restart): start again
-                    o['phase'] = 'begin'
-                    GLib.timeout_add_seconds(2, self._ota_step)
+                if answer.startswith('ota idle'):
+                    # the sensor dropped the upload: restarted, or someone updated / restarted it on its
+                    # own page. Never start over by ourselves, that would fight the person at the sensor.
+                    self._ota_fail('the sensor dropped the upload (it restarted, or was updated on its own page); '
+                                   'press Update again if needed')
                     return
                 self._ota_fail(answer or 'no status from the sensor')
                 return

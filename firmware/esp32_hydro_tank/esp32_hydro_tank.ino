@@ -191,7 +191,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.6"
+#define FW_VERSION           "4.7"
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -1396,7 +1396,8 @@ static void handleCommand(String line) {
       out->println("tank use <n> | rename <n> <name> | delete <n>");
     }
   } else if (cmd == "reboot" || cmd == "restart") {
-    if (otaBusy()) { out->print("error reboot: a firmware update is running"); return; }
+    if (fwBusy || webOtaActive || otaRestartAt) { out->print("error reboot: a firmware update is being written"); return; }
+    if (otaActive) { Update.abort(); otaActive = false; }   // an unfinished Bluetooth upload: dropped, old firmware stays
     rebootAt = millis() + 1500;              // after this answer has gone out (web page, Bluetooth)
     if (!rebootAt) rebootAt = 1;
     out->print("ok rebooting: back in about 10 s");
@@ -1975,7 +1976,7 @@ static bool wrongImage = false;
 static void handleUpdateDone() {
   bool ok = !Update.hasError() && !wrongImage;
   server.send(200, "text/plain", ok ? "Update OK. The sender restarts; reload the page in ~10 s."
-              : wrongImage ? (fwBusy || otaActive ? "Refused: an update from the Venus OS page is running. Nothing was changed."
+              : wrongImage ? (fwBusy ? "Refused: the sensor is downloading an update over Wi-Fi right now. Try again in a minute."
                                         : "Wrong file: this is the FLASH-AT-0x0 file for the USB flasher. Upload WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin here. Nothing was changed.")
                            : String("Update failed: ") + Update.errorString());
   if (ok) { delay(500); ESP.restart(); }
@@ -1986,7 +1987,10 @@ static void handleUpdateUpload() {
   if (u.status == UPLOAD_FILE_START) {
     Serial.printf("Firmware update: %s\n", u.filename.c_str());
     wrongImage = false;
-    if (fwBusy || otaActive) { wrongImage = true; Serial.println("Refused: an update from the Pi is running."); return; }
+    // The person at the sensor wins: an unfinished Bluetooth upload from the Pi is dropped
+    // (the Pi then reports it as failed). A download over Wi-Fi (fwget) runs only for seconds.
+    if (otaActive) { Update.abort(); otaActive = false; Serial.println("Bluetooth upload from the Pi dropped: uploading on the page instead."); }
+    if (fwBusy) { wrongImage = true; Serial.println("Refused: the sensor is downloading an update over Wi-Fi."); return; }
     webOtaActive = true;
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
   } else if (u.status == UPLOAD_FILE_WRITE) {
