@@ -204,6 +204,23 @@ class CommandTests(unittest.TestCase):
         d._on_link_notify(b'ok fwget: joining the Wi-Fi and downloading\x04')
         self.assertTrue(d.tank.service['/Hydro/CommandResult'].startswith('ok fwget'))
 
+    def test_fwget_without_wifi_settings_uses_the_sensors_own_network(self):
+        d = self.driver(cfg='')
+        d._on_command_set('/Hydro/Command', 'fwget http://192.168.1.5:8088/fw/abc.bin')
+        d._send_command()
+        self.assertEqual(d.gatt.sent[-1][-1], b'Cfwget http://192.168.1.5:8088/fw/abc.bin')
+
+    def test_wifi_command_and_the_sensors_networks(self):
+        d = self.driver(cfg='')
+        d._on_command_set('/Hydro/Command', 'wifi join MOS\tpw')
+        d._send_command()
+        self.assertEqual(d.gatt.sent[-1][-1], b'Cwifi join MOS\tpw')
+        d._on_link_notify(b"ok joining 'MOS'\x04")
+        self.assertEqual(d.tank.service['/Hydro/CommandResult'], "ok joining 'MOS'")
+        d.apply_info('{"fw":"4.5","mode":"van","ap":0,"ip":"192.168.1.60","ssid":"MOS","kn":["MOS","Home"]}')
+        self.assertEqual(d.tank.service['/Hydro/WifiSsid'], 'MOS')
+        self.assertEqual(json.loads(d.tank.service['/Hydro/WifiKnown']), ['MOS', 'Home'])
+
     def test_command_answers_and_refusals(self):
         d = self.driver()
         self.assertFalse(Esp32HydroDriver('s', section(''))._on_command_set('/Hydro/Command', 'fwget http://x'))   # no sensor heard yet

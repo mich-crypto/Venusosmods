@@ -46,7 +46,7 @@ import starlink_hub  # noqa: E402
 
 log = logging.getLogger('web_ui')
 
-VERSION = '2.0.0'   # Venus OS mods version, shown at the top of the page
+VERSION = '2.1.0'   # Venus OS mods version, shown at the top of the page
 OUR_PROCESSES = ('mopeka_venus.py', 'esp32_hydro_tank.py', 'fridge_venus.py')
 BUS_ITEM = 'com.victronenergy.BusItem'
 LAN_RANGES = ('192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '100.64.0.0/10')   # incl. Tailscale
@@ -385,6 +385,8 @@ class App(object):
             'GET /api/sender_live': self.api_sender_live_values,
             'GET /api/wifi_networks': self.api_wifi_networks,
             'POST /api/sender_use_pi_wifi': self.api_sender_use_pi_wifi,
+            'POST /api/sender_cmd': self.api_sender_cmd,
+            'GET /api/sender_cmd': self.api_sender_cmd_result,
             'GET /api/rawlog': self.api_rawlog,
             'POST /api/rawlog_clear': self.api_rawlog_clear,
             'GET /api/serialbattery': self.api_serialbattery,
@@ -1316,10 +1318,10 @@ class App(object):
         if not sec:
             return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
         name, values = self.sender_device(sec)
-        have_wifi = bool((sec.get('wifi_ssid') or '').strip() or values.get('/Hydro/WifiIp'))
+        have_wifi = bool((sec.get('wifi_ssid') or '').strip() or values.get('/Hydro/WifiIp') or values.get('/Hydro/WifiSsid'))
         via = req.form.get('via') or ('wifi' if have_wifi else 'bluetooth')
         if via == 'wifi' and not have_wifi:
-            return jsonr({'ok': False, 'error': 'For an update over Wi-Fi, enter the Wi-Fi name and password '
+            return jsonr({'ok': False, 'error': 'For an update over Wi-Fi, connect the sensor to a Wi-Fi network '
                           'under Settings → Connection first (or update over Bluetooth).'}, 400)
         if not values.get('/Hydro/Mac'):
             return jsonr({'ok': False, 'error': 'no reading from the sensor yet, so the Pi can\'t reach it'}, 409)
@@ -1496,8 +1498,47 @@ class App(object):
         pi = next((n['name'] for n in nets if n['state'] in ('ready', 'online')), None)
         return jsonr({'ok': True, 'pi': pi, 'networks': [dict((k, n[k]) for k in ('name', 'strength', 'state')) for n in nets]})
 
+    # Wi-Fi commands for the sensor, sent at once over Bluetooth by the water driver (no restart).
+    # The answer arrives in /Hydro/CommandResult, which the page asks for with GET.
+    SENDER_CMD = re.compile(r'^wifi (mode (auto|van|ap|off)|join [^\n\r]{1,100}|forget [^\t\n\r]{1,32}|scan)$')
+
+    def send_sender_command(self, cmd):
+        """(ok, error, status) of handing one command to the water driver."""
+        if self.sender_update_running():
+            return False, 'a firmware update of the sensor is running', 409
+        sec = self.sender_section()
+        if not sec:
+            return False, 'no water level sensor set up', 400
+        name = 'com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro')
+        try:
+            rc = self.bus.call_blocking(name, '/Hydro/Command', BUS_ITEM, 'SetValue', 'v',
+                                        [dbus.String(cmd, variant_level=1)], timeout=4)
+        except dbus.exceptions.DBusException as e:
+            return False, 'the water driver did not answer (is it running?): %s' % e, 502
+        if rc not in (0, None):
+            return False, 'no reading from the sensor yet, so the Pi does not know where to send it', 409
+        return True, None, 200
+
+    def api_sender_cmd(self, req):
+        cmd = (req.form.get('c') or '').strip('\r\n ')
+        if not self.SENDER_CMD.match(cmd):
+            return jsonr({'ok': False, 'error': 'not a command for the sensor'}, 400)
+        ok, error, status = self.send_sender_command(cmd)
+        return jsonr({'ok': True} if ok else {'ok': False, 'error': error}, status)
+
+    def api_sender_cmd_result(self, req):
+        sec = self.sender_section()
+        if not sec:
+            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
+        try:
+            values = self.dbus_dump('com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro'), max_age=0.3)
+        except dbus.exceptions.DBusException as e:
+            return jsonr({'ok': False, 'error': 'the water driver did not answer: %s' % e}, 502)
+        return jsonr({'ok': True, 'result': values.get('/Hydro/CommandResult') or None})
+
     def api_sender_use_pi_wifi(self, req):
-        """Give the sensor the Wi-Fi the Pi is on: name and password go straight into config.ini."""
+        """Connect the sensor to the Wi-Fi the Pi is on; the password goes from connman to the sensor,
+        never through the browser."""
         nets = self.wifi_services() or []
         cur = next((n for n in nets if n['state'] in ('ready', 'online')), None)
         if cur is None:
@@ -1506,17 +1547,10 @@ class App(object):
         pw = '' if open_net else self.connman_passphrase(cur['id'])
         if pw is None:
             return jsonr({'ok': False, 'error': 'The Pi\'s Wi-Fi password could not be read: type it in.', 'ssid': cur['name']}, 409)
-        sec = self.sender_section()
-        if not sec:
-            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
-        text = self.read_text(self.driver_config)
-        new = ct.set_values(text, sec['section'], {'wifi_ssid': cur['name'], 'wifi_password': pw or None})
-        problem = ct.check_syntax(new)
-        if problem:
-            return jsonr({'ok': False, 'error': 'file would be invalid: ' + problem}, 400)
-        ct.write_file(self.driver_config, new)
-        self.restart_service(sec.get('service') or 'esp32_hydro')     # the driver reads it at start
-        return jsonr({'ok': True, 'ssid': cur['name'], 'message': 'The sensor uses the Pi\'s Wi-Fi “%s” now.' % cur['name']})
+        ok, error, status = self.send_sender_command('wifi join %s\t%s' % (cur['name'], pw or ''))
+        if not ok:
+            return jsonr({'ok': False, 'error': error}, status)
+        return jsonr({'ok': True, 'ssid': cur['name'], 'message': 'Sent to the sensor: join the Pi\'s Wi-Fi “%s”.' % cur['name']})
 
     def api_sender_update_log(self, req):
         self.fw_progress()

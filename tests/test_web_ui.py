@@ -540,15 +540,42 @@ class StarlinkApiTests(AppTestCase):
         self.assertNotIn('van-pass', str(d))                                  # never sent to the browser
 
     def test_use_the_pis_wifi_for_the_sensor(self):
+        sent = self.sensor_ready(wifi=False)
         self.connman()
+        cm = self.app._bus
+        bus = type('B', (), {'get_object': lambda inner, *a, **k: cm.get_object(*a, **k),
+                             'call_blocking': lambda inner, name, path, iface, method, sig, args, timeout=None: sent.append((name, path, str(args[0]))) or 0})()
+        self.app._bus = bus
+        before = self.config_text()
         r = self.post('/api/sender_use_pi_wifi', {})
         self.assertEqual(r.status, 200, r.body)
-        self.assertNotIn('van-pass', r.body.decode())
-        text = self.config_text()
-        self.assertIn('wifi_ssid = Camper', text)
-        self.assertIn('wifi_password = van-pass 123', text)
+        self.assertNotIn('van-pass', r.body.decode())                         # never to the browser
+        self.assertEqual(sent[-1][1:], ('/Hydro/Command', 'wifi join Camper\tvan-pass 123'))   # straight to the sensor
+        self.assertEqual(self.config_text(), before)                         # no config change, no restart
         self.connman(joined=False)                                           # Pi on cable
         self.assertEqual(self.post('/api/sender_use_pi_wifi', {}).status, 409)
+
+    def test_wifi_commands_go_straight_to_the_sensor(self):
+        sent = self.sensor_ready(wifi=False)
+        for c in ('wifi mode ap', 'wifi scan', 'wifi join MOS\tpw 1', 'wifi forget MOS'):
+            self.assertEqual(self.post('/api/sender_cmd', {'c': c}).status, 200, c)
+            self.assertEqual(sent[-1][1:], ('/Hydro/Command', c))
+        for c in ('cal save x', 'wifi mode fast', 'fwget http://x', 'reset'):
+            self.assertEqual(self.post('/api/sender_cmd', {'c': c}).status, 400, c)
+        self.values['/Hydro/CommandResult'] = '[{"s":"MOS","r":-50}]'
+        self.assertEqual(body_of(self.get('/api/sender_cmd'))['result'], '[{"s":"MOS","r":-50}]')
+
+    def test_update_over_wifi_with_the_sensors_own_network(self):
+        self.sensor_ready(wifi=False)
+        self.values['/Hydro/WifiSsid'] = 'MOS'
+        self.app.sender_update_running = lambda: False
+        import starlink_hub
+        orig = starlink_hub.run_async
+        starlink_hub.run_async = lambda *a, **k: None
+        try:
+            self.assertEqual(self.post('/api/sender_update', {'via': 'wifi'}).status, 200)
+        finally:
+            starlink_hub.run_async = orig
 
     def test_sensor_update_over_wifi_needs_the_wifi(self):
         self.sensor_ready(wifi=False)
