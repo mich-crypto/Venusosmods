@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Venus OS driver for the ESP32-S3 hydrostatic water tank sender
+Venus OS driver for the I/O extension: the self-built ESP32-S3 with the fresh water tank's
+hydrostatic sensor, the grey water tank's rods, temperature probes and the heater
 (firmware/esp32_hydro_tank). All filtering and volume calculation happens on
 the ESP32; this side only decodes and publishes.
 
@@ -62,7 +63,7 @@ class GreyTank(object):
         self.capacity_l = config.getfloat('grey_capacity_l', 0.0)
         self.levels = parse_levels(config.get('grey_levels', ''))
         self.tank = TankDevice(
-            bus, uid + '_grey', product_name='ESP32 Grey Water Tank', connection=connection,
+            bus, uid + '_grey', product_name='I/O Extension Grey Water Tank', connection=connection,
             fluid_type=FLUID_WASTE_WATER, capacity_l=self.capacity_l or None,
             default_instance=config.getint('grey_instance', 23), custom_name=self.name, timeout_s=timeout,
             extra_paths=('/Grey/Rods', '/Grey/Wet', '/Grey/Mask', '/Grey/Fault'))
@@ -138,7 +139,7 @@ class Esp32HydroDriver(BleDriver):
         timeout = config.getint('timeout', 120)   # the ESP32 sends every 2 s
 
         self.tank = TankDevice(
-            self.bus, uid, product_name='ESP32 Hydrostatic Tank',
+            self.bus, uid, product_name='I/O Extension Fresh Water Tank',
             connection=connection,
             fluid_type=config.getint('fluid_type', FLUID_FRESH_WATER),
             default_instance=config.getint('device_instance', 20),
@@ -240,7 +241,7 @@ class Esp32HydroDriver(BleDriver):
                 custom_name='%s frost' % self.frost_name, timeout_s=timeout)
             self.devices.append(self.frost)
 
-        # Grey water tank: a rod sender on the same sensor (docs/wiring.md)
+        # Grey water tank: a rod sender on the same I/O extension (docs/wiring.md)
         self.grey = None
         if config.getboolean('grey_tank', False):
             self.grey = GreyTank(self.bus, config, uid, connection, timeout)
@@ -257,7 +258,7 @@ class Esp32HydroDriver(BleDriver):
         if not config.getboolean('temperature%s_service' % n, False):
             return None
         dev = TemperatureDevice(
-            self.bus, uid + '_temp' + n, product_name='ESP32 Tank Temperature' + (' ' + n if n else ''),
+            self.bus, uid + '_temp' + n, product_name='I/O Extension Temperature ' + (n or '1'),
             connection=connection,
             temperature_type=TEMPERATURE_TYPES[config.get('temperature%s_type' % n, 'generic')],
             default_instance=config.getint('temperature%s_instance' % n, instance),
@@ -800,7 +801,7 @@ class Esp32HydroDriver(BleDriver):
             self._cmd_tries = 0
             answer = replies[-1].strip() if replies else 'no answer: %s' % (error or 'link failed')
             if any(r.startswith('denied') for r in replies):
-                answer = 'wrong sensor password'
+                answer = 'wrong I/O extension password'
             self.tank['/Hydro/CommandResult'] = answer
             # Wi-Fi changes: read the new state back soon; a firmware download: the new version later
             d = truma_heater.parse(answer)
@@ -835,7 +836,7 @@ class Esp32HydroDriver(BleDriver):
                     self.tank['/Hydro/Live'] = 0
                     self._live_fails = 0
             if any(r.startswith('denied') for r in replies):
-                self.tank['/Hydro/LinkStatus'] = 'wrong sensor password'
+                self.tank['/Hydro/LinkStatus'] = 'wrong I/O extension password'
                 self.live_until = monotonic_s() - 1
             return
         if not ok and len(replies) < self._expected:
@@ -851,7 +852,7 @@ class Esp32HydroDriver(BleDriver):
             return
         if any(r.startswith('denied') for r in replies):
             log.warning('link: sender refused the password - set sender_password = the sender\'s Wi-Fi password')
-            self.tank['/Hydro/LinkStatus'] = 'wrong sensor password'
+            self.tank['/Hydro/LinkStatus'] = 'wrong I/O extension password'
             return
         for r in replies:
             d = truma_heater.parse(r)

@@ -1,5 +1,5 @@
 """
-The water level sensor over the Wi-Fi network instead of Bluetooth.
+The I/O extension over the Wi-Fi network instead of Bluetooth.
 
 The sensor's own web server already answers everything the Bluetooth link does:
   GET  /api/status?pi=1        the reading (level, litres, temperatures, ...) - replaces the broadcast

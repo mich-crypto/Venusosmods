@@ -7,7 +7,7 @@ USB CDC On Boot enabled, partition scheme *Minimal SPIFFS (1.9MB APP with OTA)*,
 | File | Use it for |
 |---|---|
 | `FLASH-AT-0x0_esp32_hydro_tank_full.bin` | **First flash** in the browser: https://espressif.github.io/esptool-js/ (Chrome/Edge on a computer), address **0x0** |
-| `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin` | **Updates**: from the Venus OS page (Water → Sender → *Update sender firmware*, over Bluetooth, firmware 2.7+), or on the sender's own page (Firmware update); keeps the calibration |
-| `VERSION` | the version of these files; the Venus OS page compares it with the sender's and shows when there is a newer one |
+| `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin` | **Updates**: from the Venus OS page (Water → Sender → *Update I/O extension firmware*, over Bluetooth, firmware 2.7+), or on the I/O extension's own page (Firmware update); keeps the calibration |
+| `VERSION` | the version of these files; the Venus OS page compares it with the I/O extension's and shows when there is a newer one |
 
 Different sensor or settings? Change the CONFIGURATION block and build with the Arduino IDE (docs/GUIDE.md, part 3).

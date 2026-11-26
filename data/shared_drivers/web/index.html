@@ -450,7 +450,7 @@ async function renderTab() {
 }
 
 // ---------------------------------------------------------------- grey water tank
-// The grey tank's rod sender on the water level sensor: x of n rods wet
+// The grey tank's rod sender on the I/O extension: x of n rods wet
 function greyText(v) {
   const rods = v['/Grey/Rods'], wet = v['/Grey/Wet'];
   if (rods == null) return 'No reading yet';
@@ -590,8 +590,8 @@ function renderBusyBanner() {
   }
   if (!senderBusy()) return;
   box.append(h('div', { class: 'banner warn upd-banner' }, h('div', { style: 'flex:1;min-width:0' },
-    h('b', {}, 'Water level sensor update running'),
-    h('div', { class: 'muted' }, 'The sensor restarts by itself when the new firmware is in. If it hangs, cancel it: the sensor keeps its old firmware.')),
+    h('b', {}, 'I/O extension update running'),
+    h('div', { class: 'muted' }, 'The I/O extension restarts by itself when the new firmware is in. If it hangs, cancel it: the I/O extension keeps its old firmware.')),
     h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: cancelSenderUpdate }, 'Cancel update')));
 }
 
@@ -602,7 +602,7 @@ function refreshDeviceTop() {
   box.replaceChildren(...[deviceHeader(S.devTop.kind, S.devTop.section), S.devTop.kind === 'esp32' ? greyCard() : null].filter(Boolean));
   const sw = $('#sensorwifi');
   if (sw && !sw.contains(document.activeElement)) drawSensorWifi(sw);
-  // the Firmware card (status, help banners) follows the sensor too, except while an update log runs in it
+  // the Firmware card (status, help banners) follows the I/O extension too, except while an update log runs in it
   const fc = $('#sendercard');
   if (fc && !S.fwWatching && !fc.contains(document.activeElement)) fc.replaceChildren(senderCard());
 }
@@ -851,8 +851,8 @@ async function gasHistoryCard() {
 }
 
 // ------------------------------------------------- Truma heater (in preparation, docs/truma.md)
-// Through the water level sensor's ESP32 on the heater's LIN bus. The driver keeps the last status
-// on the water sensor (/Hydro/Truma); changes go to the sensor as "truma set ...".
+// Through the I/O extension's ESP32 on the heater's LIN bus. The driver keeps the last status
+// on the water sensor (/Hydro/Truma); changes go to the I/O extension as "truma set ...".
 function heaterStatus() {
   const dev = S.state && deviceOf(S.state, 'water');
   const raw = dev && dev.values['/Hydro/Truma'];
@@ -865,15 +865,15 @@ function heaterOn() {
 async function heaterCmd(c, label) {
   const x = await api('/api/sender_cmd', { c });
   if (!x.ok) { toast(x.data.error, true); return; }
-  toast(label || 'Sent to the sensor…');
+  toast(label || 'Sent to the I/O extension…');
   let result = null;
   for (let i = 0; i < 60 && result == null; i++) {
     await new Promise(r => setTimeout(r, 700));
     const y = await api('/api/sender_cmd');
     if (y.ok) result = y.data.result;
   }
-  if (result == null) toast('No answer from the sensor.', true);
-  else if (!/^(ok|truma \{)/.test(result)) toast('Sensor: ' + result, true);
+  if (result == null) toast('No answer from the I/O extension.', true);
+  else if (!/^(ok|truma \{)/.test(result)) toast('I/O extension: ' + result, true);
   else if (/^ok/.test(result)) toast(result.replace(/^ok truma/, 'Heater:'));
   setTimeout(async () => { await refreshState(); if (S.tab === 'heater') renderTab(); }, 1500);
 }
@@ -925,12 +925,12 @@ function trumaCode(t) {
     help: (c ? 'What to do: ' + c[1] : what + ' This code is not in Truma\'s published list for the gas Combi: note it exactly and contact Truma Service.')
 , ack: t.ecls === 'E' ? TRUMA_ACK : '' };
 }
-// "Truma heater" on/off and its name: settings of the water driver (the sensor talks to the heater)
+// "Truma heater" on/off and its name: settings of the water driver (the I/O extension talks to the heater)
 async function heaterSetupCard(main) {
   if (!canEdit()) return false;
   const r = await loadDriver();
   const section = r.ok && S.driver.sections.find(x => x.kind === 'esp32');
-  if (!section) { main.append(h('div', { class: 'card' }, h('h3', {}, 'Truma heater'), h('div', { class: 'muted' }, 'Set up the water level sensor first (Water tab): the heater is connected to it.'))); return false; }
+  if (!section) { main.append(h('div', { class: 'card' }, h('h3', {}, 'Truma heater'), h('div', { class: 'muted' }, 'Set up the I/O extension first (Water tab): the heater is connected to it.'))); return false; }
   S.forms = {};
   const form = { section, fields: {} };
   S.forms[section.section] = form;
@@ -1083,7 +1083,7 @@ function foldCard(title, content, open, note) {
 // ------------------------------------------------- fridge, gas and water tabs
 const DEV = {
   mopeka: { title: 'Gas bottle', what: 'gas bottle sensor', add: flowGas, simple: ['temperature_service'] },
-  esp32: { title: 'Water tank', what: 'water level sensor', add: flowWater, simple: [],
+  esp32: { title: 'I/O extension', what: 'I/O extension', add: flowWater, simple: [],
     // connection: auto = Wi-Fi, Bluetooth as fallback
     groups: [['Connection', ['connection', 'sensor_host', 'sender_password']],
              ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']],
@@ -1141,8 +1141,8 @@ function tankSvg(hmm, litres, cap, id) {
   return s;
 }
 
-// Connection light: how the Pi reaches the sensor (Wi-Fi link, or Bluetooth as fallback), breathing
-// green while it does, red when not; and the sensor's own Wi-Fi
+// Connection light: how the Pi reaches the I/O extension (Wi-Fi link, or Bluetooth as fallback), breathing
+// green while it does, red when not; and the I/O extension's own Wi-Fi
 function sensorLights(dev) {
   // the latest contact of any kind: a reading over Wi-Fi (every 5 s) or a check-in (Bluetooth / Wi-Fi)
   const v = dev.values, wifiLink = v['/Hydro/Transport'] === 'wifi';
@@ -1153,10 +1153,10 @@ function sensorLights(dev) {
   const ip = v['/Hydro/WifiIp'], ap = !!v['/Hydro/AccessPoint'], ssid = v['/Hydro/WifiSsid'];
   const wifiOn = !!ip || ap;
   return h('span', { class: 'lights' },
-    h('span', { class: 'lpill', title: (wifiLink ? 'Wi-Fi link' : 'Bluetooth') + (ok ? ': the Pi reached the sensor ' + ago(age) + ' ago' : ': no connection to the sensor' + (v['/Hydro/LinkStatus'] ? ' (' + v['/Hydro/LinkStatus'] + ')' : '')) },
+    h('span', { class: 'lpill', title: (wifiLink ? 'Wi-Fi link' : 'Bluetooth') + (ok ? ': the Pi reached the I/O extension ' + ago(age) + ' ago' : ': no connection to the I/O extension' + (v['/Hydro/LinkStatus'] ? ' (' + v['/Hydro/LinkStatus'] + ')' : '')) },
       h('i', { class: 'ldot' + (ok ? ' br' : ''), style: 'background:' + (ok ? 'var(--ok)' : 'var(--bad)') }), (wifiLink ? 'Wi-Fi link' : 'Bluetooth') + (age != null ? ' ' + ago(age) : '')),
     v['/Hydro/WifiMode'] == null ? null : h('span', { class: 'lpill', style: 'color:' + (wifiOn ? 'var(--ok)' : 'var(--faint)'),
-        title: (ip ? 'Sensor on Wi-Fi “' + (ssid || '') + '” (' + ip + ')' : 'Sensor not on a Wi-Fi network') + ' · own network (AP) ' + (ap ? 'on' : 'off') },
+        title: (ip ? 'I/O extension on Wi-Fi “' + (ssid || '') + '” (' + ip + ')' : 'I/O extension not on a Wi-Fi network') + ' · own network (AP) ' + (ap ? 'on' : 'off') },
       wifiIcon(), ip ? (ssid || 'Wi-Fi') + (ap ? ' + AP' : '') : ap ? 'AP on' : 'Wi-Fi off'));
 }
 function wifiIcon() {
@@ -1165,7 +1165,7 @@ function wifiIcon() {
   s.innerHTML = '<path d="M2.5 9a14 14 0 0 1 19 0M6 12.5a9 9 0 0 1 12 0M9.4 16a4 4 0 0 1 5.2 0" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="12" cy="19.3" r="1.7" fill="currentColor"/>';
   return s;
 }
-// the sensor's link is only useful from the same network (the page's address tells, if it is an IP)
+// the I/O extension's link is only useful from the same network (the page's address tells, if it is an IP)
 function sameNetwork(ip) {
   const host = location.hostname;
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(host)) return true;
@@ -1185,13 +1185,13 @@ function deviceHeader(kind, section) {
         metric('Level', v['/Level'] == null ? '–' : String(Math.round(v['/Level'])), '%', v['/Remaining'] == null ? '' : (v['/Remaining'] * 1000).toFixed(1) + ' L left'),
         metric('Sensor reads', v['/Mopeka/DistanceMm'] == null ? '–' : String(Math.round(v['/Mopeka/DistanceMm'])), 'mm', 'echo quality ' + (v['/Mopeka/EchoQuality'] ?? '–')),
         metric('Temperature', v['/Temperature'] == null ? '–' : v['/Temperature'].toFixed(0), '°C', 'at the sensor')));
-    actions.append(primary('Calibrate', () => flowGasCalibrate(), !canEdit()), plain('Change the sensor', open(flowGas)));
+    actions.append(primary('Calibrate', () => flowGasCalibrate(), !canEdit()), plain('Change the I/O extension', open(flowGas)));
   } else if (kind === 'esp32') {
     const ip = v['/Hydro/WifiIp'];
     card.append(h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;gap:6px;margin:0' },
-        h('h3', { style: 'margin:0;white-space:nowrap' }, 'Water tank ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
+        h('h3', { style: 'margin:0;white-space:nowrap' }, (section.values.custom_name || 'Fresh water') + ' ', dev ? statusChip(dev) : h('span', { class: 'chip' }, 'no data yet')),
         h('span', { class: 'lights' }, dev ? sensorLights(dev) : null,
-          ip && sameNetwork(ip) ? h('a', { href: 'http://' + ip, target: '_blank', class: 'lpill', title: 'The sensor\'s own page' }, ip + ' ↗') : null)),
+          ip && sameNetwork(ip) ? h('a', { href: 'http://' + ip, target: '_blank', class: 'lpill', title: 'The I/O extension\'s own page' }, ip + ' ↗') : null)),
       h('div', { class: 'row', style: 'align-items:baseline;gap:14px;margin:14px 0 2px;flex-wrap:wrap' },
         h('span', { class: 'levelbig' }, v['/Remaining'] == null ? '–' : (v['/Remaining'] * 1000).toFixed(0), h('small', { style: 'font-size:1.2rem;color:var(--muted)' }, ' L')),
         h('span', { style: 'font-size:1.4rem;color:var(--muted)' }, (v['/Level'] == null ? '–' : Math.round(v['/Level'])) + ' %'),
@@ -1203,7 +1203,7 @@ function deviceHeader(kind, section) {
         v['/Hydro/HeightMm'] == null ? '' : v['/Hydro/HeightMm'] + ' mm'].filter(Boolean).join(' · ')));
     const pic = h('div', { style: 'margin:10px auto 0;max-width:330px' });
     pic.innerHTML = tankSvg(v['/Hydro/HeightMm'], v['/Remaining'] == null ? null : v['/Remaining'] * 1000, v['/Capacity'] == null ? null : v['/Capacity'] * 1000, 'pi-tank');
-    card.append(pic);   // Calibrate and Change the sensor are in Settings below
+    card.append(pic);   // Calibrate and Change the I/O extension are in Settings below
   } else {
     const zones = (st.devices || []).filter(d => d.kind === 'temperature' && '/Fridge/PoweredOn' in d.values).sort((a, b) => a.service < b.service ? -1 : 1);
     card.append(h('h3', {}, 'Fridge ', zones[0] ? statusChip(zones[0]) : h('span', { class: 'chip' }, 'no data yet')),
@@ -1232,7 +1232,7 @@ async function tabDevice(kind) {
   const section = S.driver.sections.find(s => s.kind === kind);
   if (!section) { if (!canEdit()) main.append(lockedNotice()); main.append(emptyDevice(spec)); return; }
   if (!canEdit()) main.append(lockedNotice());
-  // the top card follows the sensor (refreshed with the state every 5 s); the form below is left alone
+  // the top card follows the I/O extension (refreshed with the state every 5 s); the form below is left alone
   S.devTop = { kind, section };
   main.append(h('div', { id: 'devlive' }, deviceHeader(kind, section), kind === 'esp32' ? greyCard() : null));
   if (kind === 'fridge') main.append(fridgeControls());
@@ -1260,7 +1260,7 @@ async function tabDevice(kind) {
     if (kind === 'esp32') {
       card.append(h('h4', { class: 'group' }, 'Calibration'), h('div', { class: 'row' },
         primary('Calibrate', () => flowWaterCalibrate(), !canEdit()),
-        plain('Change the water level sensor', () => { const w = wizOpen(spec.title); flowWater(w); w.back = () => openSetup(); })));
+        plain('Change the I/O extension', () => { const w = wizOpen(spec.title); flowWater(w); w.back = () => openSetup(); })));
     }
     if (kind === 'esp32') {                          // the water tab: settings folded away below
       card.querySelector('h3').remove();
@@ -1380,7 +1380,7 @@ async function openSetup() {
       h('div', { class: 'choices' },
         choice('Gas bottle level', 'Mopeka Check sensor under the bottle', () => flowGas(w), state('gas')),
         choice('Fridge', 'Hyckes / Alpicool Bluetooth fridge', () => flowFridge(w), state('fridge')),
-        choice('Water tank', 'Self-built ESP32 water level sensor', () => flowWater(w), state('water')),
+        choice('I/O extension', 'Self-built ESP32: fresh and grey water tank, temperatures, heater', () => flowWater(w), state('water')),
         choice('Starlink', 'Connection quality and speed', () => flowStarlink(w), d.starlink.reachable ? ['dish found', 'ok'] : ['not reached', '']),
         choice('Battery (JK BMS)', 'Needs the dbus-serialbattery driver', () => flowBattery(w), d.battery.found ? ['found', 'ok'] : (d.battery.installed ? ['installed', 'warn'] : ['not installed', ''])),
         choice('Where do I see it in Venus OS?', 'A short tour of the Remote Console', () => flowWhere(w))),
@@ -1522,14 +1522,14 @@ async function flowFridge(w) {
 async function flowWater(w) {
   w.title('Water tank');
   const pick = { mac: null, id: '1', name: 'Fresh water' };
-  const stepScan = () => w.show(h('ol', { class: 'steps' }, h('li', {}, 'Power up the ESP32 water level sensor (USB or 5 V).'), h('li', {}, 'It sends every couple of seconds; the Pi will see it here.')),
-    scanPanel(w, { kinds: ['water'], what: 'the water level sensor', onPick: d => { pick.mac = d.mac; pick.id = String(d.device_id); stepName(); },
-      tips: ['Check the sensor has power and its blue LED blinks.', 'Move the Pi closer for the first try.', 'The firmware has to be uploaded first (Part 3 of the guide).'] }), backNav(w));
+  const stepScan = () => w.show(h('ol', { class: 'steps' }, h('li', {}, 'Power up the ESP32 I/O extension (USB or 5 V).'), h('li', {}, 'It sends every couple of seconds; the Pi will see it here.')),
+    scanPanel(w, { kinds: ['water'], what: 'the I/O extension', onPick: d => { pick.mac = d.mac; pick.id = String(d.device_id); stepName(); },
+      tips: ['Check the I/O extension has power and its blue LED blinks.', 'Move the Pi closer for the first try.', 'The firmware has to be uploaded first (Part 3 of the guide).'] }), backNav(w));
   const stepName = () => {
     const name = h('input', { type: 'text', value: pick.name, style: 'max-width:320px' });
     w.show(h('h4', {}, 'What should the tank be called in Venus OS?'), name, nav(plain('Back', stepScan), primary('Add the tank', async () => {
       pick.name = name.value.trim() || 'Fresh water';
-      await addDevice(w, 'water', { mac: pick.mac, device_id: pick.id, name: pick.name }, () => doneScreen(w, 'water', 'The water tank is added. It uses the sensor\'s own calibration until you calibrate it here.',
+      await addDevice(w, 'water', { mac: pick.mac, device_id: pick.id, name: pick.name }, () => doneScreen(w, 'water', 'The water tank is added. It uses the I/O extension\'s own calibration until you calibrate it here.',
         primary('Calibrate it now', () => flowWaterCalibrate(w))));
     })));
   };
@@ -1548,7 +1548,7 @@ async function flowWaterCalibrate(w) {
   const refresh = async () => {
     const dev = deviceOf(await freshState(), 'water'), v = dev ? dev.values : {};
     height = v['/Hydro/HeightMm'] == null ? null : v['/Hydro/HeightMm'];
-    clear(live).append(h('div', { class: 'bigval' }, height == null ? '–' : height + ' mm'), h('div', { class: 'muted' }, 'water height at the sensor · shown as ' + (v['/Level'] == null ? '–' : Math.round(v['/Level']) + ' %')));
+    clear(live).append(h('div', { class: 'bigval' }, height == null ? '–' : height + ' mm'), h('div', { class: 'muted' }, 'water height at the pressure sensor · shown as ' + (v['/Level'] == null ? '–' : Math.round(v['/Level']) + ' %')));
     return height;
   };
   w.every(2000, async () => { if ($('#wiz .livebox')) await refresh(); });
@@ -1564,7 +1564,7 @@ async function flowWaterCalibrate(w) {
     w.show(live, h('div', { class: 'choices' },
       choice('Quick: empty and full', 'Pick the tank size, then press when empty and when full. Good for a straight-sided tank.', quick),
       choice('Accurate: fill it in steps', 'Pour in known amounts and press each time. Best for tanks with an odd shape, like a wheel-arch tank.', stepwise),
-      choice('Use the sensor\'s own table again', 'Removes the calibration made here', async () => { if (await api('/api/driver_config', { section: section.section, restart: '1', 'f.level_table': '', 'f.capacity_l': '' }).then(r => r.ok)) done('Back to the sensor\'s own calibration.'); })),
+      choice('Use the I/O extension\'s own table again', 'Removes the calibration made here', async () => { if (await api('/api/driver_config', { section: section.section, restart: '1', 'f.level_table': '', 'f.capacity_l': '' }).then(r => r.ok)) done('Back to the I/O extension\'s own calibration.'); })),
     nav(plain('Close', w.close)));
   };
   const quick = () => {
@@ -1575,8 +1575,8 @@ async function flowWaterCalibrate(w) {
     draw();
     w.show(h('h4', {}, 'How big is the tank?'), chips, size.node, h('h4', { style: 'margin-top:18px' }, 'Record the two ends'), live, status,
       h('div', { class: 'row', style: 'margin-top:8px' },
-        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sensor', true); pts.empty = x; draw(); } }, 'The tank is empty now'),
-        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the sensor', true); pts.full = x; draw(); } }, 'The tank is full now')),
+        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the I/O extension', true); pts.empty = x; draw(); } }, 'The tank is empty now'),
+        h('button', { type: 'button', class: 'btn', onclick: async () => { const x = await refresh(); if (x == null) return toast('No reading from the I/O extension', true); pts.full = x; draw(); } }, 'The tank is full now')),
       nav(plain('Back', home), primary('Save', async () => {
         if (pts.empty == null || pts.full == null || !(pts.full > pts.empty)) return toast('Record empty first, then full (the full height must be higher).', true);
         if (await save([[pts.empty, 0], [pts.full, size.get()]], size.get())) done('Saved: ' + size.get() + ' L between ' + pts.empty + ' and ' + pts.full + ' mm.');
@@ -1592,12 +1592,12 @@ async function flowWaterCalibrate(w) {
     };
     const start = () => w.show(h('h4', {}, 'Step 1: empty tank'), h('div', { class: 'muted' }, 'Drain the tank as far as it goes, then press the button.'), live,
       nav(plain('Back', home), primary('The tank is empty: start', async () => {
-        const x = await refresh(); if (x == null) return toast('No reading from the sensor', true);
+        const x = await refresh(); if (x == null) return toast('No reading from the I/O extension', true);
         points.length = 0; points.push([x, 0]); total = 0; ready = true; fill();
       })));
     const add = n => { total += n; draw(); };
     const record = async () => {
-      const x = await refresh(); if (x == null) return toast('No reading from the sensor', true);
+      const x = await refresh(); if (x == null) return toast('No reading from the I/O extension', true);
       const last = points[points.length - 1];
       if (total === last[1]) return toast('Add some water first.', true);
       if (x <= last[0]) return toast('The height did not rise yet. Wait for the water to settle and try again.', true);
@@ -1647,7 +1647,7 @@ async function flowBattery(w) {
 function flowWhere(w) {
   w.title('Where do I see it in Venus OS?');
   w.show(h('div', { class: 'muted' }, 'Open the Remote Console of your Pi (or the screen) and look here:'),
-    ...['gas', 'fridge', 'water', 'starlink', 'battery'].map(k => h('div', { class: 'card' }, h('h3', {}, ({ gas: 'Gas bottle', fridge: 'Fridge', water: 'Water tank', starlink: 'Starlink', battery: 'Battery' })[k]), h('div', {}, VENUS_WHERE[k]))),
+    ...['gas', 'fridge', 'water', 'starlink', 'battery'].map(k => h('div', { class: 'card' }, h('h3', {}, ({ gas: 'Gas bottle', fridge: 'Fridge', water: 'I/O extension', starlink: 'Starlink', battery: 'Battery' })[k]), h('div', {}, VENUS_WHERE[k]))),
     nav(plain('Back to the list', () => w.back()), plain('Close', w.close)));
 }
 
@@ -2743,12 +2743,12 @@ function senderCard() {
   const sec = S.driver && (S.driver.sections || []).find(x => x.kind === 'esp32');
   const svc = (S.state.services || []).find(x => x.name === 'esp32_hydro');
   const noData = !dev || (link || '').indexOf('no broadcast') === 0;
-  // over Wi-Fi when the sensor knows a network (its own, 4.5+, or the one in the Pi's settings)
+  // over Wi-Fi when the I/O extension knows a network (its own, 4.5+, or the one in the Pi's settings)
   const ssid = v['/Hydro/WifiSsid'] || (sec && (sec.values.wifi_ssid || '').trim()) || '';
   const go = via => confirmThen((via === 'bluetooth'
-      ? (v['/Hydro/Transport'] === 'wifi' ? 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over the Wi-Fi network (under a minute)? '
-         : 'Send the sensor firmware' + (latest ? ' ' + latest : '') + ' over Bluetooth? It takes a few minutes; a dropped connection only pauses it. ')
-      : 'Update the sensor firmware' + (latest ? ' to ' + latest : '') + ' over Wi-Fi? The sensor joins “' + ssid + '” and downloads it from the Pi (about a minute). ')
+      ? (v['/Hydro/Transport'] === 'wifi' ? 'Send the I/O extension firmware' + (latest ? ' ' + latest : '') + ' over the Wi-Fi network (under a minute)? '
+         : 'Send the I/O extension firmware' + (latest ? ' ' + latest : '') + ' over Bluetooth? It takes a few minutes; a dropped connection only pauses it. ')
+      : 'Update the I/O extension firmware' + (latest ? ' to ' + latest : '') + ' over Wi-Fi? The I/O extension joins “' + ssid + '” and downloads it from the Pi (about a minute). ')
       + 'If anything fails it keeps its old firmware.', async () => {
     const x = await api('/api/sender_update', { via });
     toast(x.ok ? x.data.message : x.data.error, !x.ok);
@@ -2764,17 +2764,17 @@ function senderCard() {
     noData ? noDataHelp(svc) : link && link !== 'ok' && dev && val(dev, '/Connected') === 1 ? linkHelp(link, inst) : !inst ? firstInstallHelp(link) : null,
     h('div', { class: 'row', style: 'margin-top:10px' },
       h('button', { type: 'button', class: 'btn small' + (newer || !inst ? ' primary' : ''), disabled: !canEdit(), onclick: () => go('bluetooth') }, label + (overWifi ? '' : ' over Bluetooth')),
-      overWifi ? null : h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !ssid, title: ssid ? 'via “' + ssid + '”' : 'Connect the sensor to a Wi-Fi network first (Settings → Connection)',
+      overWifi ? null : h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !ssid, title: ssid ? 'via “' + ssid + '”' : 'Connect the I/O extension to a Wi-Fi network first (Settings → Connection)',
         onclick: () => go('wifi') }, label + ' over Wi-Fi'),
       h('button', { type: 'button', class: 'btn small', onclick: ev => checkSenderFw(ev.target) }, 'Check for update'),
-      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !dev, onclick: ev => rebootSensor(ev.target) }, 'Restart sensor'),
+      h('button', { type: 'button', class: 'btn small', disabled: !canEdit() || !dev, onclick: ev => rebootSensor(ev.target) }, 'Restart I/O extension'),
       h('button', { type: 'button', class: 'btn small', onclick: () => { S.dbgView = 'raw'; S.rawSource = 'link'; selectTab('debug'); } }, 'Connection log')),
     senderProgress());
 }
 
-// Restart the sensor (over Wi-Fi or Bluetooth, settings are kept); the Pi reads it back ~20 s later
+// Restart the I/O extension (over Wi-Fi or Bluetooth, settings are kept); the Pi reads it back ~20 s later
 function rebootSensor(btn) {
-  confirmThen('Restart the water level sensor? Settings and calibration are kept; it is back in about 10 seconds.', async () => {
+  confirmThen('Restart the I/O extension? Settings and calibration are kept; it is back in about 10 seconds.', async () => {
     btn.disabled = true; btn.textContent = 'Restarting…';
     const x = await api('/api/sender_cmd', { c: 'reboot' });
     let result = null;
@@ -2785,19 +2785,19 @@ function rebootSensor(btn) {
         const y = await api('/api/sender_cmd');
         if (y.ok) result = y.data.result;
       }
-      if (result == null) toast('No answer from the sensor.', true);
-      else if (/^ok/.test(result)) toast('The sensor restarts: back in about 10 seconds.');
-      else toast('Sensor: ' + (/^unknown/i.test(result) ? 'its firmware is older than 4.6 and has no restart command' : result), true);
+      if (result == null) toast('No answer from the I/O extension.', true);
+      else if (/^ok/.test(result)) toast('The I/O extension restarts: back in about 10 seconds.');
+      else toast('I/O extension: ' + (/^unknown/i.test(result) ? 'its firmware is older than 4.6 and has no restart command' : result), true);
     }
-    btn.disabled = false; btn.textContent = 'Restart sensor';
+    btn.disabled = false; btn.textContent = 'Restart I/O extension';
     setTimeout(async () => { await refreshState(); refreshDeviceTop(); }, 25000);
   });
 }
 
-// ----- the sensor's Wi-Fi, set straight on the sensor (over Wi-Fi or Bluetooth; no save, no driver restart)
+// ----- the I/O extension's Wi-Fi, set straight on the I/O extension (over Wi-Fi or Bluetooth; no save, no driver restart)
 async function sensorCmd(c, label) {
   const sw = S.sw;
-  sw.busy = label || 'Sending to the sensor…'; redrawSensorWifi();
+  sw.busy = label || 'Sending to the I/O extension…'; redrawSensorWifi();
   let result = null;
   const x = await api('/api/sender_cmd', { c });
   if (!x.ok) toast(x.data.error, true);
@@ -2807,11 +2807,11 @@ async function sensorCmd(c, label) {
       const y = await api('/api/sender_cmd');
       if (y.ok) result = y.data.result;
     }
-    if (result == null) toast('No answer from the sensor.', true);
-    else if (/^(error|wrong|no answer|unknown|usage)/i.test(result)) toast('Sensor: ' + result, true);
+    if (result == null) toast('No answer from the I/O extension.', true);
+    else if (/^(error|wrong|no answer|unknown|usage)/i.test(result)) toast('I/O extension: ' + result, true);
   }
   sw.busy = false; redrawSensorWifi();
-  // the driver reads the sensor's new Wi-Fi state a few seconds later
+  // the driver reads the I/O extension's new Wi-Fi state a few seconds later
   setTimeout(async () => { await refreshState(); redrawSensorWifi(); refreshDeviceTop(); }, 5000);
   setTimeout(async () => { await refreshState(); redrawSensorWifi(); refreshDeviceTop(); }, 28000);
   return result;
@@ -2844,12 +2844,12 @@ function drawSensorWifi(box) {
   const setMode = m => {
     if (m === 'van' && !ssid) { sw.want = { mode: 'van', t: Date.now(), local: true }; redrawSensorWifi(); return; }
     sw.want = { mode: m, t: Date.now() };
-    sensorCmd('wifi mode ' + m, 'Switching the sensor…');
+    sensorCmd('wifi mode ' + m, 'Switching the I/O extension…');
   };
   const join = (name, pw) => { sw.pick = null; sw.pw = ''; sw.want = { mode: 'van', t: Date.now() };
-    sensorCmd('wifi join ' + name + (pw == null ? '' : '\t' + pw), 'Connecting the sensor to “' + name + '”…'); };
+    sensorCmd('wifi join ' + name + (pw == null ? '' : '\t' + pw), 'Connecting the I/O extension to “' + name + '”…'); };
   const items = [];
-  items.push(h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Sensor Wi-Fi', style: 'display:flex;flex-wrap:nowrap' },
+  items.push(h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'I/O extension Wi-Fi', style: 'display:flex;flex-wrap:nowrap' },
     [['ap', 'AP only'], ['van', 'Wi-Fi network'], ['auto', 'Bluetooth only']].filter(([m]) => !(m === 'auto' && v['/Hydro/Transport'] === 'wifi')).map(([m, l]) =>
       h('button', { type: 'button', role: 'radio', 'aria-checked': cur === m, class: 'segbtn' + (cur === m ? ' on' : ''), style: 'flex:1;padding:8px 6px', disabled: off, onclick: () => setMode(m) }, l))));
   if (cur === 'van') {
@@ -2860,11 +2860,11 @@ function drawSensorWifi(box) {
         sel ? (ip ? h('b', { style: 'color:var(--ok)' }, 'Connected') : h('span', { class: 'muted' }, 'joining…'))
           : h('button', { type: 'button', class: 'btn small primary', disabled: off, onclick: () => join(n) }, 'Connect'),
         h('button', { type: 'button', class: 'btn small', disabled: off, title: 'Forget', 'aria-label': 'Forget ' + n,
-          onclick: () => confirmThen('Forget “' + n + '” on the sensor?', () => sensorCmd('wifi forget ' + n)) }, '✕'));
-    })) : h('div', { class: 'muted' }, mode ? 'None saved on the sensor yet: scan and pick your network.' : 'Not known yet (the Pi reads them at its next check-in).'));
+          onclick: () => confirmThen('Forget “' + n + '” on the I/O extension?', () => sensorCmd('wifi forget ' + n)) }, '✕'));
+    })) : h('div', { class: 'muted' }, mode ? 'None saved on the I/O extension yet: scan and pick your network.' : 'Not known yet (the Pi reads them at its next check-in).'));
     items.push(h('div', { class: 'row', style: 'margin-top:6px' },
       h('button', { type: 'button', class: 'btn small', disabled: off, onclick: async () => {
-        const r = await sensorCmd('wifi scan', 'The sensor looks for networks… (about 10 s)');
+        const r = await sensorCmd('wifi scan', 'The I/O extension looks for networks… (about 10 s)');
         try { sw.scan = JSON.parse(r); } catch (e) { sw.scan = sw.scan || null; }
         sw.pick = null; redrawSensorWifi();
       } }, sw.scan ? 'Scan again' : 'Scan for networks'),
@@ -2896,31 +2896,31 @@ function drawSensorWifi(box) {
   }
   items.push(sensorBtSwitch(v, off));
   items.push(h('div', { class: 'muted', style: 'margin:6px 0 12px' }, sw.busy ? sw.busy
-    : !mode ? 'The sensor\'s Wi-Fi is not known yet.'
+    : !mode ? 'The I/O extension\'s Wi-Fi is not known yet.'
     : (ip ? 'On “' + ssid + '”: ' + ip + '. ' : cur === 'van' && ssid ? 'Joining “' + ssid + '”… ' : '') + 'Own network (AP) ' + (v['/Hydro/AccessPoint'] ? 'on.' : 'off.')));
   box.replaceChildren(...items.filter(Boolean));
 }
 
-// The sensor's own Bluetooth as one switch. Off only while the Pi reaches it over Wi-Fi (else the
-// Pi would lose it); the sensor restarts to apply it, so the wanted state is shown until it reports back.
+// The I/O extension's own Bluetooth as one switch. Off only while the Pi reaches it over Wi-Fi (else the
+// Pi would lose it); the I/O extension restarts to apply it, so the wanted state is shown until it reports back.
 function sensorBtSwitch(v, off) {
   const sw = S.sw, known = v['/Hydro/Bluetooth'], overWifi = v['/Hydro/Transport'] === 'wifi';
   if (sw.btWant && (known === sw.btWant.on || Date.now() - sw.btWant.t > 60000)) sw.btWant = null;
   const on = sw.btWant ? sw.btWant.on : known !== 0;
-  const box = h('input', { type: 'checkbox', role: 'switch', checked: on, 'aria-label': 'Sensor Bluetooth',
+  const box = h('input', { type: 'checkbox', role: 'switch', checked: on, 'aria-label': 'I/O extension Bluetooth',
     disabled: off || !!sw.busy || (on && !overWifi) || known == null && !overWifi });
   box.addEventListener('change', () => {
     const want = box.checked ? 1 : 0;
     const go = async () => {
-      const r = await sensorCmd(want ? 'bt on' : 'bt off', want ? 'Switching the sensor\'s Bluetooth on (it restarts)…' : 'Switching the sensor\'s Bluetooth off (it restarts)…');
+      const r = await sensorCmd(want ? 'bt on' : 'bt off', want ? 'Switching the I/O extension\'s Bluetooth on (it restarts)…' : 'Switching the I/O extension\'s Bluetooth off (it restarts)…');
       if (r != null && !/^(error|unknown)/i.test(r)) { sw.btWant = { on: want, t: Date.now() }; redrawSensorWifi(); }
     };
     if (want) go();
-    else if (window.confirm('Switch the sensor\'s Bluetooth off? The Pi reaches it over the Wi-Fi network; Wi-Fi gets the whole radio. The sensor restarts.')) go();
+    else if (window.confirm('Switch the I/O extension\'s Bluetooth off? The Pi reaches it over the Wi-Fi network; Wi-Fi gets the whole radio. The I/O extension restarts.')) go();
     else box.checked = true;
   });
-  return h('div', { class: 'field', style: 'margin:10px 0 0' }, h('label', { class: 'switch' }, box, h('span', {}, 'Sensor Bluetooth')),
-    sw.btWant ? h('div', { class: 'help' }, 'Sensor restarting…') : null);
+  return h('div', { class: 'field', style: 'margin:10px 0 0' }, h('label', { class: 'switch' }, box, h('span', {}, 'I/O extension Bluetooth')),
+    sw.btWant ? h('div', { class: 'help' }, 'I/O extension restarting…') : null);
 }
 
 // Readings arrive (broadcast) but the two-way connection fails: explain the difference
@@ -2928,29 +2928,29 @@ function linkHelp(link, inst) {
   if (link.indexOf('older than 2.7') >= 0) return firstInstallHelp(link);
   const raw = 'https://github.com/mich-crypto/Venusosmods/raw/refs/heads/master/firmware/bin/';
   return h('div', { class: 'banner warn', style: 'margin-top:10px' },
-    h('b', {}, 'Readings arrive, but the Pi can\'t connect to the sensor: ' + link),
+    h('b', {}, 'Readings arrive, but the Pi can\'t connect to the I/O extension: ' + link),
     h('div', { class: 'muted', style: 'margin-top:4px' },
-      '"Connected" means the level arrives (the sensor broadcasts it). For settings, the firmware version and updates the Pi also connects to the sensor every 5 minutes; '
-      + 'that fails now. Meanwhile the sensor keeps its own Wi-Fi on (fallback). The Pi tries again in a minute.'),
+      '"Connected" means the level arrives (the I/O extension broadcasts it). For settings, the firmware version and updates the Pi also connects to the I/O extension every 5 minutes; '
+      + 'that fails now. Meanwhile the I/O extension keeps its own Wi-Fi on (fallback). The Pi tries again in a minute.'),
     h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
-      h('li', {}, 'Sensor firmware 4.0 or newer fixes dropped links with the Raspberry Pi\'s built-in Bluetooth: install ',
+      h('li', {}, 'I/O extension firmware 4.0 or newer fixes dropped links with the Raspberry Pi\'s built-in Bluetooth: install ',
         h('a', { href: raw + 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin' }, 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'),
-        ' on the sensor\'s own page (join Watertank-1, http://192.168.4.1, Firmware update).'),
-      h('li', {}, '"wrong sensor password": set Settings → Connection → Sensor password to the sensor\'s Wi-Fi password.'),
-      h('li', {}, 'Close phone apps that may be connected to the sensor (e.g. nRF Connect).')));
+        ' on the I/O extension\'s own page (join Watertank-1, http://192.168.4.1, Firmware update).'),
+      h('li', {}, '"wrong I/O extension password": set Settings → Connection → I/O extension password to the I/O extension\'s Wi-Fi password.'),
+      h('li', {}, 'Close phone apps that may be connected to the I/O extension (e.g. nRF Connect).')));
 }
 
-// Nothing arrives from the sensor at all: say what to check, before anything about firmware
+// Nothing arrives from the I/O extension at all: say what to check, before anything about firmware
 function noDataHelp(svc) {
   const running = svc && svc.state === 'up';
   return h('div', { class: 'banner bad', style: 'margin-top:10px' },
-    h('b', {}, !svc || !svc.enabled ? 'The water driver is switched off.' : !running ? 'The water driver is not running.' : 'The Pi receives nothing from the sensor.'),
+    h('b', {}, !svc || !svc.enabled ? 'The water driver is switched off.' : !running ? 'The water driver is not running.' : 'The Pi receives nothing from the I/O extension.'),
     h('div', { class: 'muted', style: 'margin-top:4px' }, running
-      ? 'No reading from the sensor has arrived since the driver started (neither over the Wi-Fi network nor as a Bluetooth broadcast). Check:' : 'Start it on the Overview tab, then check:'),
+      ? 'No reading from the I/O extension has arrived since the driver started (neither over the Wi-Fi network nor as a Bluetooth broadcast). Check:' : 'Start it on the Overview tab, then check:'),
     h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
-      h('li', {}, 'Is the sensor on the same Wi-Fi network as the Pi? Its page (press BOOT, join Watertank-1, http://192.168.4.1) shows the network at the top right; set its address under Settings → Connection if the Pi does not find it.'),
-      h('li', {}, 'For Bluetooth (the fallback): is the Pi\'s Bluetooth on (Venus OS: Settings → Bluetooth) and the sensor in range?'),
-      h('li', {}, 'Does the sensor ID match? DEVICE_ID in the firmware (default 1) and "Sensor ID" here.'),
+      h('li', {}, 'Is the I/O extension on the same Wi-Fi network as the Pi? Its page (press BOOT, join Watertank-1, http://192.168.4.1) shows the network at the top right; set its address under Settings → Connection if the Pi does not find it.'),
+      h('li', {}, 'For Bluetooth (the fallback): is the Pi\'s Bluetooth on (Venus OS: Settings → Bluetooth) and the I/O extension in range?'),
+      h('li', {}, 'Does the I/O extension ID match? DEVICE_ID in the firmware (default 1) and "I/O extension ID" here.'),
       h('li', {}, 'Water → Firmware → Connection log shows every attempt, over Wi-Fi and Bluetooth; the driver log is on the Overview tab (Log).')));
 }
 
@@ -2959,12 +2959,12 @@ function firstInstallHelp(link) {
   const raw = 'https://github.com/mich-crypto/Venusosmods/raw/refs/heads/master/firmware/bin/';
   const old = link && link.indexOf('older than 2.7') >= 0;
   return h('div', { class: 'banner warn', style: 'margin-top:10px' },
-    h('b', {}, old ? 'The sensor runs firmware older than 2.7.' : 'The Pi has not reached the sensor yet.'),
+    h('b', {}, old ? 'The I/O extension runs firmware older than 2.7.' : 'The Pi has not reached the I/O extension yet.'),
     h('div', { class: 'muted', style: 'margin-top:4px' }, old
       ? 'Older firmware can\'t be updated from here. Install 2.7 or newer once, then updates come from this page:'
-      : 'It checks every 5 minutes. If it never shows a version, the sensor probably runs firmware older than 2.7: install the new one once, then updates come from this page:'),
+      : 'It checks every 5 minutes. If it never shows a version, the I/O extension probably runs firmware older than 2.7: install the new one once, then updates come from this page:'),
     h('ol', { style: 'margin:6px 0 0 18px;padding:0' },
-      h('li', {}, 'On the sensor\'s own page: join the Wi-Fi Watertank-1 (press BOOT on the ESP32 if it is off), open http://192.168.4.1, Firmware update, upload ',
+      h('li', {}, 'On the I/O extension\'s own page: join the Wi-Fi Watertank-1 (press BOOT on the ESP32 if it is off), open http://192.168.4.1, Firmware update, upload ',
         h('a', { href: raw + 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin' }, 'WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin'), '.'),
       h('li', {}, 'Or over USB with the browser flasher (Chrome/Edge on a computer): Erase Flash, then ',
         h('a', { href: raw + 'FLASH-AT-0x0_esp32_hydro_tank_full.bin' }, 'FLASH-AT-0x0_esp32_hydro_tank_full.bin'), ' at address 0x0.')));
@@ -3001,7 +3001,7 @@ function liveCard() {
     note.textContent = !val['/Hydro/Live'] ? (have ? 'Last reading ' + ago(Math.round(age)) + ' ago' : '')
       : !have ? 'Connecting…'
       : age < 3 ? 'Updated ' + Math.max(0, age).toFixed(1) + ' s ago'
-      : 'Waiting for the sensor (' + age.toFixed(0) + ' s)…';
+      : 'Waiting for the I/O extension (' + age.toFixed(0) + ' s)…';
   };
   draw(v);
   if (on) {
@@ -3032,16 +3032,16 @@ async function checkSenderFw(btn) {
   const inst = senderInstalled(), latest = r.ok && r.data.latest;
   if (!r.ok || r.data.error) toast((r.data && r.data.error) || 'Could not check', true);
   else if (!latest) toast('No answer from GitHub yet, try again in a moment.', true);
-  else if (!inst) toast('Newest sensor firmware: ' + latest + ' (the installed version is not known yet).');
-  else if (cmpVersion(latest, inst) > 0) toast('New sensor firmware ' + latest + ' is available (installed ' + inst + ').');
-  else toast('The sensor is up to date (' + inst + ').');
+  else if (!inst) toast('Newest I/O extension firmware: ' + latest + ' (the installed version is not known yet).');
+  else if (cmpVersion(latest, inst) > 0) toast('New I/O extension firmware ' + latest + ' is available (installed ' + inst + ').');
+  else toast('The I/O extension is up to date (' + inst + ').');
   renderTabs(); renderUpdateBanner();
   await renderTab();
 }
 
-// Follow the update: download, command over Bluetooth, the sensor fetching it, the new version
+// Follow the update: download, command over Bluetooth, the I/O extension fetching it, the new version
 function cancelSenderUpdate() {
-  confirmThen('Cancel the sensor update? The sensor keeps its old firmware.', async () => {
+  confirmThen('Cancel the I/O extension update? The I/O extension keeps its old firmware.', async () => {
     const x = await api('/api/sender_update_cancel', {});
     toast(x.ok ? x.data.message : x.data.error, !x.ok);
     await refreshState(); renderBusyBanner(); renderTab();
@@ -3062,7 +3062,7 @@ function progBox(key) {
   return pre;
 }
 
-// the sensor update's log under the Firmware card (with Cancel while it runs)
+// the I/O extension update's log under the Firmware card (with Cancel while it runs)
 function senderProgress() {
   if (!S.fwWatching && !(S.prog && S.prog.fw)) return null;
   return h('div', { id: 'fwprog' }, progBox('fw'), S.fwWatching ? h('div', { class: 'row', style: 'margin-top:6px' },
@@ -3086,18 +3086,18 @@ async function watchUpdateLog() {
     const x = await api('/api/sender_update_log');
     if (!x.ok) continue;
     progSet('fw', x.data.text || '(starting…)');
-    if (x.data.state === 'done') { toast('The water level sensor is updated.'); await refreshState(); return; }
-    if (x.data.state === 'failed') { toast('The update did not work, see the log. The sensor keeps its old firmware.', true); return; }
+    if (x.data.state === 'done') { toast('The I/O extension is updated.'); await refreshState(); return; }
+    if (x.data.state === 'failed') { toast('The update did not work, see the log. The I/O extension keeps its old firmware.', true); return; }
   }
 }
 
 function renderUpdateBanner() {
   const box = clear($('#updbanner')), d = S.upd || {};
-  const mods = d.available && d.installed, sender = false;   // sensor firmware: dot on the Water tab
+  const mods = d.available && d.installed, sender = false;   // I/O extension firmware: dot on the Water tab
   const key = (mods ? d.latest : '') + '|' + (sender ? S.senderFw.latest : '');
   if (!(mods || sender) || S.tab === 'update' || S.updHidden === key) return;
-  const title = mods && sender ? 'New versions of Venus OS mods and the water level sensor firmware are available'
-    : mods ? 'A new version of Venus OS mods is available' : 'New water level sensor firmware ' + S.senderFw.latest + ' is available (installed ' + senderInstalled() + ')';
+  const title = mods && sender ? 'New versions of Venus OS mods and the I/O extension firmware are available'
+    : mods ? 'A new version of Venus OS mods is available' : 'New I/O extension firmware ' + S.senderFw.latest + ' is available (installed ' + senderInstalled() + ')';
   box.append(h('div', { class: 'banner warn upd-banner' },
     h('div', { style: 'flex:1;min-width:0' }, h('b', {}, title),
       mods && d.message ? h('div', { class: 'muted' }, (d.date ? d.date.slice(0, 10) + ' · ' : '') + d.message) : null),
@@ -3238,9 +3238,9 @@ async function downloadLog(source) {
   } catch (e) { toast('Download failed: ' + e, true); }
 }
 
-// ask the sensor for its own log (the "dlog" command, over Wi-Fi or Bluetooth)
+// ask the I/O extension for its own log (the "dlog" command, over Wi-Fi or Bluetooth)
 async function fetchSensorLog(btn, box) {
-  btn.disabled = true; btn.textContent = 'Asking the sensor…';
+  btn.disabled = true; btn.textContent = 'Asking the I/O extension…';
   S.rawPaused = true;
   const x = await api('/api/sender_cmd', { c: 'dlog' });
   let result = null;
@@ -3251,8 +3251,8 @@ async function fetchSensorLog(btn, box) {
       const y = await api('/api/sender_cmd');
       if (y.ok) result = y.data.result;
     }
-    if (result == null) toast('No answer from the sensor (its log is also on its own page: Debug log).', true);
-    else if (/^unknown/i.test(result)) toast('The sensor firmware is older than 4.9 and has no log yet.', true);
+    if (result == null) toast('No answer from the I/O extension (its log is also on its own page: Debug log).', true);
+    else if (/^unknown/i.test(result)) toast('The I/O extension firmware is older than 4.9 and has no log yet.', true);
     else S.sensorLog = result;
   }
   S.rawPaused = false;
@@ -3273,17 +3273,17 @@ async function rawView(box) {
   const lines = r.data.lines, old = $('.rawbox'), stick = !old || old.scrollTop + old.clientHeight >= old.scrollHeight - 30;
   const note = { gas: 'Every Mopeka advertisement of your sensor: the raw bytes (data=), what they decode to, and the level that was published.',
     fridge: 'What the Pi sends to the fridge (tx) and what comes back (rx), with the decoded status. A status payload is a row of bytes; the table below names them.',
-    water: 'Every new reading of the water level sensor: over the Wi-Fi network (wifi: when it changes, else once a minute) or a Bluetooth broadcast (adv: its raw bytes and what they decode to).',
-    link: 'The connection to the water level sensor, step by step, over the Wi-Fi network (wifi lines: which way, address, no answer) or Bluetooth (adv: broadcast gaps; step: connect, services): what the Pi sent (tx), the answer (rx), what the sensor itself logged (sensor, at every check-in) and a summary every hour (stats). Kept across reboots; Download gives the whole file.' }[S.rawSource];
+    water: 'Every new reading of the I/O extension: over the Wi-Fi network (wifi: when it changes, else once a minute) or a Bluetooth broadcast (adv: its raw bytes and what they decode to).',
+    link: 'The connection to the I/O extension, step by step, over the Wi-Fi network (wifi lines: which way, address, no answer) or Bluetooth (adv: broadcast gaps; step: connect, services): what the Pi sent (tx), the answer (rx), what the I/O extension itself logged (sensor, at every check-in) and a summary every hour (stats). Kept across reboots; Download gives the whole file.' }[S.rawSource];
   out.append(h('div', { class: 'row', style: 'margin-bottom:8px' }, h('div', { class: 'muted' }, note), h('span', { class: 'spacer' }),
     h('button', { type: 'button', class: 'btn small', onclick: () => { S.rawPaused = !S.rawPaused; renderTab(); } }, S.rawPaused ? 'Resume' : 'Pause'),
-    S.rawSource === 'link' ? h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: ev => fetchSensorLog(ev.target, box) }, 'Get the sensor\'s log') : null,
-    h('button', { type: 'button', class: 'btn small', onclick: () => copyText(lines.join('\n') + (S.rawSource === 'link' && S.sensorLog ? '\n\n--- sensor ---\n' + S.sensorLog : '')) }, 'Copy'),
+    S.rawSource === 'link' ? h('button', { type: 'button', class: 'btn small', disabled: !canEdit(), onclick: ev => fetchSensorLog(ev.target, box) }, 'Get the I/O extension\'s log') : null,
+    h('button', { type: 'button', class: 'btn small', onclick: () => copyText(lines.join('\n') + (S.rawSource === 'link' && S.sensorLog ? '\n\n--- I/O extension ---\n' + S.sensorLog : '')) }, 'Copy'),
     h('button', { type: 'button', class: 'btn small', onclick: () => downloadLog(S.rawSource) }, 'Download'),
     h('button', { type: 'button', class: 'btn small danger', disabled: !canEdit(), onclick: async () => { await api('/api/rawlog_clear', { source: S.rawSource }); rawView(box); } }, 'Clear')));
-  const view = h('div', { class: 'rawbox' }, lines.length ? lines.map(rawLine) : h('div', { class: 'muted' }, 'Nothing logged yet. The log lives in ' + r.data.dir + ' on the Pi (' + (S.rawSource === 'link' ? 'kept across reboots' : 'lost at a reboot') + ') and fills as the sensor sends data. Update the drivers and restart them if it stays empty.'));
+  const view = h('div', { class: 'rawbox' }, lines.length ? lines.map(rawLine) : h('div', { class: 'muted' }, 'Nothing logged yet. The log lives in ' + r.data.dir + ' on the Pi (' + (S.rawSource === 'link' ? 'kept across reboots' : 'lost at a reboot') + ') and fills as the I/O extension sends data. Update the drivers and restart them if it stays empty.'));
   out.append(view);
-  if (S.rawSource === 'link' && S.sensorLog) out.append(h('div', { class: 'muted', style: 'margin-top:10px' }, 'The sensor\'s own log (times since it started):'),
+  if (S.rawSource === 'link' && S.sensorLog) out.append(h('div', { class: 'muted', style: 'margin-top:10px' }, 'The I/O extension\'s own log (times since it started):'),
     h('pre', { class: 'rawbox', style: 'height:auto;max-height:40vh' }, S.sensorLog));
   if (S.rawSource === 'fridge') {
     const last = lines.slice().reverse().map(l => /payload=([0-9a-f]+)/.exec(l)).find(Boolean);

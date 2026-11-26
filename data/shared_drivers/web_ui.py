@@ -1259,7 +1259,7 @@ class App(object):
         reason = '; '.join(l for l in lines[-4:] if l.startswith(('curl', 'wget', 'sh:')))
         return 'could not reach GitHub' + (' (%s)' % reason[:200] if reason else '')
 
-    # ------------------------------------------------ ESP32 water sender firmware
+    # ------------------------------------------------ ESP32 I/O extension firmware
 
     def api_sender_fw(self, req):
         """Latest sensor firmware on GitHub (firmware/bin/VERSION), checked at most every 6 h."""
@@ -1344,7 +1344,7 @@ class App(object):
             return jsonr({'ok': False, 'error': 'an update is already running'}, 409)
         sec = self.sender_section()
         if not sec:
-            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
+            return jsonr({'ok': False, 'error': 'no I/O extension set up'}, 400)
         name, values = self.sender_device(sec)
         have_wifi = bool((sec.get('wifi_ssid') or '').strip() or values.get('/Hydro/WifiIp') or values.get('/Hydro/WifiSsid'))
         via = req.form.get('via') or ('wifi' if have_wifi else 'bluetooth')
@@ -1479,7 +1479,7 @@ class App(object):
         on = req.form.get('on', '1') == '1'
         sec = self.sender_section()
         if not sec:
-            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
+            return jsonr({'ok': False, 'error': 'no I/O extension set up'}, 400)
         name = 'com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro')
         try:
             rc = self.bus.call_blocking(name, '/Hydro/Live', BUS_ITEM, 'SetValue', 'v',
@@ -1497,7 +1497,7 @@ class App(object):
         """The live view's few values, read fresh (the state uses a dump that can be seconds old)."""
         sec = self.sender_section()
         if not sec:
-            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
+            return jsonr({'ok': False, 'error': 'no I/O extension set up'}, 400)
         try:
             values = self.dbus_dump('com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro'), max_age=0.3)
         except dbus.exceptions.DBusException as e:
@@ -1558,7 +1558,7 @@ class App(object):
             return False, 'a firmware update of the sensor is running', 409
         sec = self.sender_section()
         if not sec:
-            return False, 'no water level sensor set up', 400
+            return False, 'no I/O extension set up', 400
         name = 'com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro')
         try:
             rc = self.bus.call_blocking(name, '/Hydro/Command', BUS_ITEM, 'SetValue', 'v',
@@ -1579,7 +1579,7 @@ class App(object):
     def api_sender_cmd_result(self, req):
         sec = self.sender_section()
         if not sec:
-            return jsonr({'ok': False, 'error': 'no water level sensor set up'}, 400)
+            return jsonr({'ok': False, 'error': 'no I/O extension set up'}, 400)
         try:
             values = self.dbus_dump('com.victronenergy.tank.%s' % (sec.get('service') or 'esp32_hydro'), max_age=0.3)
         except dbus.exceptions.DBusException as e:

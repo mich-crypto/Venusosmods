@@ -1,4 +1,4 @@
-# Wiring: ESP32-S3 hydrostatic tank sender
+# Wiring: I/O extension (ESP32-S3)
 
 ## Parts
 
@@ -147,7 +147,7 @@ Default: **each probe on its own pin**, probe 1 on **GPIO5**, probe 2 on
   (~45 kΩ). That is often enough for short cables (1–2 m) and two probes, but
   not reliable: fit the resistor for the van. Probes on a small breakout
   board (pins VCC/DAT/GND) usually have it on board already.
-* **Names:** press **Rename** on the sender's page, or type `name 1 Inside`
+* **Names:** press **Rename** on the I/O extension's page, or type `name 1 Inside`
   in the Serial Monitor (`temps` lists them with their pin). The name stays
   with the probe.
 * For cables over ~5 m use 2.2 kΩ instead of 4.7 kΩ.
@@ -166,7 +166,7 @@ the common rod; water between the common and a level rod carries it over to
 that rod's wire. The ESP32 reads the same rods with its own 3.3 V, **without
 any resistors**.
 
-**The van's tank display must be unplugged from the sender for good.** Its
+**The van's tank display must be unplugged from the I/O extension for good.** Its
 12 V must never reach these wires: it destroys the ESP32. Keep the cable away
 from other 12 V wiring.
 

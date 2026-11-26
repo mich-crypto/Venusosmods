@@ -1,5 +1,6 @@
 /*
- * ESP32-S3 hydrostatic water tank sender for Victron Venus OS
+ * I/O extension for Victron Venus OS (ESP32-S3): fresh water tank (hydrostatic
+ * sensor), grey water tank (rod sender), temperature probes, Truma heater
  *
  * Reads a hydrostatic pressure transmitter, filters out sloshing, converts
  * height to litres with a lookup table and broadcasts the result as a
@@ -2045,7 +2046,7 @@ static DNSServer dns;        // answers every name with our address: phones then
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Water tank</title>
+<title>I/O extension</title>
 <style>
 :root{--bg:#fff;--fg:#111;--mut:#666;--line:#ddd;--card:#f6f6f6;--acc:#111;--accfg:#fff;--bad:#c62828;--ok:#2e7d32;--bt:#1e6fe8;--wf:#2e9d4a;--warn:#d89a00;--water:#3b82d6;--tank-empty:#fff;--tank-line:#222;--tank-text:#444}
 @media(prefers-color-scheme:dark){:root{--bg:#000;--fg:#eee;--mut:#999;--line:#333;--card:#111;--acc:#eee;--accfg:#000;--bad:#ef5350;--ok:#66bb6a;--bt:#4d94ff;--wf:#4cc26c;--warn:#f0b400;--water:#3b82d6;--tank-empty:#000;--tank-line:#ddd;--tank-text:#bbb}}
@@ -2087,7 +2088,7 @@ dialog{border:1px solid var(--line);border-radius:12px;background:var(--bg);colo
 .warnbox.w{border-color:var(--warn)}
 dialog::backdrop{background:rgba(0,0,0,.55)}ol{padding-left:20px;margin:6px 0}ol li{margin:3px 0}
 </style></head><body><main>
-<header><h1>Water tank <span class="mut" id="ver"></span></h1>
+<header><h1>I/O extension <span class="mut" id="ver"></span></h1>
  <div class="stat">
   <span class="pill" id="btp"><i class="dot" id="btd"></i><span id="btt">–</span></span>
   <span class="pill" id="wfp"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M2.5 9a14 14 0 0 1 19 0M6 12.5a9 9 0 0 1 12 0M9.4 16a4 4 0 0 1 5.2 0" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="12" cy="19.3" r="1.7" fill="currentColor"/></svg><span id="wft">–</span></span>
@@ -2110,7 +2111,7 @@ dialog::backdrop{background:rgba(0,0,0,.55)}ol{padding-left:20px;margin:6px 0}ol
 </div>
 
 <div class="card">
- <h2>Tank</h2>
+ <h2>Fresh water tank</h2>
  <div class="row"><select id="tsel" style="flex:1;min-width:0" onchange="cmd('tank use '+this.value)" aria-label="Tank in use"></select></div>
  <div class="row"><button class="p" id="calbtn" onclick="openDlg('caldlg')">Calibrate the tank</button><button id="trn" onclick="tankRename()">Rename</button><button id="tdel" onclick="tankDel()">Delete</button></div>
  <details><summary class="mut">Table in use</summary><div id="tbl"></div></details>
