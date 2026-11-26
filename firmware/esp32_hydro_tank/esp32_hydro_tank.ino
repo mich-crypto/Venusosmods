@@ -20,6 +20,10 @@
  *   EMA alpha switches to a much slower value while the burst medians jump
  *   around (driving), so the level stays stable on the road and still
  *   reacts within seconds when parked.
+ *   Filling: when a rolling median of the last bursts rises steadily, the
+ *   level follows it, corrected for the rise during the median's window
+ *   (hose turbulence is not taken for driving), and the reading goes out
+ *   every 0.5 s, so the tank doesn't overflow.
  *
  * Calibration (non-square tanks): open the Serial Monitor at 115200 baud and
  * type "help". The height -> litres table is measured by filling the tank in
@@ -143,6 +147,14 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define SLOSH_EXIT_MM        3.0f   // ... and back below this -> calm (hysteresis)
 #define ACTIVITY_ALPHA       0.05f
 
+// ---- Fill mode: follow the level closely while a hose fills the tank
+#define FILLTRACK_N          25     // rolling median of the last 25 bursts (~6 s): hose waves cancel
+#define FILLTRACK_WIN_S      12     // rise checked over the last 12 s (one point per second)
+#define FILLTRACK_ENTER_MM   2.5f   // risen this much in 12 s (~12 mm/min, ~3 L/min) and in both halves
+#define FILLTRACK_EXIT_MM    0.8f   // risen less than this in 12 s -> filling stopped
+#define EMA_ALPHA_FILL       0.3f   // follows the (rise-corrected) rolling median within ~1 s
+#define ADV_UPDATE_FILL_MS   500    // a new reading every 0.5 s while filling
+
 // ---- Filling / draining detection
 #define TREND_PERIOD_MS      5000   // trend sample every 5 s
 #define TREND_SAMPLES        12     // compare against 60 s ago
@@ -194,7 +206,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.15"
+#define FW_VERSION           "4.16"
 
 // ---- Truma Combi heater with CP plus panel (in preparation, see docs/truma.md)
 //      The CP plus is master of a LIN bus; this board will answer like Truma's iNet box
@@ -380,6 +392,10 @@ static float lastRawHeight = NAN;   // unfiltered height of the last burst
 static float trend[TREND_SAMPLES];
 static uint8_t trendCount = 0, trendIdx = 0;
 static bool filling = false, draining = false;
+static bool fillFast = false;       // fill mode, see fillTrack()
+static float ftMedian = NAN;        // rolling median of the last FILLTRACK_N bursts
+static float ftRate = 0.0f;         // its rise in mm/s over the last FILLTRACK_WIN_S seconds
+static uint8_t ftCount = 0;         // bursts in the median so far
 // Temperature probes, sorted by address. temperatureC = probe 1 (old name kept).
 static float tempC[MAX_TEMPS];
 static uint8_t tempAddr[MAX_TEMPS][8];
@@ -454,6 +470,32 @@ static float readBurstMedianMv() {
   return medianOf(buf, BURST_SAMPLES);
 }
 
+// Fill mode: a rolling median (robust against the hose's waves) and its rise over the last
+// FILLTRACK_WIN_S seconds. Steady rise in both halves of the window -> fillFast.
+static void fillTrack(float h) {
+  static float buf[FILLTRACK_N], hist[FILLTRACK_WIN_S + 1];
+  static uint8_t n = 0, i = 0, histN = 0, histI = 0, tick = 0;
+  buf[i] = h; i = (i + 1) % FILLTRACK_N; if (n < FILLTRACK_N) n++;
+  ftCount = n;
+  float tmp[FILLTRACK_N];
+  for (uint8_t k = 0; k < n; k++) tmp[k] = buf[k];
+  ftMedian = medianOf(tmp, n);
+  if (++tick < 1000 / SAMPLE_PERIOD_MS) return;     // one history point per second
+  tick = 0;
+  hist[histI] = ftMedian; histI = (histI + 1) % (FILLTRACK_WIN_S + 1);
+  if (histN < FILLTRACK_WIN_S + 1) { histN++; fillFast = false; return; }
+  float oldest = hist[histI], mid = hist[(histI + FILLTRACK_WIN_S / 2) % (FILLTRACK_WIN_S + 1)];
+  float rise = ftMedian - oldest;
+  ftRate = rise / FILLTRACK_WIN_S;
+  if (!fillFast) {
+    fillFast = rise > FILLTRACK_ENTER_MM && mid - oldest > FILLTRACK_ENTER_MM / 4 && ftMedian - mid > FILLTRACK_ENTER_MM / 4;
+    if (fillFast) { filling = true; draining = false; dlog("filling: fast tracking on (+%.1f mm in %d s)", rise, FILLTRACK_WIN_S); }
+  } else if (rise < FILLTRACK_EXIT_MM) {
+    fillFast = false;
+    dlog("filling stopped: normal filter");
+  }
+}
+
 static void sampleLevel() {
   if (simActive()) {                    // the simulated height goes out as it is, no filter
     emaHeight = lastRawHeight = simHeight;
@@ -479,6 +521,16 @@ static void sampleLevel() {
     return;
   }
 
+  fillTrack(h);
+  if (fillFast) {                 // filling: follow the rolling median, the hose's waves are no slosh
+    sloshing = false;
+    activity = 0.0f;
+    // the median lags half its window: add what the water rose in that time
+    float lag = (ftCount - 1) / 2.0f * SAMPLE_PERIOD_MS / 1000.0f;
+    emaHeight += EMA_ALPHA_FILL * (ftMedian + max(ftRate, 0.0f) * lag - emaHeight);
+    return;
+  }
+
   // Slosh detector: how far do the burst medians wander around the average?
   activity += ACTIVITY_ALPHA * (fabsf(h - emaHeight) - activity);
   if (!sloshing && activity > SLOSH_ENTER_MM) sloshing = true;
@@ -498,7 +550,7 @@ static void updateTrend() {
   // trendIdx now points at the oldest sample
   float minutes = (TREND_SAMPLES - 1) * TREND_PERIOD_MS / 60000.0f;
   float rate = (emaHeight - trend[trendIdx]) / minutes;
-  filling = !sloshing && rate > FILL_RATE_MM_MIN;
+  filling = fillFast || (!sloshing && rate > FILL_RATE_MM_MIN);
   draining = !sloshing && rate < -DRAIN_RATE_MM_MIN;
 }
 
@@ -2243,7 +2295,7 @@ const CMDS=[['status','reading and table in use'],['help','all commands with det
 function cmdsToggle(){const l=$('cmds');l.hidden=!l.hidden;$('cmdsb').textContent=l.hidden?'Show commands':'Hide commands';
  if(!l.innerHTML)l.innerHTML=CMDS.map((c,i)=>'<div class="item pick" onclick="$(\'con\').value=CMDS['+i+'][0];$(\'con\').focus()"><code class="nm" style="flex:none">'+esc(c[0])+'</code><span class="mut nm">'+esc(c[1])+'</span></div>').join('')}
 // 4 updates a second in test mode, every 2 s otherwise
-function loop(){refresh().finally(()=>setTimeout(loop,fastOn?250:2000))}
+function loop(){refresh().finally(()=>setTimeout(loop,fastOn?250:S&&S.filling?500:2000))}
 loop();
 </script></body></html>)HTML";
 
@@ -2659,7 +2711,7 @@ void loop() {
 
   if (now - tSample >= SAMPLE_PERIOD_MS) { tSample = now; sampleLevel(); }
   if (now - tTrend >= TREND_PERIOD_MS)   { tTrend = now; updateTrend(); updateTemperature(); }
-  if (now - tAdv >= ADV_UPDATE_MS) {
+  if (now - tAdv >= (fillFast ? ADV_UPDATE_FILL_MS : ADV_UPDATE_MS)) {
     tAdv = now;
     updateAdvertisement();
     if (advertising && advertising->isAdvertising()) lastAdvSent = now ? now : 1;   // flash only when it really goes out

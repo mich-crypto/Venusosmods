@@ -825,6 +825,8 @@ class Esp32HydroDriver(BleDriver):
         self._last_adv = now
         self.stats['wifi'] += 1
         self.tank['/Hydro/ReadTime'] = int(time.time())
+        if self.poller is not None:
+            self.poller.fast = bool(d.get('filling'))   # filling: read every second
         if 'bt' in d:
             self.tank['/Hydro/Bluetooth'] = int(bool(d.get('bt')))
         temps = dict((t.get('n'), t.get('c')) for t in (d.get('temps') or []))

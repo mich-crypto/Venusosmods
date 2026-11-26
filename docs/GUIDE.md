@@ -832,6 +832,7 @@ the services at boot. Afterwards, run the diagnostics once to confirm.
 | Tank shows "disconnected" | the sensor isn't heard: run `--scan 30`, check the range (metal lockers block Bluetooth) |
 | Water level wrong | redo `zero` and the calibration; check the sensor lies flat and the vent tube is open |
 | Water level slow while driving | intended (anti-slosh), settles once parked |
+| Water level while filling | fill mode (firmware 4.16+): follows the hose within a few mm and updates every second |
 | Mopeka level jumps | coupling gel, sensor position, `median_window = 9` |
 | Fridge disconnected | phone app connected? Bluetooth range? `fridge_probe.py <MAC>` |
 | Two devices with the same instance | *Settings → VRM online portal → VRM device instances* (Venus OS 3.x), or `device_instance` in config.ini |

@@ -134,6 +134,13 @@ consistently off by a few %, re-run with `--scale`.
   log. The level should change by what you added, within about 1-2 %.
 * Driving: `SLOSH` appears and the reading becomes very slow (~25 s time
   constant). That is intended; it settles again within seconds when parked.
+* Filling (firmware 4.16+): once the level rises steadily for about 12 s, the
+  sensor switches to a fill mode. It follows a ~6 s rolling median, corrected
+  for the rise in that time, so the reading stays within a few mm of the water
+  even with a hose splashing in. While filling it sends a reading every
+  0.5 s, the Pi reads it every second over Wi-Fi, and the Water tab and the
+  sensor's own page refresh every 0.5 to 1 s. The log shows `filling: fast
+  tracking on` and `filling stopped`.
 * Parked on a slope, the reading changes a little if the sensor isn't in the
   middle of the tank. That is the water level really changing at the sensor;
   only moving the sensor fixes it.

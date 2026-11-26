@@ -154,20 +154,30 @@ class WifiClient(object):
 
 
 class StatusPoller(object):
-    """Reads /api/status every interval s; on_status(dict) or on_error(text) in the main loop."""
+    """Reads /api/status every interval s, every FAST_S s while fast is set (the tank is
+    filling); on_status(dict) or on_error(text) in the main loop."""
+    FAST_S = 1
 
     def __init__(self, host, interval, on_status, on_error):
         self.host, self.interval = host, interval
         self.on_status, self.on_error = on_status, on_error
         self._running = False
+        self.fast = False
+        self._last = 0.0
 
     def start(self, glib):
-        glib.timeout_add_seconds(self.interval, self.tick)
+        glib.timeout_add_seconds(self.FAST_S, self._beat)
         glib.timeout_add(500, lambda: (self.tick(), False)[1])
+
+    def _beat(self):
+        if self.fast or time.monotonic() - self._last >= self.interval - 0.2:
+            self.tick()
+        return True
 
     def tick(self):
         if not self._running:
             self._running = True
+            self._last = time.monotonic()
             http(self._done, 'http://%s/api/status?pi=1' % self.host)
         return True
 

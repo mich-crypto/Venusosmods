@@ -3568,6 +3568,14 @@ async function boot() {
   setInterval(() => { if (!document.hidden) checkUpdate(); }, 30 * 60 * 1000);
   await renderTab();
   firstRunGuide();
+  // filling the tank: the level on the Water tab every second (the Pi reads it every second then)
+  setInterval(async () => {
+    if (document.hidden || S.fillBusy || S.tab !== 'water') return;
+    const dev = S.state && deviceOf(S.state, 'water');
+    if (!dev || !dev.values['/Hydro/Filling']) return;
+    S.fillBusy = true;
+    try { await refreshState(); if (S.tab === 'water') refreshDeviceTop(); } finally { S.fillBusy = false; }
+  }, 1000);
   setInterval(async () => {
     if (document.hidden) return;
     await refreshState();
