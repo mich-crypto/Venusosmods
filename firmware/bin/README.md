@@ -1,6 +1,6 @@
 # Ready-made firmware (ESP32-S3)
 
-Built from `firmware/esp32_hydro_tank` with the sketch defaults: QDY30A 0–3.3 V, 2 m range, DS18B20 temperature probe 1 on GPIO5 and probe 2 on GPIO6,
+Built from `firmware/esp32_hydro_tank` with the sketch defaults: QDY30A 0–3.3 V, 2 m range, DS18B20 temperature probe 1 on GPIO5 and probe 2 on GPIO6, grey tank rod sender (common GPIO9, rods GPIO1, 2, 7, 8),
 sender id 1, own Wi-Fi `Watertank-1` / `watertank`. Board *ESP32S3 Dev Module*, esp32 core 3.3.13,
 USB CDC On Boot enabled, partition scheme *Minimal SPIFFS (1.9MB APP with OTA)*, 4 MB flash or more.
 
