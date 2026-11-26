@@ -6,3 +6,4 @@ tools/pdf/node_modules/
 tools/pdf/guide.html
 # Starlink books (energy, data use, outages, tests) written by the settings page on the Pi
 data/shared_drivers/state/
+firmware/esp32_hydro_tank/build/
