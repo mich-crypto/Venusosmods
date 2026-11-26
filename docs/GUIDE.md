@@ -67,7 +67,13 @@ the parts from [wiring.md](wiring.md).
 
 ---
 
-## Part 2 – Build and wire the ESP32 water sensor
+## Part 2 – Build and wire the I/O extension (ESP32)
+
+The **I/O extension** is the self-built ESP32-S3 box: it reads the fresh water tank
+(hydrostatic sensor), the grey water tank (rod sender), up to two temperature probes
+and, in preparation, the Truma heater, and passes everything to Venus OS. (Earlier
+versions of this guide call it the water level sensor; its own Wi-Fi is still
+`Watertank-1` and `watertank.local`.)
 
 Follow [wiring.md](wiring.md). In short:
 
@@ -78,6 +84,9 @@ Follow [wiring.md](wiring.md). In short:
    or B: 4–20 mA) to GPIO4
    through the resistors.
 4. Optional: DS18B20 probe 1 to GPIO5, probe 2 to GPIO6, each with a 4.7 kΩ pull-up to 3V3.
+   Optional: the grey water tank's rod sender: common to GPIO9, the level rods to
+   GPIO1, 2, 7, 8, no resistors, the van's tank display unplugged
+   ([wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug)).
 5. Don't put the sensor in the tank yet; it's easier to test on the table.
 
 **Check:** with the 12 V on, the ESP32's power LED is on and the buck
@@ -110,6 +119,8 @@ converter still reads 5.0 V (about 4.7 V after the diode).
    * `SENSOR_RANGE_MM`: the sensor's full scale in mm of water. From the
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
    * `USE_DS18B20`: `1` with temperature probes (the default; up to two), `0` without
+   * `USE_GREY`, `PIN_GREY_COMMON`, `GREY_PINS`: the grey tank's rod sender (on by
+     default: common GPIO9, rods GPIO1, 2, 7, 8; harmless when nothing is connected)
    * `DEVICE_ID`: leave at `1` unless you build a second sender
    * `DEFAULT_TABLE`: leave as it is. You calibrate later over USB, without
      editing code.
@@ -158,13 +169,13 @@ signal=0.512 height=3.0mm litres=0.4 level=0.5% temp=19.6 activity=0.4
 **Temperatures in Venus OS:** on the Pi's settings page, Water tab →
 *Settings*, switch on *Publish temperature 1* / *2* and type their names. Each
 then shows up as its own temperature sensor in Venus OS and VRM. (The names on
-the sender's page are for that page; Venus OS uses the names set on the Pi.)
+the I/O extension's page are for that page; Venus OS uses the names set on the Pi.)
 
 Note the **MAC** for later (optional in config.ini).
 
-### 3.6 The sender's own Wi-Fi page (works without Venus OS)
+### 3.6 The I/O extension's own Wi-Fi page (works without Venus OS)
 
-The sender has its own Wi-Fi network with a web page, for when the Pi is off
+The I/O extension has its own Wi-Fi network with a web page, for when the Pi is off
 or Venus OS doesn't work. To save energy it is **not on all the time**
 (firmware 2.7+). It switches on by itself:
 
@@ -200,9 +211,9 @@ page of the sensor (4.4+) has the same card. A phone that is only joined to the 
 sensor's page must have been used in the last 10 minutes (firmware 3.7+). Its
 page footer says why the Wi-Fi is on.
 
-The Pi needs the **Sensor password** (the password of the sender's own Wi-Fi,
+The Pi needs the **Sensor password** (the password of the I/O extension's own Wi-Fi,
 default `watertank`) to change settings and update the firmware. If you change
-the Wi-Fi password on the sender's page, enter the same one there.
+the Wi-Fi password on the I/O extension's page, enter the same one there.
 
 To use the page:
 
@@ -210,7 +221,7 @@ To use the page:
    The phone may say "no internet": stay connected (*Use without internet*).
 2. Most phones then open the page by themselves (like hotel Wi-Fi). If not,
    open **http://192.168.4.1** or **http://watertank.local** – type the
-   `http://`, browsers otherwise try `https://`, which the sender doesn't
+   `http://`, browsers otherwise try `https://`, which the I/O extension doesn't
    speak. Still nothing: switch mobile data off for a moment.
 
 The page (firmware 4.5) shows at the top right a **breathing blue light**
@@ -262,7 +273,7 @@ It switches itself off after 15 minutes and at a restart.
 | off | still starting, or no power |
 
 The Wi-Fi stays on (green) until the Pi has checked in over Bluetooth, which
-needs sender firmware 2.7+ and the current Pi software (the Bluetooth light on the
+needs I/O extension firmware 2.7+ and the current Pi software (the Bluetooth light on the
 Water tab breathes blue), and always for the first 10 minutes after power-on. Some boards have the
 LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
 `STATUS_LED_MAX` sets how bright it gets.
@@ -271,23 +282,23 @@ LED on GPIO38 instead of GPIO48: change `STATUS_LED_PIN` in the sketch.
 defaults are in the sketch (`AP_SSID_PREFIX`, `AP_PASSWORD_DEFAULT`); set
 `USE_WIFI_AP 0` to switch the Wi-Fi off (saves about 0.5–1 W).
 
-**Two calibrations, which one counts?** The sender page calibrates the sender
+**Two calibrations, which one counts?** The I/O extension page calibrates the I/O extension
 itself (what it broadcasts). The Pi's settings page can store its own table on
 top; once it has one, Venus OS uses the Pi's table and only takes the water
-height from the sender. If you set a new *zero* on the sender later, redo the
-Pi's calibration too, or choose *Use the sender's own table again* in its Calibrate popup.
+height from the I/O extension. If you set a new *zero* on the I/O extension later, redo the
+Pi's calibration too, or choose *Use the I/O extension's own table again* in its Calibrate popup.
 
-### Does the sender's Bluetooth work?
+### Does the I/O extension's Bluetooth work?
 
 Check from both ends:
 
-1. **The sender:** its page (green light: join its Wi-Fi, or press BOOT) says
+1. **The I/O extension:** its page (green light: join its Wi-Fi, or press BOOT) says
    *Bluetooth: broadcasting the level every 2 s*, how many devices are
    connected and when the Pi last checked in. In the Serial Monitor every
    status line ends with `ble=on` (`ble=OFF` = not broadcasting).
 2. **Your phone:** the free app **nRF Connect** (iOS/Android) → *Scan*: a
    device **VHT** with manufacturer data `0xFFFF` must appear, updating every
-   2 s. If it's there, the sender is fine and the problem is on the Pi side.
+   2 s. If it's there, the I/O extension is fine and the problem is on the Pi side.
 3. **The Pi:** settings page → *Debug → Raw data → Water*: every received
    packet is listed. Overview: the driver `esp32_hydro` must be *running*. Its
    log over SSH: `tail -F /var/log/esp32_hydro/current | tai64nlocal`.
@@ -319,13 +330,19 @@ alarm "… water 2.5 °C with 45 L – risk of freezing" (a digital input in ala
 appears in the notifications and VRM like a bilge or smoke alarm). It clears 1 °C
 above the limit. Limit, litres and probe: *Water → Settings → Frost alarm*.
 
+**Grey water tank** (sensor firmware 4.17+): with the rod sender wired to the same
+ESP32, switch on *Water → Settings → Grey water tank*. It shows up in Venus OS as a
+waste water tank (percent by the highest wet rod, litres with the tank size) and on
+the Water tab with its rods; *Grey tank full alarm* raises an alarm when the top rod
+(or the level you set) is reached.
+
 **Truma codes in Venus OS**: a W code (warning) or E code (error) of the heater shows
 as a warning or alarm in Venus OS, named with the code and its short meaning; the
 Heater tab and the sensor's page show what to do. The full code list of the gas Combi
 is built in.
 
 **Truma heater (in preparation)**: a Truma Combi with CP plus panel can be connected
-to the water level sensor's ESP32 over its LIN bus, with a small transceiver chip. The
+to the I/O extension's ESP32 over its LIN bus, with a small transceiver chip. The
 Pi side is ready: the **Heater** tab switches it on (*Settings → Truma heater: setup*). The
 tab shows a dial thermostat (drag the ring or use − / +, the round button switches heating
 on/off), the fan (Eco / High), hot water (off/eco/hot/boost) and the status; timer,
@@ -343,7 +360,7 @@ hot water Off / Eco / Hot / Boost, codes), also on its own Wi-Fi.
 
 **Connection log, for long-term tests** (Water → Firmware → *Connection log*, or
 Debug → Raw data → *Water link*): every Bluetooth exchange between the Pi and the
-water level sensor, step by step (connect, services, what was sent without
+I/O extension, step by step (connect, services, what was sent without
 passwords, the answer, how long it took, errors), gaps in the broadcasts, scan
 restarts, and once an hour a summary (broadcasts received, gaps, check-ins
 ok/failed). With sensor firmware 4.9 the Pi also collects the sensor's own log
@@ -360,7 +377,7 @@ sensor started). The log is kept across reboots in `/data/log/venusosmods/link.l
 garbles the line between the Pi and its built-in Bluetooth chip; after that only a
 reboot resets the chip. Use a proper supply (official Raspberry Pi adapter, or a 12→5 V
 converter of 3 A or more set to 5.1–5.2 V) with a short, thick cable, and don't power
-the water level sensor from the Pi's USB. The water driver records these kernel lines
+the I/O extension from the Pi's USB. The water driver records these kernel lines
 in the Connection log the moment it stops hearing anything.
 
 **Bluetooth scan stuck** (the log says "device not known to BlueZ" over and over
@@ -380,7 +397,7 @@ sensor keeps its own Wi-Fi on as the fallback.
 
 Nothing in 3. but the phone sees VHT: the Pi is out of range, its Bluetooth is
 off (Venus OS: Settings → Bluetooth), or `device_id` in the Pi's settings
-doesn't match `DEVICE_ID` in the firmware. From firmware 3.2 the sender keeps
+doesn't match `DEVICE_ID` in the firmware. From firmware 3.2 the I/O extension keeps
 broadcasting while the Pi (or a phone) is connected to it.
 
 ### 3.7 Flashing from the browser (no Arduino IDE)
@@ -391,7 +408,7 @@ say where each one goes:
 | File | Where |
 |---|---|
 | `FLASH-AT-0x0_esp32_hydro_tank_full.bin` | USB, browser flasher, address **0x0** (bootloader + partition table + app) |
-| `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin` | the sender's own page → *Firmware update* (app only) |
+| `WEBPAGE-UPDATE-ONLY_esp32_hydro_tank.bin` | the I/O extension's own page → *Firmware update* (app only) |
 
 On a computer with **Chrome or Edge** (not an iPad/iPhone):
 
@@ -409,7 +426,7 @@ sender id 1).
 **Boot loop with `SHA-256 comparison failed` and `rst:0x7 (TG0WDT_SYS_RST)`**
 in the serial monitor: the app-only file was flashed at 0x0, so there is no
 bootloader. Erase the flash and flash the `FLASH-AT-0x0_…` file (steps 2–4).
-The sender's page refuses the `FLASH-AT-0x0_…` file the other way round.
+The I/O extension's page refuses the `FLASH-AT-0x0_…` file the other way round.
 
 ---
 
@@ -757,7 +774,7 @@ if you forget it. Open the address in Safari and add it to the home screen.
 * **Water → Live reading** – the real sensor voltage at GPIO4 and the height
   from it, without smoothing, about twice a second for 15 minutes (*Stop live
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches
-  the sender's test mode on meanwhile. Needs sender firmware 2.8+.
+  the I/O extension's test mode on meanwhile. Needs I/O extension firmware 2.8+.
 * **Water → Water tank** – at the top the **Bluetooth light** (breathes blue while the
   Pi reaches the sensor, red when not, with the time of the last contact), the
   sensor's **Wi-Fi** (network name, "AP on" or off) and, when the sensor is on the
@@ -775,9 +792,9 @@ if you forget it. Open the address in Safari and add it to the home screen.
 * **Update** – the installed and the latest version, *Check now* and *Update
   now* (runs `update.sh`: downloads from GitHub, keeps config.ini, restarts the
   services; the page then reloads itself with the new version). The page checks for a new version by itself every few hours, also
-  for new water sender firmware; when there is one, a banner on every tab says
+  for new I/O extension firmware; when there is one, a banner on every tab says
   so (*Show update* / *Later*) and the Update tab gets a dot. The Update tab
-  also has the sender card.
+  also has the I/O extension card.
 * **Debug** – two views for troubleshooting. **Raw data**: what the sensors really send. *Gas* shows
   every Mopeka advertisement with its raw bytes (`data=`), the decoded
   distance, temperature, battery and echo quality, and the level that was

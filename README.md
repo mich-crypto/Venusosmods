@@ -7,7 +7,7 @@ on Modbus-TCP/MQTT):
 | Device | D-Bus service(s) | Shown as |
 |---|---|---|
 | Mopeka Check **Standard / XL** (original, not Pro) | `com.victronenergy.tank.mopeka_standard` | LPG tank |
-| Self-built **ESP32-S3 hydrostatic** water sensor | `com.victronenergy.tank.esp32_hydro` (+ `.temperature.esp32_hydro_temp`) | fresh-water tank (+ water temperature) |
+| Self-built **I/O extension** (ESP32-S3): hydrostatic fresh water sensor, grey tank rods, temperature probes | `com.victronenergy.tank.esp32_hydro`, `.tank.esp32_hydro_grey` (+ `.temperature.esp32_hydro_temp`, `.digitalinput.*` alarms) | fresh-water and waste-water tank (+ temperatures, frost / grey tank full alarms) |
 | 12 V compressor **fridge** with the Alpicool Bluetooth controller (confirmed with a Hyckes dual-zone fridge) | `com.victronenergy.temperature.fridge_zone1` / `_zone2` | fridge / freezer temperature |
 
 ## Install (one command)
@@ -20,10 +20,10 @@ wget -qO- https://raw.githubusercontent.com/mich-crypto/Venusosmods/master/get.s
 
 It downloads the mods, checks the Pi, switches on the **settings page** and prints its address and
 password. Open that address on your phone, press **Unlock** and follow the **setup guide**: it finds your
-gas sensor, fridge and water sender over Bluetooth, adds them to Venus OS and tells you where to find them.
+gas sensor, fridge and I/O extension over Bluetooth, adds them to Venus OS and tells you where to find them.
 Run the same command again any time to update; your settings are kept.
 
-More: the [step-by-step guide](docs/GUIDE.md) (building the water sensor, wiring, manual setup), also as a
+More: the [step-by-step guide](docs/GUIDE.md) (building the I/O extension, wiring, manual setup), also as a
 printable **[PDF](docs/Venus-OS-Mods-Guide.pdf)**.
 
 ## Layout
@@ -39,10 +39,10 @@ data/                              -> copied to /data on the Pi
     alpicool_protocol.py           decoder: fridge frames
     mopeka_venus.py                driver: Mopeka  -> tank
     esp32_hydro_tank.py            driver: ESP32   -> tank (+ temperature), Bluetooth check-in (Wi-Fi mode, firmware version)
-    esp32_ota.py                   sender firmware update from the Pi (Bluetooth, or HTTP on the van Wi-Fi)
+    esp32_ota.py                   I/O extension firmware update from the Pi (Bluetooth, or HTTP on the van Wi-Fi)
     fridge_venus.py                driver: fridge  -> temperature per zone
     web_ui.py + web/index.html     settings page on port 8088: setup guide, calibration popups, drivers, dbus-serialbattery
-    devices.py                     recognises Mopeka / fridge / ESP32 water senders in a Bluetooth scan
+    devices.py                     recognises Mopeka / fridge / ESP32 I/O extensions in a Bluetooth scan
     rawlog.py                      rolling log of the raw sensor bytes (shown on the Debug tab)
     starlink_hub.py                polls the dish, ping, speed tests, WAN IP, Telegram sending
     notifier.py                    Telegram notifications: battery, alarms, geofence, frost, Orion XS

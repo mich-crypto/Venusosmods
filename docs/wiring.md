@@ -1,4 +1,4 @@
-# Wiring: ESP32-S3 hydrostatic tank sender
+# Wiring: I/O extension (ESP32-S3)
 
 ## Parts
 
@@ -147,7 +147,7 @@ Default: **each probe on its own pin**, probe 1 on **GPIO5**, probe 2 on
   (~45 kΩ). That is often enough for short cables (1–2 m) and two probes, but
   not reliable: fit the resistor for the van. Probes on a small breakout
   board (pins VCC/DAT/GND) usually have it on board already.
-* **Names:** press **Rename** on the sender's page, or type `name 1 Inside`
+* **Names:** press **Rename** on the I/O extension's page, or type `name 1 Inside`
   in the Serial Monitor (`temps` lists them with their pin). The name stays
   with the probe.
 * For cables over ~5 m use 2.2 kΩ instead of 4.7 kΩ.
@@ -157,6 +157,55 @@ Default: **each probe on its own pin**, probe 1 on **GPIO5**, probe 2 on
   cable, or put the probe in a dry pocket on the **outside** of the tank wall
   (clamped with thermal paste and insulated). That measures the water
   through the wall, a little slower, without touching it.
+
+## Grey water tank (rod sender, 5-wire plug)
+
+Most grey tanks have a rod sender: a common rod plus up to 4 level rods
+(e.g. ¼, ½, ¾, full), on a 5-pin plug. The van's tank display puts 12 V on
+the common rod; water between the common and a level rod carries it over to
+that rod's wire. The ESP32 reads the same rods with its own 3.3 V, **without
+any resistors**.
+
+**The van's tank display must be unplugged from the I/O extension for good.** Its
+12 V must never reach these wires: it destroys the ESP32. Keep the cable away
+from other 12 V wiring.
+
+```
+ sender plug                         ESP32-S3
+ common (the pin with 12 V) ──────── GPIO9    the ESP32 powers the rods
+ level 1 (lowest)           ──────── GPIO1
+ level 2                    ──────── GPIO2
+ level 3                    ──────── GPIO7
+ level 4 (full)             ──────── GPIO8
+```
+
+* **Finding the pins:** with the display still connected and on, measure each
+  pin to van ground: the one with 12 V all the time is the common. Then unplug
+  the display and measure resistance (Ω) from the common to each other pin with
+  the tank about half full: the wet rods show a value (a few kΩ up to ~50 kΩ),
+  the dry ones nothing (OL). The lowest rod is wet first.
+* **Fewer rods:** list only the ones you have in `GREY_PINS` (lowest first),
+  e.g. `{ 1, 2, 7 }` for three.
+* **How it reads:** every 5 s the common pin goes to 3.3 V for about 3 ms (at
+  its weakest drive, so a short circuit only draws a few mA). Each level pin
+  reads its voltage against the ESP32's own pull-down: wet about 1–3 V, dry
+  about 0 V. Then the current runs the other way for the same time, so the
+  rods don't corrode the way they do with the display's constant 12 V. In
+  between no current flows. A rod changes only after 3 equal readings in a
+  row (15 s), so sloshing while driving doesn't make it jump.
+* **Check it:** type `grey` in the sensor's terminal (its own page or the
+  Serial Monitor): it lists each rod's voltage and wet or dry. The sensor's
+  page also has a *Grey water tank* card. If a rod in the water reads below
+  the threshold, lower it: `grey threshold 250` (default 400 mV, kept after a
+  restart).
+* **Venus OS:** *Water → Settings → Grey water tank* on the Mods page (or
+  `grey_tank = yes` in config.ini). The tank shows up as *waste water* with the
+  level of the highest wet rod (equal steps, or your own with `grey_levels`),
+  litres if you give the tank size, and an alarm when it is full
+  (`grey_alarm_pct`, default 100 = the top rod is wet).
+* A wet rod above a dry one shows as a fault: a dirty rod (grease, hair) or a
+  broken wire. The level then follows the highest wet rod.
+* Firmware without the grey tank: `USE_GREY 0`. Needs sensor firmware 4.17+.
 
 ## Choosing and mounting the pressure sensor
 
@@ -180,7 +229,8 @@ Default: **each probe on its own pin**, probe 1 on **GPIO5**, probe 2 on
 On the ESP32-S3 only GPIO1..GPIO10 are ADC1. ADC2 (GPIO11..20) shares hardware
 with the radio and can return errors while it is active, so keep the sensor
 on ADC1. GPIO4 and GPIO5 are the defaults in the sketch (`PIN_PRESSURE`,
-`PIN_ONEWIRE`).
+`PIN_ONEWIRE`). The grey tank's level rods use GPIO1, 2, 7 and 8 (ADC1 too),
+its common rod GPIO9. GPIO3 is left free: it is a strapping pin.
 
 ## Junction box layout
 

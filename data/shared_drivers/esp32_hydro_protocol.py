@@ -4,7 +4,7 @@ BLE advertisement format of the ESP32-S3 hydrostatic tank sender.
 Must match firmware/esp32_hydro_tank/esp32_hydro_tank.ino (buildPayload()).
 
 Manufacturer data, company id 0xFFFF (reserved for testing / unregistered),
-payload little-endian, 16 bytes (18 with a second temperature probe):
+payload little-endian, 16 bytes (18 with a second temperature probe, 19 with the grey tank):
 
   off size field
     0   2  magic 'V','H'
@@ -24,6 +24,9 @@ payload little-endian, 16 bytes (18 with a second temperature probe):
    14   2  temperature, 0.01 C, int16 (only if bit0 set)
    16   2  temperature 2, 0.01 C, int16 (only if bit5 set; optional, added
            later without a version change: shorter packets have no probe 2)
+   18   1  grey water tank, rod sender (firmware 4.17+, optional like temperature 2):
+           bits 0-3 wet rods (bit 0 = lowest), bit 4 fitted, bit 5 fault
+           (a wet rod above a dry one), bits 6-7 number of rods - 1
 """
 
 import struct
@@ -79,10 +82,34 @@ FLAG_SLOSHING = 0x10
 FLAG_TEMP2_VALID = 0x20
 
 
+GREY_FITTED = 0x10
+GREY_FAULT = 0x20
+
+
+class GreyReading(object):
+    """The grey tank's rods: mask of the wet ones (bit 0 = lowest), how many rods, and a fault
+    (a wet rod above a dry one: a dirty rod or a broken wire)."""
+    __slots__ = ('mask', 'rods', 'fault')
+
+    def __init__(self, mask=0, rods=4, fault=False):
+        self.mask, self.rods, self.fault = mask, rods, fault
+
+    @property
+    def wet(self):
+        """Wet rods counted by the highest wet one (a lower rod that reads dry is the fault)."""
+        return self.mask.bit_length()
+
+    def __eq__(self, other):
+        return isinstance(other, GreyReading) and (self.mask, self.rods, self.fault) == (other.mask, other.rods, other.fault)
+
+    def __repr__(self):
+        return 'GreyReading(mask=%s, rods=%d%s)' % (bin(self.mask), self.rods, ', FAULT' if self.fault else '')
+
+
 class HydroReading(object):
     __slots__ = ('device_id', 'sequence', 'level', 'volume_l', 'capacity_l',
                  'height_mm', 'temperature', 'temperature2', 'filling', 'draining',
-                 'fault', 'sloshing')
+                 'fault', 'sloshing', 'grey')
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -103,6 +130,10 @@ def parse(data):
     temp2 = None
     if len(data) >= LENGTH + 2 and flags & FLAG_TEMP2_VALID:
         temp2 = struct.unpack_from('<h', data, LENGTH)[0] / 100.0
+    grey = None
+    if len(data) >= LENGTH + 3 and data[LENGTH + 2] & GREY_FITTED:
+        g = data[LENGTH + 2]
+        grey = GreyReading(mask=g & 0x0F, rods=((g >> 6) & 3) + 1, fault=bool(g & GREY_FAULT))
     return HydroReading(
         device_id=device_id,
         sequence=seq,
@@ -115,12 +146,13 @@ def parse(data):
         filling=bool(flags & FLAG_FILLING),
         draining=bool(flags & FLAG_DRAINING),
         fault=bool(flags & FLAG_FAULT),
-        sloshing=bool(flags & FLAG_SLOSHING))
+        sloshing=bool(flags & FLAG_SLOSHING),
+        grey=grey)
 
 
 def build(device_id, level, volume_l, capacity_l, height_mm, temperature=None,
           filling=False, draining=False, fault=False, sloshing=False, sequence=0,
-          temperature2=None, long=False):
+          temperature2=None, long=False, grey=None):
     """Reference encoder - used by the tests and handy for a fake sender."""
     flags = ((FLAG_TEMP_VALID if temperature is not None else 0) |
              (FLAG_FILLING if filling else 0) |
@@ -132,6 +164,9 @@ def build(device_id, level, volume_l, capacity_l, height_mm, temperature=None,
                        int(round(level * 100)), int(round(volume_l * 10)),
                        int(round(capacity_l * 10)), int(height_mm),
                        int(round((temperature or 0) * 100)))
-    if temperature2 is not None or long:      # the 18-byte form the current firmware sends
+    if temperature2 is not None or long or grey is not None:      # the 18-byte form
         data += struct.pack('<h', int(round((temperature2 or 0) * 100)))
+    if grey is not None:                      # (mask, rods, fault): the 19-byte form of firmware 4.17+
+        mask, rods, fault = grey
+        data += struct.pack('<B', (mask & 0x0F) | GREY_FITTED | (GREY_FAULT if fault else 0) | (((rods - 1) & 3) << 6))
     return data

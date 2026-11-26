@@ -1,5 +1,5 @@
 """
-Truma Combi heater (CP plus panel) through the water level sensor's ESP32 - in preparation.
+Truma Combi heater (CP plus panel) through the I/O extension's ESP32 - in preparation.
 
 The ESP32 will sit on the heater's LIN bus like Truma's iNet box (docs/truma.md). This part,
 inside the water driver, already does everything around it:

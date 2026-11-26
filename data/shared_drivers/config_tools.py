@@ -196,29 +196,29 @@ SCHEMA = {
         ],
     },
     'esp32': {
-        'title': 'Water tank (ESP32)',
+        'title': 'I/O extension (ESP32)',
         'fields': [
             F('custom_name', 'text', 'Name', 'Shown in Venus OS and VRM.'),
-            F('device_id', 'int', 'Sensor ID', 'Must match DEVICE_ID in the ESP32 firmware.',
+            F('device_id', 'int', 'I/O extension ID', 'Must match DEVICE_ID in the ESP32 firmware.',
               min=0, max=255),
-            F('mac', 'mac', 'Water level sensor address', 'Optional; the ID is enough.'),
-            F('wifi_mode', 'select', 'Sensor Wi-Fi', 'Bluetooth only saves the most energy; the sensor\'s own '
+            F('mac', 'mac', 'I/O extension address', 'Optional; the ID is enough.'),
+            F('wifi_mode', 'select', 'I/O extension Wi-Fi', 'Bluetooth only saves the most energy; its own '
               'Wi-Fi then starts by itself when the Pi has not been heard for 15 minutes (or after pressing '
-              'its BOOT button). Needs sensor firmware 2.7 or newer.',
+              'its BOOT button). Needs I/O extension firmware 2.7 or newer.',
               options=[['auto', 'Bluetooth only, own Wi-Fi as fallback'], ['van', 'Join the van Wi-Fi'],
                        ['ap', 'Own Wi-Fi always on'], ['off', 'Wi-Fi off (only the BOOT button switches it on)']],
               default='auto'),
             F('wifi_ssid', 'text', 'Wi-Fi network name', 'For "Wi-Fi network", and for firmware updates from '
-              'this page: the sensor joins it for a moment to download the update.'),
+              'this page: the I/O extension joins it for a moment to download the update.'),
             F('wifi_password', 'secret', 'Wi-Fi network password', 'The password of that network.'),
-            F('connection', 'select', 'Connection to the sensor', 'Automatic: over the Wi-Fi network when the sensor '
-              'is on the same network as the Pi (more stable), Bluetooth as fallback. The Pi learns the sensor\'s '
+            F('connection', 'select', 'Connection to the I/O extension', 'Automatic: over the Wi-Fi network when the I/O extension '
+              'is on the same network as the Pi (more stable), Bluetooth as fallback. The Pi learns its '
               'address by itself. Wi-Fi only: Bluetooth is not used at all.',
               options=[['auto', 'Automatic: Wi-Fi, Bluetooth as fallback'], ['wifi', 'Wi-Fi network only'],
                        ['bluetooth', 'Bluetooth only']], default='auto'),
-            F('sensor_host', 'text', 'Sensor address', 'Optional: the sensor\'s IP address, e.g. 192.168.0.110. '
+            F('sensor_host', 'text', 'I/O extension address', 'Optional: its IP address, e.g. 192.168.0.110. '
               'Empty: the address it reports itself.'),
-            F('sender_password', 'secret', 'Sensor password', 'The password of the sensor\'s own Wi-Fi '
+            F('sender_password', 'secret', 'I/O extension password', 'The password of its own Wi-Fi '
               '(default watertank). The Pi needs it to change settings and update the firmware.',
               default='watertank'),
             F('temperature_service', 'bool', 'Publish temperature 1',
@@ -238,7 +238,20 @@ SCHEMA = {
             F('frost_alarm_probe', 'select', 'Water temperature from', 'The probe in or at the tank.',
               options=[['1', 'Temperature probe 1'], ['2', 'Temperature probe 2']], default='1', advanced=True),
             F('frost_instance', 'int', 'Frost alarm VRM instance', '', min=0, max=999, advanced=True, default='27'),
-            F('heater', 'bool', 'Truma heater', 'Truma Combi with CP plus on the same sensor (in preparation, '
+            F('grey_tank', 'bool', 'Grey water tank', 'The grey tank\'s rod sender on the I/O extension (firmware '
+              '4.17+, wiring in docs/wiring.md). Shown in Venus OS as waste water.', options=YES_NO, default='no'),
+            F('grey_name', 'text', 'Grey tank name', 'Shown in Venus OS and VRM.', default='Grey water'),
+            F('grey_capacity_l', 'float', 'Grey tank size', 'Litres, for the litres in Venus OS. 0 = only percent.',
+              unit='L', min=0, max=10000, default='0'),
+            F('grey_levels', 'text', 'Rod levels', 'The level in % each rod stands for, lowest first, e.g. '
+              '"25, 50, 75, 100". Empty = equal steps.', advanced=True),
+            F('grey_alarm', 'bool', 'Grey tank full alarm', 'Alarm in Venus OS when the grey tank reaches the level below.',
+              options=YES_NO, default='yes'),
+            F('grey_alarm_pct', 'float', 'Alarm from', 'Level in %; 100 = the top rod is wet.', unit='%',
+              min=1, max=100, default='100'),
+            F('grey_instance', 'int', 'Grey tank VRM instance', '', min=0, max=999, advanced=True, default='23'),
+            F('grey_alarm_instance', 'int', 'Grey alarm VRM instance', '', min=0, max=999, advanced=True, default='28'),
+            F('heater', 'bool', 'Truma heater', 'Truma Combi with CP plus on the I/O extension (in preparation, '
               'docs/truma.md): room temperature, heating, set point and hot water in Venus OS.', options=YES_NO, default='no'),
             F('heater_name', 'text', 'Heater name', 'Shown in Venus OS and VRM.', default='Truma heater'),
             F('heater_frost_guard', 'bool', 'Frost guard', 'Switch the heating on when the room gets colder than '
@@ -252,9 +265,9 @@ SCHEMA = {
               advanced=True, default='20'),
             F('temperature2_instance', 'int', 'Temperature 2 VRM instance', '', min=0, max=999,
               advanced=True, default='21'),
-            F('link', 'bool', 'Bluetooth link', 'Check in with the sensor, push the Wi-Fi settings and read its '
+            F('link', 'bool', 'Bluetooth link', 'Check in with the I/O extension, push the Wi-Fi settings and read its '
               'firmware version.', options=YES_NO, default='yes', advanced=True),
-            F('link_interval', 'int', 'Check-in every', 'Seconds. The sensor\'s own Wi-Fi starts after 15 '
+            F('link_interval', 'int', 'Check-in every', 'Seconds. Its own Wi-Fi starts after 15 '
               'minutes without a check-in.', unit='s', min=60, max=840, default='300', advanced=True),
             F('level_table', 'text', 'Calibration table', 'height_mm:litres pairs made by the Calibrate button. Replaces the '
               'sensor\'s own table; clear it to go back to that one.', advanced=True),
@@ -447,6 +460,17 @@ def _table_error(text):
     return None
 
 
+def _levels_error(text):
+    """Error for 'a, b, c' rod levels: 1 to 4 percentages, rising."""
+    try:
+        pts = [float(x.strip().rstrip('%')) for x in text.replace(';', ',').split(',') if x.strip()]
+    except ValueError:
+        return 'must be percentages separated by commas, e.g. 25, 50, 75, 100'
+    if not 1 <= len(pts) <= 4 or any(not 0 < p <= 100 for p in pts) or pts != sorted(set(pts)):
+        return 'must be 1 to 4 rising percentages between 1 and 100'
+    return None
+
+
 def validate_section(kind, values):
     """
     values: key -> text from the form. Returns (clean, errors); clean only
@@ -461,6 +485,8 @@ def validate_section(kind, values):
         norm, err = validate_field(f, text)
         if not err and key in ('level_curve', 'level_table') and norm:
             err = _table_error(norm)
+        if not err and key == 'grey_levels' and norm:
+            err = _levels_error(norm)
         if err:
             errors[key] = '%s %s' % (f['label'], err)
         else:
