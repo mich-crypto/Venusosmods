@@ -1,6 +1,6 @@
 """
 Which Bluetooth device is which: used by the setup guide to turn what BlueZ has heard into
-"gas sensor", "water sender" and "fridge". Pure Python (no D-Bus).
+"gas sensor", "I/O extension" and "fridge". Pure Python (no D-Bus).
 """
 
 import re
@@ -29,7 +29,7 @@ def classify(name, uuids, mfr):
                 'battery_v': m.battery_voltage}
     h = esp32_hydro_protocol.parse(mfr.get(esp32_hydro_protocol.COMPANY_ID))
     if h:
-        return {'kind': 'water', 'label': 'Water tank sender', 'device_id': h.device_id,
+        return {'kind': 'water', 'label': 'I/O extension', 'device_id': h.device_id,
                 'height_mm': h.height_mm, 'level': round(h.level, 1)}
     if str(name or '').startswith(alpicool_protocol.NAME_PREFIXES) or alpicool_protocol.SERVICE_UUID in (uuids or []):
         return {'kind': 'fridge', 'label': 'Fridge', 'name': name}

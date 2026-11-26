@@ -72,6 +72,15 @@ temperature_type = generic
 temperature2_service = yes
 temperature2_name = Temperature 2
 temperature2_type = generic
+# Grey water tank: the rod sender on the same ESP32 (firmware 4.17+, docs/wiring.md).
+# A tank service of its own (waste water) and an alarm when it is full.
+#grey_tank = yes
+#grey_name = Grey water
+#grey_capacity_l = 80
+# level in % of each rod, lowest first (empty = equal steps)
+#grey_levels = 25, 50, 75, 100
+#grey_alarm = yes
+#grey_alarm_pct = 100
 # Sender firmware 2.7+: the Pi checks in over Bluetooth every link_interval s,
 # sets the sender's Wi-Fi and reads its firmware version (Water tab).
 #   auto = Bluetooth only, the sender's own Wi-Fi starts when the Pi is silent 15 min

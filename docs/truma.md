@@ -2,7 +2,7 @@
 
 Goal: see and control a Truma Combi heater (gas or diesel, Combi 4/6, D/E variants)
 with the **CP plus** panel from Venus OS, VRM and the Venus OS mods page, through the
-**water level sensor's ESP32**. Status:
+**I/O extension's ESP32**. Status:
 
 | Part | State |
 |---|---|
@@ -17,7 +17,7 @@ with the **CP plus** panel from Venus OS, VRM and the Venus OS mods page, throug
 ## How it works
 
 ```
-Truma Combi ──LIN── CP plus panel ──LIN── TJA1020 ── ESP32 (water level sensor) ──Bluetooth── Pi (Venus OS)
+Truma Combi ──LIN── CP plus panel ──LIN── TJA1020 ── ESP32 (I/O extension) ──Bluetooth── Pi (Venus OS)
                     (bus master)                      answers like Truma's iNet box
 ```
 
@@ -44,7 +44,7 @@ own safety logic, and the panel shows every change made from Venus OS.
   cutting anything. Check the pin-out of your panel with a meter first (12 V on one
   pin, LIN idles near 12 V too).
 * The ESP32 stays powered as now (5 V); only LIN and GND come from the heater side.
-* **Cable length**: the water level sensor sits at the tank; LIN tolerates long wires
+* **Cable length**: the I/O extension sits at the tank; LIN tolerates long wires
   (up to 40 m in cars), so a run from the CP plus to the wheel arch is fine.
 
 ## Commands (sensor)

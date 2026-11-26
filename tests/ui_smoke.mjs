@@ -127,7 +127,7 @@ await shot(page, '05b-fridge-controls');
 
 // water: calibration popup, buttons only
 await tab(page, 'Water');
-await page.getByRole('button', { name: 'Change the sender' }).waitFor();
+await page.getByRole('button', { name: 'Change the I/O extension' }).waitFor();
 await shot(page, '06-water');
 await page.getByRole('button', { name: 'Calibrate', exact: true }).click();
 await page.getByText('Quick: empty and full').click();
