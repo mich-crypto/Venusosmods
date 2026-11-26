@@ -206,7 +206,7 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define BLINK_ON_MS          120    // ... this long: the LED is dark 94 % of the time
 #define OTA_BLINK_MS         250    // firmware arriving from the Pi: green and red alternate this fast
 
-#define FW_VERSION           "4.16"
+#define FW_VERSION           "4.17"
 
 // ---- Truma Combi heater with CP plus panel (in preparation, see docs/truma.md)
 //      The CP plus is master of a LIN bus; this board will answer like Truma's iNet box
@@ -217,6 +217,22 @@ static const TankPoint DEFAULT_TABLE[] = {
 #define PIN_LIN_RX           17
 #define PIN_LIN_TX           18
 #define PIN_LIN_SLP          -1     // transceiver SLP/EN pin, -1 = tied to 3V3
+
+// ---- Grey water tank with a rod sender (docs/wiring.md, "Grey water tank").
+//      The tank's plug: one common rod plus up to 4 level rods, lowest first. The van's own
+//      tank display must be unplugged: the ESP32 powers the rods itself with 3.3 V, no
+//      resistors. GREY_PULSE_MS every GREY_PERIOD_MS: the common pin goes high (weakest
+//      drive, a short in the cable draws only a few mA), each level pin reads its voltage
+//      against the ESP32's own pull-down (wet ~1-3 V, dry ~0 V), then the current runs
+//      the other way for the same time (pull-ups on the level pins, common low), so the
+//      rods don't corrode. Between the pulses no current flows at all.
+//      Level pins must be ADC1 (GPIO1..10); avoid GPIO3 (strapping pin). The common pin can be any.
+#define USE_GREY             1      // 1 = rod sender on the pins below (the Pi shows it with grey_tank = yes)
+#define PIN_GREY_COMMON      9      // the plug's common wire (had 12 V from the van's display)
+#define GREY_PINS            { 1, 2, 7, 8 }   // level rods, lowest first (1 to 4 pins)
+#define GREY_THRESHOLD_MV    400    // above this a rod counts as wet; "grey threshold <mV>" changes it
+#define GREY_PERIOD_MS       5000   // one reading this often
+#define GREY_CONFIRM         3      // the same reading this many times in a row before it counts (sloshing)
 
 // ---- DS18B20 sanity
 #define TEMP_MAX_FAILS       3      // consecutive bad reads before the value is dropped
@@ -230,6 +246,10 @@ static const TankPoint DEFAULT_TABLE[] = {
 #include <DNSServer.h>
 #include <HTTPUpdate.h>
 #include <ESPmDNS.h>
+#endif
+
+#if USE_GREY
+#include <driver/gpio.h>
 #endif
 
 #if USE_DS18B20
@@ -260,7 +280,7 @@ enum : uint8_t {
   FLAG_SLOSHING   = 0x10,
   FLAG_TEMP2_VALID = 0x20,
 };
-static const size_t PAYLOAD_LEN = 18;   // 16 + second temperature (older Pi versions ignore it)
+static const size_t PAYLOAD_LEN = 19;   // 16 + second temperature + grey tank (older Pi versions ignore the rest)
 
 // Active calibration (sketch defaults or loaded from flash)
 #define MAX_POINTS 40
@@ -673,6 +693,132 @@ static void updateTemperature() {
 #endif
 }
 
+// ------------------------------------------------------------ grey water tank
+
+#if USE_GREY
+static const int8_t greyPins[] = GREY_PINS;
+static const uint8_t GREY_RODS = sizeof(greyPins) / sizeof(greyPins[0]);
+static_assert(sizeof(greyPins) >= 1 && sizeof(greyPins) <= 4, "GREY_PINS: 1 to 4 level rods");
+static uint16_t greyMv[GREY_RODS];           // last reading of each rod
+static uint16_t greyThresholdMv = GREY_THRESHOLD_MV;
+static uint8_t greyMask = 0;                 // wet rods (bit 0 = lowest), confirmed
+static uint8_t greyCand = 0, greyCandN = 0;  // the reading waiting to be confirmed
+static bool greyReady = false;
+
+// Pull-up / pull-down of a level pin, through the IDF so the pin stays attached to the ADC
+// (pinMode would detach it). Core 2.x attaches the pin again at every analogRead, which
+// drops the pulls: there the pins are read digitally instead (wet = above ~1.6 V).
+static void greyPull(int pin, bool up, bool down) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  gpio_num_t g = (gpio_num_t)pin;
+  if (up) gpio_pullup_en(g); else gpio_pullup_dis(g);
+  if (down) gpio_pulldown_en(g); else gpio_pulldown_dis(g);
+#else
+  pinMode(pin, up ? INPUT_PULLUP : down ? INPUT_PULLDOWN : INPUT);
+#endif
+}
+
+static uint16_t greyRead(int pin) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  uint16_t a = analogReadMilliVolts(pin), b = analogReadMilliVolts(pin), c = analogReadMilliVolts(pin);
+  return max(min(a, b), min(max(a, b), c));   // median of three
+#else
+  return digitalRead(pin) ? 3300 : 0;
+#endif
+}
+
+static void greyInit() {
+  pinMode(PIN_GREY_COMMON, OUTPUT);
+  digitalWrite(PIN_GREY_COMMON, LOW);
+  gpio_set_drive_capability((gpio_num_t)PIN_GREY_COMMON, GPIO_DRIVE_CAP_0);   // weakest: a few mA at most
+  for (uint8_t i = 0; i < GREY_RODS; i++) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    analogReadMilliVolts(greyPins[i]);       // attach the pin to the ADC once
+#endif
+    greyPull(greyPins[i], false, false);
+  }
+  prefs.begin("grey", true);
+  greyThresholdMv = prefs.getUShort("thr", GREY_THRESHOLD_MV);
+  prefs.end();
+}
+
+static bool greyFault() {                    // a wet rod above a dry one: a rod or wire is faulty
+  uint8_t m = greyMask;
+  return m & (m + 1);                        // not of the form 0..01..1
+}
+
+static uint8_t greyLevelRods() {             // how many rods are wet, counted by the highest wet one
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < GREY_RODS; i++) if (greyMask & (1 << i)) n = i + 1;
+  return n;
+}
+
+static void greyMeasure() {
+  for (uint8_t i = 0; i < GREY_RODS; i++) greyPull(greyPins[i], false, true);
+  uint32_t t0 = micros();
+  digitalWrite(PIN_GREY_COMMON, HIGH);
+  delay(2);                                  // the cable settles
+  uint8_t raw = 0;
+  for (uint8_t i = 0; i < GREY_RODS; i++) {
+    greyMv[i] = greyRead(greyPins[i]);
+    if (greyMv[i] >= greyThresholdMv) raw |= 1 << i;
+  }
+  digitalWrite(PIN_GREY_COMMON, LOW);
+  uint32_t dt = micros() - t0;
+  for (uint8_t i = 0; i < GREY_RODS; i++) greyPull(greyPins[i], true, false);   // the same time the other way
+  delayMicroseconds(dt);
+  for (uint8_t i = 0; i < GREY_RODS; i++) greyPull(greyPins[i], false, false);  // rest: no current
+
+  if (!greyReady) { greyReady = true; greyMask = greyCand = raw; greyCandN = GREY_CONFIRM; return; }
+  if (raw == greyCand) { if (greyCandN < GREY_CONFIRM) greyCandN++; }
+  else { greyCand = raw; greyCandN = 1; }
+  if (greyCandN >= GREY_CONFIRM && greyMask != greyCand) {
+    greyMask = greyCand;
+    dlog("grey tank: %u of %u rods wet%s", greyLevelRods(), GREY_RODS, greyFault() ? " (a rod above a dry one: check the rods)" : "");
+  }
+}
+
+static void greyPoll() {
+  static uint32_t t = 0;
+  if (greyReady && millis() - t < GREY_PERIOD_MS) return;
+  t = millis();
+  greyMeasure();
+}
+
+static String greyJson() {
+  String j = "{\"rods\":" + String(GREY_RODS) + ",\"mask\":" + String(greyMask) + ",\"wet\":" + String(greyLevelRods()) +
+             ",\"fault\":" + String(greyFault() ? "true" : "false") + ",\"thr\":" + String(greyThresholdMv);
+  String mv, pins;
+  for (uint8_t i = 0; i < GREY_RODS; i++) {
+    if (i) { mv += ','; pins += ','; }
+    mv += String(greyMv[i]);
+    pins += String(greyPins[i]);
+  }
+  return j + ",\"mv\":[" + mv + "],\"pins\":[" + pins + "]}";
+}
+
+static String greyCmd(String a) {
+  a.trim();
+  if (a.startsWith("threshold")) {
+    String v = a.substring(9); v.trim();
+    int mv = v.toInt();
+    if (mv < 50 || mv > 3000) return "grey threshold <50..3000 mV>   (now " + String(greyThresholdMv) + " mV)";
+    greyThresholdMv = mv;
+    prefs.begin("grey", false); prefs.putUShort("thr", greyThresholdMv); prefs.end();
+    greyReady = false;                       // the next reading counts at once
+    return "ok grey threshold " + String(greyThresholdMv) + " mV";
+  }
+  greyMeasure();
+  String o = "Grey tank: " + String(greyLevelRods()) + " of " + String(GREY_RODS) + " rods wet" +
+             (greyFault() ? " - a rod above a dry one: check the rods and wires" : "") + ", threshold " + String(greyThresholdMv) + " mV\n";
+  for (uint8_t i = 0; i < GREY_RODS; i++) {
+    o += "  rod " + String(i + 1) + "  GPIO" + String(greyPins[i]) + "  " + String(greyMv[i]) + " mV  ";
+    o += (greyMask & (1 << i)) ? "wet\n" : "dry\n";
+  }
+  return o;
+}
+#endif
+
 // --------------------------------------------------------------------- BLE
 
 static void put16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
@@ -703,6 +849,12 @@ static void buildPayload(uint8_t *p) {
   put16(p + 12, (uint16_t)lroundf(height));
   put16(p + 14, (uint16_t)(int16_t)(tempValid ? lroundf(temperatureC * 100.0f) : 0));
   put16(p + 16, (uint16_t)(int16_t)(temp2Valid ? lroundf(tempC[MAX_TEMPS > 1 ? 1 : 0] * 100.0f) : 0));
+  // grey tank: bits 0-3 wet rods (bit 0 lowest), bit 4 fitted, bit 5 fault, bits 6-7 number of rods - 1
+#if USE_GREY
+  p[18] = (greyMask & 0x0F) | 0x10 | (greyFault() ? 0x20 : 0) | (((GREY_RODS - 1) & 3) << 6);
+#else
+  p[18] = 0;
+#endif
 
   if (serialLog) {
     Serial.printf("signal=%.3f height=%.1fmm litres=%.1f level=%.1f%% temp=%.1f temp2=%.1f "
@@ -719,7 +871,7 @@ static const uint8_t AD_FLAGS = 0x01, AD_SHORT_NAME = 0x08, AD_MANUFACTURER = 0x
 
 static void updateAdvertisement() {
   // Raw advertising data, 31 bytes max:
-  //   flags (3) + manufacturer data (4 + 18) + short name (2 + 3) = 30
+  //   flags (3) + manufacturer data (4 + 19) + short name (2 + 3) = 31
   uint8_t adv[31];
   size_t n = 0;
   adv[n++] = 2; adv[n++] = AD_FLAGS;
@@ -1453,6 +1605,8 @@ static void printHelp() {
     "  cal cancel          discard the table being measured\n"
     "  table               print the active table as code for the sketch\n"
     "  temps               list the temperature probes\n"
+    "  grey                grey tank: each rod's voltage, wet or dry\n"
+    "  grey threshold <mV> a rod counts as wet above this (default 400)\n"
     "  name <n> <text>     name temperature probe n (1, 2)\n"
     "  tank                list the tanks (* = in use)\n"
     "  tank use <n>        use tank n (0 = built-in)\n"
@@ -1572,6 +1726,9 @@ static void handleCommand(String line) {
     j += ",\"h\":" + (isnan(h) ? String("null") : String(h, 1));
     j += ",\"l\":" + (isnan(h) ? String("null") : String(heightToLitres(h), 1));
     j += ",\"fault\":" + String(fault ? 1 : 0);
+#if USE_GREY
+    j += ",\"g\":" + String(greyMask) + ",\"gf\":" + String(greyFault() ? 1 : 0) + ",\"gr\":" + String(GREY_RODS);
+#endif
     j += ",\"fast\":" + String(fastMode() ? (unsigned long)((fastUntil - millis()) / 1000) : 0UL) + "}";
     out->print(j);
   } else if (cmd == "wifi") {
@@ -1722,6 +1879,12 @@ static void handleCommand(String line) {
                     busPins[tempBus[i]], addrHex(tempAddr[i]).c_str());
       else
         out->printf("  %u  (no probe found)\n", i + 1);
+  } else if (cmd == "grey") {
+#if USE_GREY
+    out->print(greyCmd(rest));
+#else
+    out->println("No grey tank in this firmware (USE_GREY 0).");
+#endif
   } else if (cmd == "name") {
     int sp = rest.indexOf(' ');
     int i = (sp < 0 ? rest : rest.substring(0, sp)).toInt();
@@ -1953,6 +2116,13 @@ dialog::backdrop{background:rgba(0,0,0,.55)}ol{padding-left:20px;margin:6px 0}ol
  <details><summary class="mut">Table in use</summary><div id="tbl"></div></details>
 </div>
 
+<div class="card" id="gcard" style="display:none">
+ <h2>Grey water tank</h2>
+ <div class="big"><span id="gpct">–</span> %</div>
+ <div class="mut" id="gtxt"></div>
+ <div class="grid" id="grods"></div>
+</div>
+
 <div class="card" id="tcard" style="display:none">
  <h2>Temperatures</h2>
  <div id="temps"></div>
@@ -2092,10 +2262,17 @@ async function refresh(){
   $('fastbtn').textContent=fastOn?'Back to normal smoothing':'Test mode: fast reading (15 min)';
   $('chips').innerHTML=c;
   $('tcard').style.display=s.temp_probe?'':'none';
-  renderTemps(s.temps||[]);
+  renderTemps(s.temps||[]);grey(s.grey);
   header(s);tanks(s);wifi(s);heater(s.truma);btRow(s);
   $('foot').textContent=(s.ap_on&&s.wifi_reason?'Own Wi-Fi on because: '+s.wifi_reason+' · ':'')+'Bluetooth '+s.mac+' · sensor id '+s.device_id+' · up '+ago(s.uptime_s);
  }catch(e){$('foot').textContent='No connection to the sensor…'}
+}
+// grey tank (rod sender): how many rods are wet, each rod's voltage
+function grey(g){
+ $('gcard').style.display=g?'':'none';if(!g)return;
+ $('gpct').textContent=Math.round(100*g.wet/g.rods);
+ $('gtxt').textContent=g.wet+' of '+g.rods+' rods wet'+(g.fault?' · a rod above a dry one: check the rods and wires':'')+' · wet above '+g.thr+' mV';
+ $('grods').innerHTML=g.mv.map((v,i)=>'<div><span class="mut">Rod '+(i+1)+' · GPIO'+g.pins[i]+'</span><b>'+v+' mV '+((g.mask>>i)&1?'wet':'dry')+'</b></div>').join('');
 }
 // top right: Bluetooth light + when the Pi last checked in, Wi-Fi symbol + network
 function header(s){
@@ -2376,7 +2553,10 @@ static void handleStatus() {
   j += String("\"sloshing\":") + (sloshing ? "true" : "false") + ",";
   j += String("\"filling\":") + (filling ? "true" : "false") + ",";
   j += String("\"draining\":") + (draining ? "true" : "false") + ",";
-  j += "\"truma\":" + trumaJson().substring(6) + ",";   // the page shows the heater card (or how to try it)
+  j += "\"truma\":" + trumaJson().substring(6) + ",";
+#if USE_GREY
+  j += "\"grey\":" + greyJson() + ",";
+#endif   // the page shows the heater card (or how to try it)
   j += "\"tank\":" + String(activeTank + 1) + ",\"tanks\":[{\"n\":0,\"name\":\"" BUILTIN_TANK_NAME "\",\"cap\":" +
        String(DEFAULT_TABLE[sizeof(DEFAULT_TABLE) / sizeof(DEFAULT_TABLE[0]) - 1].litres, 1) + "}";
   for (int i = 0; i < MAX_TANKS; i++)
@@ -2687,6 +2867,10 @@ void setup() {
   loadCalibration();
   analogReadResolution(12);
   pinMode(PIN_PRESSURE, INPUT);
+#if USE_GREY
+  greyInit();
+  greyPoll();                           // the first broadcast has the grey tank already
+#endif
 
   for (uint8_t i = 0; i < MAX_TEMPS; i++) tempC[i] = NAN;
   findProbes();
@@ -2746,6 +2930,9 @@ void loop() {
 #endif
   linkPoll();
   trumaPoll();
+#if USE_GREY
+  greyPoll();
+#endif
   updateLed();
 
   delay(5);

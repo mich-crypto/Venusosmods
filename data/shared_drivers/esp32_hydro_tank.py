@@ -8,6 +8,8 @@ Publishes com.victronenergy.tank.<service> and, with DS18B20 probes fitted,
 com.victronenergy.temperature.<service>_temp (probe 1, temperature_service = yes)
 and <service>_temp2 (probe 2, temperature2_service = yes), each with its own
 name (the tank's own /Temperature path is only shown by the GUI for Mopeka tanks).
+With grey_tank = yes also com.victronenergy.tank.<service>_grey: the grey water
+tank's rod sender on the same ESP32 (firmware 4.17+), as waste water.
 """
 
 import json
@@ -25,7 +27,7 @@ import truma_heater
 from gi.repository import GLib
 from venus_service import monotonic_s
 from venus_service import (BleDriver, DigitalInputDevice, TankDevice, TemperatureDevice, interpolate, parse_table,
-                           FLUID_FRESH_WATER, TEMPERATURE_TYPES)
+                           FLUID_FRESH_WATER, FLUID_WASTE_WATER, TEMPERATURE_TYPES)
 
 log = logging.getLogger('esp32_hydro')
 
@@ -36,6 +38,88 @@ def wifi_checksum(*parts):
     for b in '\x1f'.join(p or '' for p in parts).encode('utf-8'):
         h = ((h ^ b) * 0x01000193) & 0xffffffff
     return '%08x' % h
+
+
+def parse_levels(text):
+    """'25, 50, 75, 100' -> [25.0, 50.0, 75.0, 100.0]: the level each rod stands for, lowest first."""
+    out = []
+    for part in re.split(r'[,;\s]+', text or ''):
+        if part:
+            try:
+                out.append(max(0.0, min(100.0, float(part.rstrip('%')))))
+            except ValueError:
+                return []
+    return out
+
+
+class GreyTank(object):
+    """The grey water tank: a rod sender (a common rod and 1 to 4 level rods) read by the same ESP32.
+    Each wet rod stands for a level (grey_levels, else equal steps); an optional alarm in Venus OS
+    when it reaches grey_alarm_pct."""
+
+    def __init__(self, bus, config, uid, connection, timeout):
+        self.name = config.get('grey_name', '') or 'Grey water'
+        self.capacity_l = config.getfloat('grey_capacity_l', 0.0)
+        self.levels = parse_levels(config.get('grey_levels', ''))
+        self.tank = TankDevice(
+            bus, uid + '_grey', product_name='ESP32 Grey Water Tank', connection=connection,
+            fluid_type=FLUID_WASTE_WATER, capacity_l=self.capacity_l or None,
+            default_instance=config.getint('grey_instance', 23), custom_name=self.name, timeout_s=timeout,
+            extra_paths=('/Grey/Rods', '/Grey/Wet', '/Grey/Mask', '/Grey/Fault'))
+        self.devices = [self.tank]
+        self.alarm = None
+        self._alarm_on = False
+        self._last = None
+        if config.getboolean('grey_alarm', True):
+            self.alarm_pct = config.getfloat('grey_alarm_pct', 100.0)
+            self.alarm = DigitalInputDevice(
+                bus, uid + '_greyfull', product_name='Grey water tank full alarm', connection=connection,
+                default_instance=config.getint('grey_alarm_instance', 28),
+                custom_name='%s full' % self.name, timeout_s=timeout)
+            self.devices.append(self.alarm)
+
+    def level_of(self, wet, rods):
+        """Level in % with `wet` rods wet (counted by the highest wet one)."""
+        if wet <= 0:
+            return 0.0
+        levels = self.levels if len(self.levels) >= rods else [100.0 * (i + 1) / rods for i in range(rods)]
+        return levels[min(wet, rods) - 1]
+
+    def publish(self, mask, rods, fault):
+        mask, rods = int(mask or 0) & 0x0F, max(1, min(4, int(rods or 4)))
+        wet = mask.bit_length()
+        level = self.level_of(wet, rods)
+        if (mask, rods, bool(fault)) != self._last:
+            if fault:
+                log.warning('grey tank: a wet rod above a dry one (rods %s): a rod is dirty or a wire is broken', bin(mask))
+            else:
+                log.info('grey tank: %d of %d rods wet, %.0f %%', wet, rods, level)
+            self._last = (mask, rods, bool(fault))
+        self.tank.publish(
+            level=level, capacity_m3=self.capacity_l / 1000.0 if self.capacity_l else None,
+            raw_value=wet, raw_unit='rods',
+            extra={'/Grey/Rods': rods, '/Grey/Wet': wet, '/Grey/Mask': mask, '/Grey/Fault': int(bool(fault))})
+        self._alarm_check(level)
+
+    def _alarm_check(self, level):
+        if self.alarm is None:
+            return
+        on = level >= self.alarm_pct
+        if on != self._alarm_on:
+            self._alarm_on = on
+            (log.warning if on else log.info)('grey tank %s: %.0f %%', 'full alarm' if on else 'alarm cleared', level)
+        self.alarm.publish(2 if on else 0, ('%s: %.0f %% - empty the grey water tank' % (self.name, level))
+                           if on else '%s full' % self.name)
+
+    def from_status(self, g):
+        """The "grey" object of the sensor's /api/status."""
+        if isinstance(g, dict) and g.get('rods'):
+            self.publish(g.get('mask'), g.get('rods'), g.get('fault'))
+
+    def from_live(self, d):
+        """The live reading ('g' mask, 'gr' rods, 'gf' fault)."""
+        if d.get('g') is not None and d.get('gr'):
+            self.publish(d.get('g'), d.get('gr'), d.get('gf'))
 
 
 class Esp32HydroDriver(BleDriver):
@@ -155,6 +239,12 @@ class Esp32HydroDriver(BleDriver):
                 default_instance=config.getint('frost_instance', 27),
                 custom_name='%s frost' % self.frost_name, timeout_s=timeout)
             self.devices.append(self.frost)
+
+        # Grey water tank: a rod sender on the same sensor (docs/wiring.md)
+        self.grey = None
+        if config.getboolean('grey_tank', False):
+            self.grey = GreyTank(self.bus, config, uid, connection, timeout)
+            self.devices.extend(self.grey.devices)
 
         # Truma heater through the same sensor (in preparation, docs/truma.md)
         self.heater = None
@@ -661,6 +751,8 @@ class Esp32HydroDriver(BleDriver):
     def _publish_live(self, d):
         """While the live view holds the connection the Pi hears no broadcasts: the live reading
         keeps the tank (level, litres) current and connected instead."""
+        if self.grey is not None:
+            self.grey.from_live(d)
         h, litres = d.get('h'), d.get('l')
         if h is None or litres is None or d.get('fault'):
             return
@@ -853,6 +945,8 @@ class Esp32HydroDriver(BleDriver):
                 '/Hydro/Temperature2': temps.get(2),
             })
         self._wifi_raw_write(d, height, volume_l, level, temps, fault)
+        if self.grey is not None:
+            self.grey.from_status(d.get('grey'))
         if self.temp is not None and temps.get(1) is not None:
             self.temp.publish(temps[1])
         if self.temp2 is not None and temps.get(2) is not None:
@@ -870,8 +964,11 @@ class Esp32HydroDriver(BleDriver):
         def f(v, n=1):
             return '-' if v is None else ('%.*f' % (n, v) if isinstance(v, (int, float)) else str(v))
         flags = ','.join(k for k in ('filling', 'draining', 'sloshing') if d.get(k)) or '-'
-        text = 'height=%s mm litres=%s level=%s %% t1=%s t2=%s flags=%s%s' % (
-            f(height), f(volume_l), f(level), f(temps.get(1)), f(temps.get(2)), flags, ' FAULT' if fault else '')
+        g = d.get('grey') if isinstance(d.get('grey'), dict) else None
+        text = 'height=%s mm litres=%s level=%s %% t1=%s t2=%s flags=%s%s%s' % (
+            f(height), f(volume_l), f(level), f(temps.get(1)), f(temps.get(2)), flags, ' FAULT' if fault else '',
+            '' if g is None else ' grey=%s/%s rods (%s mV)%s' % (
+                g.get('wet'), g.get('rods'), ','.join(str(x) for x in g.get('mv') or []), ' FAULT' if g.get('fault') else ''))
         last, when = self._wifi_raw
         now = monotonic_s()
         if text != last or now - when >= self.WIFI_RAW_EVERY_S:
@@ -986,6 +1083,8 @@ class Esp32HydroDriver(BleDriver):
         if self.temp2 is not None and r.temperature2 is not None:
             self.temp2.publish(r.temperature2)
         self._frost_check(None if r.fault else volume_l, {1: r.temperature, 2: r.temperature2})
+        if self.grey is not None and r.grey is not None:
+            self.grey.publish(r.grey.mask, r.grey.rods, r.grey.fault)
 
 
 if __name__ == '__main__':

@@ -831,3 +831,60 @@ class AlarmTests(unittest.TestCase):
         h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
         self.assertEqual(h.alarm.service['/Alarm'], 0)
         self.assertEqual(truma_heater.code_text({'err': 517, 'ecls': 'E'}), 'E 517 H: Gas supply interrupted')
+
+
+class GreyTankTests(unittest.TestCase):
+    """The grey water tank's rod sender on the same ESP32 (firmware 4.17+)."""
+
+    def test_payload_carries_the_rods_and_older_packets_have_none(self):
+        r = proto.parse(proto.build(1, 50, 40, 80, 200, grey=(0b0011, 4, False)))
+        self.assertEqual((r.grey.mask, r.grey.rods, r.grey.wet, r.grey.fault), (0b0011, 4, 2, False))
+        self.assertEqual(len(proto.build(1, 50, 40, 80, 200, grey=(0, 4, False))), 19)
+        self.assertIsNone(proto.parse(proto.build(1, 50, 40, 80, 200, long=True)).grey)   # 18 bytes: no grey tank
+        self.assertIsNone(proto.parse(proto.build(1, 50, 40, 80, 200)).grey)
+        r = proto.parse(proto.build(1, 50, 40, 80, 200, grey=(0b0101, 3, True)))
+        self.assertEqual((r.grey.rods, r.grey.wet, r.grey.fault), (3, 3, True))
+
+    def test_off_by_default(self):
+        self.assertIsNone(Esp32HydroDriver('s', section('')).grey)
+
+    def test_broadcast_gives_level_and_litres(self):
+        d = Esp32HydroDriver('s', section('grey_tank = yes\ngrey_capacity_l = 80\ngrey_name = Grey\n'))
+        t = d.grey.tank.service
+        self.assertEqual(t['/FluidType'], 2)                                # waste water
+        d.handle_advertisement('AA:BB:CC:DD:EE:01', {proto.COMPANY_ID: proto.build(
+            1, 50, 40, 80, 200, sequence=1, grey=(0b0011, 4, False))}, -60)
+        self.assertEqual((t['/Level'], t['/Grey/Wet'], t['/Connected']), (50.0, 2, 1))
+        self.assertAlmostEqual(t['/Remaining'], 0.04)
+        self.assertEqual(d.grey.alarm.service['/Alarm'], 0)
+        d.handle_advertisement('AA:BB:CC:DD:EE:01', {proto.COMPANY_ID: proto.build(
+            1, 50, 40, 80, 200, sequence=2, grey=(0b1111, 4, False))}, -60)
+        self.assertEqual(t['/Level'], 100.0)
+        self.assertEqual(d.grey.alarm.service['/Alarm'], 2)                 # full: alarm in Venus OS
+        self.assertIn('Grey: 100 %', d.grey.alarm.service['/CustomName'])
+        d.handle_advertisement('AA:BB:CC:DD:EE:01', {proto.COMPANY_ID: proto.build(
+            1, 50, 40, 80, 200, sequence=3, grey=(0, 4, False))}, -60)
+        self.assertEqual((t['/Level'], d.grey.alarm.service['/Alarm']), (0.0, 0))
+
+    def test_own_levels_and_alarm_point(self):
+        d = Esp32HydroDriver('s', section('grey_tank = yes\ngrey_levels = 20, 45, 70, 90\ngrey_alarm_pct = 70\n'))
+        d.grey.publish(0b0001, 4, False)
+        self.assertEqual(d.grey.tank.service['/Level'], 20.0)
+        d.grey.publish(0b0111, 4, False)
+        self.assertEqual((d.grey.tank.service['/Level'], d.grey.alarm.service['/Alarm']), (70.0, 2))
+        d.grey.publish(0b0100, 4, True)                                     # a dry rod below a wet one: by the highest
+        self.assertEqual((d.grey.tank.service['/Level'], d.grey.tank.service['/Grey/Fault']), (70.0, 1))
+        self.assertIsNone(Esp32HydroDriver('s', section('grey_tank = yes\ngrey_alarm = no\n')).grey.alarm)
+
+    def test_three_rods_in_equal_steps(self):
+        d = Esp32HydroDriver('s', section('grey_tank = yes\n'))
+        d.grey.publish(0b001, 3, False)
+        self.assertAlmostEqual(d.grey.tank.service['/Level'], 33.3, 1)
+
+    def test_over_wifi_and_live(self):
+        d = Esp32HydroDriver('s', section('grey_tank = yes\n'))
+        d._on_wifi_status({'height_mm': 100, 'litres': 20, 'capacity': 100, 'level': 20, 'temps': [],
+                           'grey': {'rods': 4, 'mask': 7, 'wet': 3, 'fault': False, 'thr': 400, 'mv': [2100, 1900, 1500, 3]}})
+        self.assertEqual(d.grey.tank.service['/Level'], 75.0)
+        d._publish_live({'h': 100, 'l': 20, 'g': 1, 'gr': 4, 'gf': 0})
+        self.assertEqual(d.grey.tank.service['/Level'], 25.0)

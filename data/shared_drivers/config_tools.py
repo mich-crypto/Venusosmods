@@ -238,6 +238,19 @@ SCHEMA = {
             F('frost_alarm_probe', 'select', 'Water temperature from', 'The probe in or at the tank.',
               options=[['1', 'Temperature probe 1'], ['2', 'Temperature probe 2']], default='1', advanced=True),
             F('frost_instance', 'int', 'Frost alarm VRM instance', '', min=0, max=999, advanced=True, default='27'),
+            F('grey_tank', 'bool', 'Grey water tank', 'The grey tank\'s rod sender on the same sensor (sensor firmware '
+              '4.17+, wiring in docs/wiring.md). Shown in Venus OS as waste water.', options=YES_NO, default='no'),
+            F('grey_name', 'text', 'Grey tank name', 'Shown in Venus OS and VRM.', default='Grey water'),
+            F('grey_capacity_l', 'float', 'Grey tank size', 'Litres, for the litres in Venus OS. 0 = only percent.',
+              unit='L', min=0, max=10000, default='0'),
+            F('grey_levels', 'text', 'Rod levels', 'The level in % each rod stands for, lowest first, e.g. '
+              '"25, 50, 75, 100". Empty = equal steps.', advanced=True),
+            F('grey_alarm', 'bool', 'Grey tank full alarm', 'Alarm in Venus OS when the grey tank reaches the level below.',
+              options=YES_NO, default='yes'),
+            F('grey_alarm_pct', 'float', 'Alarm from', 'Level in %; 100 = the top rod is wet.', unit='%',
+              min=1, max=100, default='100'),
+            F('grey_instance', 'int', 'Grey tank VRM instance', '', min=0, max=999, advanced=True, default='23'),
+            F('grey_alarm_instance', 'int', 'Grey alarm VRM instance', '', min=0, max=999, advanced=True, default='28'),
             F('heater', 'bool', 'Truma heater', 'Truma Combi with CP plus on the same sensor (in preparation, '
               'docs/truma.md): room temperature, heating, set point and hot water in Venus OS.', options=YES_NO, default='no'),
             F('heater_name', 'text', 'Heater name', 'Shown in Venus OS and VRM.', default='Truma heater'),
@@ -447,6 +460,17 @@ def _table_error(text):
     return None
 
 
+def _levels_error(text):
+    """Error for 'a, b, c' rod levels: 1 to 4 percentages, rising."""
+    try:
+        pts = [float(x.strip().rstrip('%')) for x in text.replace(';', ',').split(',') if x.strip()]
+    except ValueError:
+        return 'must be percentages separated by commas, e.g. 25, 50, 75, 100'
+    if not 1 <= len(pts) <= 4 or any(not 0 < p <= 100 for p in pts) or pts != sorted(set(pts)):
+        return 'must be 1 to 4 rising percentages between 1 and 100'
+    return None
+
+
 def validate_section(kind, values):
     """
     values: key -> text from the form. Returns (clean, errors); clean only
@@ -461,6 +485,8 @@ def validate_section(kind, values):
         norm, err = validate_field(f, text)
         if not err and key in ('level_curve', 'level_table') and norm:
             err = _table_error(norm)
+        if not err and key == 'grey_levels' and norm:
+            err = _levels_error(norm)
         if err:
             errors[key] = '%s %s' % (f['label'], err)
         else:

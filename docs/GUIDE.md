@@ -78,6 +78,9 @@ Follow [wiring.md](wiring.md). In short:
    or B: 4–20 mA) to GPIO4
    through the resistors.
 4. Optional: DS18B20 probe 1 to GPIO5, probe 2 to GPIO6, each with a 4.7 kΩ pull-up to 3V3.
+   Optional: the grey water tank's rod sender: common to GPIO9, the level rods to
+   GPIO1, 2, 7, 8, no resistors, the van's tank display unplugged
+   ([wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug)).
 5. Don't put the sensor in the tank yet; it's easier to test on the table.
 
 **Check:** with the 12 V on, the ESP32's power LED is on and the buck
@@ -110,6 +113,8 @@ converter still reads 5.0 V (about 4.7 V after the diode).
    * `SENSOR_RANGE_MM`: the sensor's full scale in mm of water. From the
      datasheet: 1 m H₂O = 1000 mm, 10 kPa ≈ 1020 mm, 0.1 bar ≈ 1020 mm.
    * `USE_DS18B20`: `1` with temperature probes (the default; up to two), `0` without
+   * `USE_GREY`, `PIN_GREY_COMMON`, `GREY_PINS`: the grey tank's rod sender (on by
+     default: common GPIO9, rods GPIO1, 2, 7, 8; harmless when nothing is connected)
    * `DEVICE_ID`: leave at `1` unless you build a second sender
    * `DEFAULT_TABLE`: leave as it is. You calibrate later over USB, without
      editing code.
@@ -318,6 +323,12 @@ than 2 L) and the water temperature (probe 1) is 3 °C or lower, Venus OS shows 
 alarm "… water 2.5 °C with 45 L – risk of freezing" (a digital input in alarm, so it
 appears in the notifications and VRM like a bilge or smoke alarm). It clears 1 °C
 above the limit. Limit, litres and probe: *Water → Settings → Frost alarm*.
+
+**Grey water tank** (sensor firmware 4.17+): with the rod sender wired to the same
+ESP32, switch on *Water → Settings → Grey water tank*. It shows up in Venus OS as a
+waste water tank (percent by the highest wet rod, litres with the tank size) and on
+the Water tab with its rods; *Grey tank full alarm* raises an alarm when the top rod
+(or the level you set) is reached.
 
 **Truma codes in Venus OS**: a W code (warning) or E code (error) of the heater shows
 as a warning or alarm in Venus OS, named with the code and its short meaning; the

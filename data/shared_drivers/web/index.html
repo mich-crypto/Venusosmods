@@ -449,6 +449,33 @@ async function renderTab() {
   await f(main);
 }
 
+// ---------------------------------------------------------------- grey water tank
+// The grey tank's rod sender on the water level sensor: x of n rods wet
+function greyText(v) {
+  const rods = v['/Grey/Rods'], wet = v['/Grey/Wet'];
+  if (rods == null) return 'No reading yet';
+  return wet + ' of ' + rods + ' rods wet' + (v['/Grey/Fault'] ? ' · a wet rod above a dry one: check the rods and wires' : '');
+}
+
+function greyCard() {
+  const dev = (S.state.devices || []).find(d => d.kind === 'tank' && '/Grey/Rods' in d.values);
+  if (!dev) return null;
+  const v = dev.values, rods = v['/Grey/Rods'] || 0, mask = v['/Grey/Mask'] || 0;
+  const cap = v['/Capacity'] == null ? null : v['/Capacity'] * 1000;
+  const rodRow = h('div', { class: 'row', style: 'gap:6px;margin-top:10px;align-items:flex-end' },
+    Array.from({ length: rods }, (_, i) => h('div', { title: 'Rod ' + (i + 1) + ((mask >> i) & 1 ? ': wet' : ': dry'),
+      style: 'width:26px;height:' + (14 + i * 8) + 'px;border-radius:4px;border:1px solid var(--muted);background:' +
+        ((mask >> i) & 1 ? 'var(--muted)' : 'transparent') })));
+  return h('div', { class: 'card' },
+    h('h3', {}, v['/CustomName'] || 'Grey water', ' ', statusChip(dev)),
+    h('div', { class: 'row', style: 'align-items:baseline;gap:14px;margin:10px 0 2px;flex-wrap:wrap' },
+      h('span', { class: 'levelbig' }, v['/Level'] == null ? '–' : Math.round(v['/Level']), h('small', { style: 'font-size:1.2rem;color:var(--muted)' }, ' %')),
+      cap ? h('span', { class: 'muted' }, 'about ' + (v['/Remaining'] == null ? '–' : (v['/Remaining'] * 1000).toFixed(0)) + ' of ' + cap.toFixed(0) + ' L') : null),
+    levelBar(v['/Level']),
+    rodRow,
+    h('div', { class: 'muted', style: 'margin-top:8px' }, greyText(v)));
+}
+
 // ---------------------------------------------------------------- overview
 function statusChip(dev) {
   const c = val(dev, '/Connected');
@@ -462,12 +489,13 @@ function levelBar(pct) {
 function deviceCard(d) {
   const v = d.values, name = v['/CustomName'] || v['/ProductName'] || d.service;
   if (d.kind === 'tank') {
-    const gas = '/Mopeka/DistanceMm' in v;
+    const gas = '/Mopeka/DistanceMm' in v, grey = '/Grey/Rods' in v;
     const rem = v['/Remaining'] === null || v['/Remaining'] === undefined ? '' : num(v['/Remaining'] * 1000, 1) + ' L of ' + num(v['/Capacity'] * 1000, 0) + ' L';
     return h('div', { class: 'card' },
       h('h3', {}, name, ' ', statusChip(d)),
       h('div', { class: 'big' }, num(v['/Level'], 0), h('small', {}, ' %')), levelBar(v['/Level']),
       h('div', { class: 'muted' }, rem),
+      grey ? h('div', { class: 'muted' }, greyText(v)) :
       gas ? h('div', { class: 'muted' }, 'Sensor reads ' + num(v['/Mopeka/DistanceMm'], 0) + ' mm · ' + num(v['/Temperature'], 0) + ' °C · battery ' + num(v['/BatteryVoltage'], 2) + ' V · ' + (v['/Rssi'] || '–') + ' dBm')
           : h('div', { class: 'muted' }, 'Water height ' + num(v['/Hydro/HeightMm'], 0) + ' mm' +
               (v['/Hydro/Filling'] ? ' · filling' : '') + (v['/Hydro/Draining'] ? ' · draining' : '') + (v['/Hydro/Sloshing'] ? ' · sloshing' : '')));
@@ -571,7 +599,7 @@ function renderBusyBanner() {
 function refreshDeviceTop() {
   const box = $('#devlive'), want = { water: 'esp32', gas: 'mopeka', fridge: 'fridge' }[S.tab];
   if (!box || !S.devTop || S.devTop.kind !== want || $('#dlg').open) return;
-  box.replaceChildren(deviceHeader(S.devTop.kind, S.devTop.section));
+  box.replaceChildren(...[deviceHeader(S.devTop.kind, S.devTop.section), S.devTop.kind === 'esp32' ? greyCard() : null].filter(Boolean));
   const sw = $('#sensorwifi');
   if (sw && !sw.contains(document.activeElement)) drawSensorWifi(sw);
   // the Firmware card (status, help banners) follows the sensor too, except while an update log runs in it
@@ -1059,7 +1087,8 @@ const DEV = {
     // connection: auto = Wi-Fi, Bluetooth as fallback
     groups: [['Connection', ['connection', 'sensor_host', 'sender_password']],
              ['Temperature sensors', ['temperature_service', 'temperature_name', 'temperature2_service', 'temperature2_name']],
-             ['Frost alarm', ['frost_alarm', 'frost_alarm_c', 'frost_alarm_min_l', 'frost_alarm_probe']]] },
+             ['Frost alarm', ['frost_alarm', 'frost_alarm_c', 'frost_alarm_min_l', 'frost_alarm_probe']],
+             ['Grey water tank', ['grey_tank', 'grey_name', 'grey_capacity_l', 'grey_alarm', 'grey_alarm_pct']]] },
   fridge: { title: 'Fridge', what: 'fridge', add: flowFridge, simple: ['poll_interval'] },
 };
 
@@ -1205,7 +1234,7 @@ async function tabDevice(kind) {
   if (!canEdit()) main.append(lockedNotice());
   // the top card follows the sensor (refreshed with the state every 5 s); the form below is left alone
   S.devTop = { kind, section };
-  main.append(h('div', { id: 'devlive' }, deviceHeader(kind, section)));
+  main.append(h('div', { id: 'devlive' }, deviceHeader(kind, section), kind === 'esp32' ? greyCard() : null));
   if (kind === 'fridge') main.append(fridgeControls());
   if (kind === 'esp32') main.append(...waterFolds());
   if (kind === 'mopeka') { const g = await gasHistoryCard(); if (g) main.append(g); const b = await mopekaBatteryCard(); if (b) main.append(b); }
