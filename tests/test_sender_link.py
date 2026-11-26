@@ -705,6 +705,23 @@ class WifiTransportTests(unittest.TestCase):
 
     _pending_start = []
 
+    def test_status_poller_reads_every_second_while_filling(self):
+        import esp32_wifi_link as wl
+        calls, old = [], wl.http
+        wl.http = lambda cb, url, **kw: calls.append(url)
+        try:
+            p = wl.StatusPoller('h', 5, lambda d: None, lambda e: None)
+            p._beat()                                       # first beat: reads
+            self.assertEqual(len(calls), 1)
+            p._running = False
+            p._beat()                                       # 1 s later, not filling: waits for 5 s
+            self.assertEqual(len(calls), 1)
+            p.fast = True
+            p._beat()                                       # filling: every second
+            self.assertEqual(len(calls), 2)
+        finally:
+            wl.http = old
+
     def test_reading_checkin_command_and_update_over_wifi(self):
         d = Esp32HydroDriver('s', section('connection = wifi\nsensor_host = %s\ntemperature_service = yes\n' % self.host))
         self.assertFalse(d.USES_SCANNER)                                   # no Bluetooth at all
