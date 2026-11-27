@@ -14,6 +14,7 @@ KiCad 7 or newer.
 | `io-board-schematic.pdf` | The schematic as PDF |
 | `io-board.net` | Netlist exported by KiCad |
 | `io-board.dsn` | The unrouted board for Freerouting (with the net classes) |
+| `pcb-render-top.png`, `pcb-render-bottom.png` | Renders of the bare board as it comes from the fab (`sh tools/render.sh`) |
 | `pcb-front.png`, `pcb-back.png` | Copper previews of both layers |
 | `pcb-placement.png` | Preview of the placement (before routing) |
 | `io_board.kicad_sym`, `sym-lib-table` | Project library with the PCA9615 symbol (not in the KiCad library) |
@@ -22,8 +23,8 @@ KiCad 7 or newer.
 **Order:** 2 layers, 1.6 mm FR-4, 1 oz (35 µm) copper, min. track/gap 0.15 mm, min. drill 0.3 mm,
 any solder mask colour, HASL or ENIG.
 
-![front](pcb-front.png)
-![back](pcb-back.png)
+![top](pcb-render-top.png)
+![bottom](pcb-render-bottom.png)
 
 ## Checked
 
