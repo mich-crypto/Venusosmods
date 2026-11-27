@@ -19,7 +19,7 @@ measured, the schematic is next.
 | Truma CP plus | LIN bus (TJA1021), **in and out**: two RJ12 sockets in parallel, so the board sits in the Truma cable chain | 2 × RJ12 |
 | USB-C programming | Flashing and serial log (ESP32 native USB), Boot and Reset buttons | USB-C |
 | USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W** (PD charger chip, e.g. SW3516 or IP6557, from 12 V AUX), plain 5 V for devices without PD; the board can switch it off | USB-C, front plate |
-| 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
+| 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V = on" or "contact to ground = on"; what each input means is set later in the settings | push-in |
 | 2 outputs, 5 A | Relays with changeover contact (C / NO / NC), 5 A at 14 V DC, LED each. **Output 1 = light** (two-way with the wall switch, with "light on" sense), output 2 free | push-in |
 | Tilt | Accelerometer LIS2DW12: levelling, water tank slope correction, movement | on the board |
 | Humidity + temperature | **SHT40** on the board (I²C), in the front plate area behind a vent slot, cut off from the warm parts by a slot in the board; replaces temperature probe 2 | on the board |
@@ -142,8 +142,12 @@ switch form a two-way (stairway) circuit.
 | Input | Use | Signal |
 |---|---|---|
 | 1 | Gas/CO alarm Karman 3Gas+ (white wire "Alarm out") | **12 V on alarm** (measured) |
-| 2 | Smoke alarm (12 V detector with alarm contact; the 3Gas+ does not detect smoke) | to choose |
-| 3 | free (e.g. ignition / D+, door, step out) | – |
+| 2 | free, general on/off contact | either, by jumper |
+| 3 | free, general on/off contact | either, by jumper |
+
+Inputs 2 and 3 are plain on/off contacts: what they mean (name, alarm or just a status, active
+high or low) is set later on the mods page, without changing the board. Examples: a smoke
+detector with an alarm contact, ignition / D+, door, step out.
 
 Mains present and "12 V on" come from ST1 and don't use these inputs.
 
@@ -200,7 +204,7 @@ I²C addresses: LIS2DW12 0x18, SHT40 0x44; expansion boards use other addresses.
 * EBL: "12 V system" switch in Venus OS, on the mods page and on the tablet; mains present as a
   status; battery voltage.
 * Tanks: fresh water in litres (pressure sensor), grey water from the rods.
-* Inputs: gas/CO and smoke as Venus OS alarms and notifications.
+* Inputs: gas/CO as a Venus OS alarm and notification; inputs 2 and 3 named and configured on the mods page (status, alarm or switch).
 * Outputs: light and output 2 as switches in Venus OS (switch pane) and on the tablet.
 * Humidity and temperature in the living area: Venus OS temperature service (with humidity), condensation warning.
 * Tilt: levelling page (pitch, roll, how much to raise which wheel), water volume corrected for
@@ -208,6 +212,5 @@ I²C addresses: LIS2DW12 0x18, SHT40 0x44; expansion boards use other addresses.
 
 ## Still open
 
-* Smoke detector model (12 V with alarm contact).
 * Confirm the pin-1 marks of ST1 and ST2.
 * Schematic, parts list with order numbers, layout (KiCad), then one prototype before more.
