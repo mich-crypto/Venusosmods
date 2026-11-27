@@ -13,14 +13,20 @@ because you check every wire with a beep test before you close anything.
 | Cable wire | Function | At the tank, connect to | At the board (ST2 pin) |
 |---|---|---|---|
 | **brown** | +5 V supply | QDY30A **red** | 4 |
-| **white** | GND | QDY30A **green** + probe **black** | 5 |
+| **green** | GND | QDY30A **green** + probe **black** | 3 |
 | **yellow** | pressure signal | QDY30A **yellow** | 2 |
-| **green** | +3.3 V supply | probe **red** | 3 |
+| **white** | +3.3 V supply | probe **red** | 5 |
 | **grey** | temperature data | probe **yellow** | 1 |
 | – | – | – | 6 (not used) |
 
-Easy to remember: **yellow goes to yellow** (the pressure signal); the probe's wires go to the
-two remaining "light" colours (green and grey); brown is the sensor's +5 V and white is ground.
+Easy to remember: **green goes to green and yellow to yellow** for the pressure sensor (ground and
+signal), brown is its +5 V; the temperature probe gets the light colours, white (+3.3 V) and grey
+(data).
+
+**Why white is the probe's +3.3 V:** the LT 100 puts 12 V on the white wire. If this cable is
+ever plugged back into an LT 100 by mistake, the 12 V reaches only the temperature probe (cheap,
+may break), never the pressure sensor; the LT 100's other four wires are measuring inputs without
+supply.
 
 ## What you need
 
@@ -47,14 +53,14 @@ two remaining "light" colours (green and grey); brown is the sensor's +5 V and w
 
    | Sensor half hole (wire side, latch on top) | Sensor wire | Meets cable wire |
    |---|---|---|
-   | a top left | probe red | green |
+   | a top left | QDY30A green + probe black | green |
    | b top middle | QDY30A red | brown |
-   | c top right | QDY30A green + probe black | white |
+   | c top right | probe red | white |
    | d bottom left | – (empty) | – |
    | e bottom middle | probe yellow | grey |
    | f bottom right | QDY30A yellow | yellow |
 
-   Two wires in one contact (hole c) rarely hold well: join QDY30A green and probe black to a
+   Two wires in one contact (hole a) rarely hold well: join QDY30A green and probe black to a
    short single wire first (solder or a small splice) and crimp that one.
 
    *Easiest:* don't re-pin the round plug at all. Cut the cable just before the round plug,
@@ -70,7 +76,7 @@ Do this once, before connecting the sensors:
    thin needle in from the wire side if needed).
 3. At the tank end, touch the other probe to each of the 5 wire ends: it beeps on exactly one.
    That one must be **brown** too.
-4. Repeat for white, yellow, green and grey.
+4. Repeat for green, yellow, white and grey.
 5. If a colour changes along the way (for example inside the round plug), write it down and use
    the colour **at the tank** for step 3, but keep the function from the table above.
 
@@ -78,14 +84,14 @@ Do this once, before connecting the sensors:
 
 ```
  cable brown  ───────────── QDY30A red      (+5 V)
- cable white  ──────┬────── QDY30A green    (GND)
+ cable green  ──────┬────── QDY30A green    (GND)
                     └────── probe black     (GND)
  cable yellow ───────────── QDY30A yellow   (pressure signal)
- cable green  ───────────── probe red       (+3.3 V)
+ cable white  ───────────── probe red       (+3.3 V)
  cable grey   ───────────── probe yellow    (temperature data)
 ```
 
-* **Ground (white):** three wires in one connector: cable white + QDY30A green + probe black.
+* **Ground (green):** three wires in one connector: cable green + QDY30A green + probe black.
   With a WAGO 221-413 (3-way) that's one lever; when soldering, twist them, solder, heat-shrink.
 * **Vent tube:** the QDY30A cable has a thin air tube inside. Its end must stay **open, in dry
   air**: cut the cable straight, don't fill it with glue or heat-shrink, and keep the end inside
@@ -99,18 +105,18 @@ With the multimeter on **resistance**, at the board end (ST2 plug):
 
 | Measure between | Expect | If not |
 |---|---|---|
-| brown and white | not a short (some kΩ or more) | brown/white swapped or touching: fix before power! |
-| green and white | not a short | probe wires swapped |
-| yellow and white | not a short | |
-| grey and white | not a short | |
+| brown and green | not a short (some kΩ or more) | +5 V and ground swapped or touching: fix before power! |
+| white and green | not a short | probe wires swapped or touching |
+| yellow and green | not a short | |
+| grey and green | not a short | |
 
 Then, with the **new board** (or the test setup below) powered, measure with the meter on
-**DC volts**, black probe on white:
+**DC volts**, black probe on green:
 
 | Wire | Expect |
 |---|---|
 | brown | about 5.0 V |
-| green | about 3.3 V |
+| white | about 3.3 V |
 | yellow | about 0 V with the tank empty, rising about 0.165 V per 10 cm of water |
 | grey | about 3.3 V (pulled up; the probe pulls it down briefly when it talks) |
 
@@ -129,9 +135,9 @@ the cable now with the current hand-wired ESP32, connect its board end like this
 | Cable wire | Current I/O extension |
 |---|---|
 | brown | buck converter **5 V output, before the diode** |
-| white | GND |
+| green | GND |
 | yellow | 10 kΩ → GPIO4, with 100 nF and 1 MΩ from GPIO4 to GND |
-| green | ESP32 **3V3** |
+| white | ESP32 **3V3** |
 | grey | GPIO5, with **4.7 kΩ** from GPIO5 to 3V3 |
 
 The cable can be several metres long; that is fine for both sensors (for very long runs use

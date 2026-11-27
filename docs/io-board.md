@@ -92,9 +92,9 @@ wire (the LT 100's 12 V for the rods) now carries the sensor supply.
 
 | Pin* | Wire | Was (rods, LT 100) | Now (board) | Tank plug hole → sensor wire |
 |---|---|---|---|---|
-| 5 | white | Base, +12 V | **GND** (pressure sensor + temperature probe) | c → QDY30A green + probe black |
+| 5 | white | Base, +12 V | **+3.3 V** temperature probe supply | c → probe red |
 | 4 | brown | ¼ rod | **+5 V** pressure sensor supply | b → QDY30A red |
-| 3 | green | ½ rod | **+3.3 V** temperature probe supply | a → probe red |
+| 3 | green | ½ rod | **GND** (pressure sensor + temperature probe) | a → QDY30A green + probe black |
 | 2 | yellow | ¾ rod | **pressure signal** (10 kΩ + RC to GPIO4) | f → QDY30A yellow |
 | 1 | grey | Full rod | **temperature data** (DS18B20, 4.7 kΩ to 3.3 V, GPIO5) | e → probe yellow |
 | 6 | – | not connected | spare | d → – |
@@ -111,7 +111,8 @@ Step-by-step guide: [fresh-water-wiring.md](fresh-water-wiring.md).
 * At the tank, the round 6-way plug's **sensor half** is re-wired (the rod probe comes out); the
   cable half and its colours stay. Its layout is the mirror image of the cable half.
 * **5 V, not 12 V**, on the brown wire: the 0–3.3 V version of the QDY30A runs on 5 V (see
-  [wiring.md](wiring.md)). Do not plug this cable back into an LT 100 afterwards.
+  [wiring.md](wiring.md)). If the cable is ever plugged into an LT 100 by mistake, its 12 V lands
+  on white = the temperature probe only; the pressure sensor gets no 12 V.
 * The pressure sensor's vent tube needs open air: make the joint at the tank in a small dry box
   (see the note on extending the sensor cable in [wiring.md](wiring.md)).
 * The fresh tank is then measured in litres (pressure sensor); the 4-step rod reading is no longer
