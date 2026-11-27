@@ -16,7 +16,7 @@ connections below are agreed and the van wiring is measured; the schematic is ne
 | Grey water | Rod sender (common + 4 rods), same plug as on the LT 100 | Micro-Fit 5-pin, 1 row |
 | Truma CP plus | LIN bus, TJA1021 transceiver | RJ12 |
 | 4 relays | 10 A at 14 V DC, changeover contacts (C / NO / NC), LED each | push-in, ≥ 10 A |
-| 4 silent outputs, dimmable | Low-side MOSFET, about 5 A, PWM (LED strips, fan speed), flyback diode, LED each | push-in |
+| 4 silent outputs | Low-side MOSFET, on/off, about 5 A, flyback diode, LED each | push-in |
 | 8 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
 | 2 analog inputs | Jumper per input: 0–10 V, 4–20 mA, or resistive sender (0–190 Ω / 240–33 Ω, e.g. a second tank or a fuel sender); 16-bit (ADS1115) | push-in |
 | Battery voltage | Precise measurement of the leisure battery (ST1 blue) and of 12 V AUX (ADS1115) | – |
@@ -95,7 +95,7 @@ Mains present and "12 V on" come from ST1 and don't use these inputs.
 ## Pin plan
 
 All ESP32 pins are used directly for the things that need speed or the ESP32's own hardware
-(ADC, PWM, LIN, CAN, 1-Wire). Everything that only switches or reads on/off goes through an
+(ADC, LIN, CAN, 1-Wire). Everything that only switches or reads on/off goes through an
 I/O expander on the I²C bus, which gives 16 more lines without using pins.
 
 **ESP32-S3 (native)**
@@ -109,7 +109,7 @@ I/O expander on the I²C bus, which gives 16 more lines without using pins.
 | I²C (tilt sensor, I/O expander, ADC, expansion) | 15, 16 |
 | Interrupt from the tilt sensor and the I/O expander (shared, open-drain) | 47 |
 | Truma LIN RX / TX / SLP | 17 / 18 / 21 |
-| Silent outputs 1–4 (PWM) | 38, 39, 40, 41 |
+| Silent outputs 1–4 | 38, 39, 40, 41 |
 | CAN TX / RX | 11 / 12 |
 | Spare header | 13, 14, 35, 36 |
 | RGB status LED | 48 |
@@ -149,7 +149,7 @@ I²C addresses: LIS2DW12 0x18, MCP23017 0x20, ADS1115 0x48; the expansion header
 
 * EBL: "12 V system" switch in Venus OS, on the mods page and on the display; mains present as a status.
 * Inputs: gas/CO and smoke as Venus OS alarms and notifications.
-* Relays and outputs: switches in Venus OS (switch pane) and on the display; outputs also dimmable (0–100 %).
+* Relays and outputs: switches in Venus OS (switch pane) and on the display.
 * Rules on the board itself, also without the Pi: e.g. pump off when the fresh tank is empty, fan on
   above a temperature, light on when the door opens, warning when driving with the step out.
 * Tilt: levelling page (pitch, roll, how much to raise which wheel), water volume corrected for
