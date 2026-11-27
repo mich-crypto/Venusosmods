@@ -5,29 +5,29 @@
 One printed circuit board that **replaces the LT 100 panel** and the hand-wired I/O extension
 (ESP32-S3 dev board, buck converter, resistors). It switches the EBL 119, reads the fresh and grey
 tanks, talks to the Truma CP plus, charges a tablet, and has 3 inputs, 2 outputs and a tilt
-sensor; more I/O comes later on expansion boards over RJ45. Status: **planning**; the van wiring is
-measured, the schematic is next.
+sensor; more I/O comes later on expansion boards over RJ45. Status: **rev 0.3, routed and
+reviewed** – KiCad project, fab files and design audit in [hardware/io-board](../hardware/io-board/README.md).
 
 ## Overview
 
 | Block | What | Connection |
 |---|---|---|
 | ESP32-S3 | Module **ESP32-S3-WROOM-1-N8** (antenna on the module; plastic casing in the living area) | – |
-| Power | From the EBL cable (ST1 blue + / brown −) for the electronics; **12 V AUX** for the outputs and the USB charging socket; two diodes pick the input with power | ST1 + push-in |
+| Power | From the EBL cable (ST1 blue + / brown −) for the electronics; **12 V AUX** for the outputs and the USB charging socket (10 A fuse, reverse-polarity MOSFET, TVS); two diodes pick the input with power | ST1 + push-in |
 | **LT 100: EBL 119 on/off** | Short pulse to ground on ON (green) or OFF (yellow); reads "12 V on" (white) and mains (pink); battery voltage from the blue wire | **ST1**: Micro-Fit 6-pin, 2 rows |
 | **LT 100: fresh water** | The existing fresh water cable, now connected to the **pressure sensor** (QDY30A 0–3.3 V) and the water temperature probe at the tank | **ST2**: Micro-Fit 6-pin, 1 row |
 | **LT 100: grey water** | Rod sender, common + 4 rods | **ST3**: Micro-Fit 5-pin, 1 row |
-| 12 V ON / OFF buttons + LED | Two push buttons on the front plate, wired **straight to the EBL** (ST1 green / yellow) like the LT 100's buttons: they work even with the ESP32 off or being updated. Green LED driven straight by the "12 V on" wire | front plate |
+| 12 V ON / OFF buttons + LED | Two right-angle push buttons on the board's **front edge**, reaching through the front plate, wired **straight to the EBL** (ST1 green / yellow) like the LT 100's buttons: they work even with the ESP32 off or being updated. Green right-angle LED driven straight by the "12 V on" wire | front edge |
 | Truma CP plus | LIN bus (TJA1021), **in and out**: two RJ12 sockets in parallel, so the board sits in the Truma cable chain | 2 × RJ12 |
 | USB-C programming | Flashing and serial log (ESP32 native USB), Boot and Reset buttons | USB-C |
-| USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W** (PD charger chip, e.g. SW3516 or IP6557, from 12 V AUX), plain 5 V for devices without PD; the board can switch it off | USB-C, front plate |
-| 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V = on" or "contact to ground = on"; what each input means is set later in the settings | push-in |
+| USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W**: a ready-made 12 V → USB-C PD module on J2 (2-pin header), fed from 12 V AUX through F7 and switched by Q80; the board can switch it off | J2 → module in the front plate |
+| 3 inputs | Optocoupler, **9–30 V = on**; the common (COM) is tied to GND by solder jumper JP10 (open it for a floating common). A dry contact is wired between +12 V (e.g. the CP+ terminal) and the input. What each input means is set later in the settings | push-in |
 | Output 1, Output 2 | Relays with changeover contact, 5 A, C fed from 12 V AUX (5 A fuse each, solder jumper for a dry contact); both two-way capable with a wall switch and with an "output on" current sense. Use decided per output (e.g. a light) | push-in |
 | CP plus 12 V | Fused 12 V out (1 A PTC, from 12 V AUX) for the Truma CP plus panel's own supply wires (red, red/black) | push-in |
-| Tilt | Accelerometer LIS2DW12: levelling, water tank slope correction, movement | on the board |
+| Tilt | Accelerometer LIS3DH: levelling, water tank slope correction, movement | on the board |
 | Humidity + temperature | **SHT40** on the board (I²C), in the front plate area behind a vent slot, cut off from the warm parts by a slot in the board; replaces temperature probe 2 | on the board |
 | **Expansion (RJ45)** | 12 V, ground and I²C for expansion boards (more inputs/outputs later), I²C as a differential pair (PCA9615) so the cable can be several metres | RJ45 |
-| Status | RGB status LED (front plate) | – |
+| Status | RGB status LED SK6812MINI at the front edge, seen through a 3 mm light pipe in the front plate | – |
 | Removed (simplified) | CAN, MOSFET outputs, analog inputs, 8 inputs → 3, display power out, spare header, I/O expander and ADC chips, separate PRESSURE socket, temperature probe 2 | – |
 
 ## All connectors
@@ -54,8 +54,9 @@ ON/OFF buttons and LED, the USB-C tablet socket and the status LED.
 * Casing: plastic (Wi-Fi and Bluetooth), 3D-printed to fit the board: bottom tray with screw
   posts, a lid, the front plate, openings for the plugs.
 * Fixed with two screws at the back or a flat bracket, so it can't move (the tilt sensor needs it).
-* The LT 100 plugs (ST1, ST2, ST3) and the programming USB-C are on the front edge, right behind
-  the front plate. Truma, expansion and the push-in terminals are on the side edges: slide the
+* The LT 100 plugs (ST1, ST2, ST3), the programming USB-C, the 12 V ON/OFF buttons and the two
+  LEDs are on the front edge, right behind the front plate (buttons and the green LED reach
+  through holes in the plate, the status LED through a light pipe). Truma, expansion and the push-in terminals are on the side edges: slide the
   casing out to reach them, so leave about 20 cm of slack in those cables.
 
 ## ST1: EBL 119 cable (was to the LT 100) – measured
@@ -200,8 +201,12 @@ For later boards with more inputs and outputs (they plug in with a normal networ
 | 1, 2 | +12 V (from 12 V AUX, fused 1 A) |
 | 3 / 6 | I²C data + / − (PCA9615, differential) |
 | 4 / 5 | I²C clock + / − |
-| 7 | interrupt (open drain, shared with the tilt sensor) |
+| 7 | interrupt (open drain, 10 kΩ pull-up on this board, GPIO40) |
 | 8 | GND |
+
+Both differential pairs are terminated and biased on this board (620 Ω / 120 Ω / 620 Ω, NXP
+PCA9615 datasheet Fig. 5); **each expansion board needs the same network at its PCA9615**.
+Lines 3–7 have ESD protection (ESDA6V1-5SC6).
 
 ## Pin plan (ESP32-S3)
 
@@ -231,7 +236,10 @@ I²C addresses: LIS3DH 0x18, SHT40 0x44; expansion boards use other addresses.
 
 ## Protection
 
-* 12 V inputs: fuse (polyfuse), reverse-polarity protection, TVS diode (van transients).
+* ST1 supply: 0.5 A PTC, series diode, TVS SMBJ18A on the 12 V system rail.
+* 12 V AUX: 10 A blade fuse, reverse-polarity P-MOSFET (IPD90P04P4L-04), TVS SMBJ15A (clamps
+  below the 26 V of the current-sense amplifiers).
+* Expansion RJ45: ESD array on the I²C pairs and the interrupt; USB-C: USBLC6; LIN: PESD1LIN.
 * Sensor, rod and probe lines: series resistors and ESD protection.
 * Relay coils: flyback diodes.
 * Power use about 0.5 W idle (≈ 1 Ah/day from the leisure battery); each relay adds about
@@ -252,4 +260,5 @@ I²C addresses: LIS3DH 0x18, SHT40 0x44; expansion boards use other addresses.
 
 * ST2 plug order: check once on the unplugged plug (wire side, clip on top); ST1 turned out mirrored
   compared with the first guess, so ST2 may be too.
-* Schematic, parts list with order numbers, layout (KiCad), then one prototype before more.
+* Parts list with order numbers, then one prototype before more (see the bring-up steps in the
+  board's README).

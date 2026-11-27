@@ -13,12 +13,18 @@ add('F1','Device:Polyfuse','0.5A 30V PTC','Fuse:Fuse_1206_3216Metric',{'1':'ST1_
 D('D1','Diode:SS34','SS34','Diode_SMD:D_SMA','ST1_12V_F','V12_SYS')
 add('J5','Connector:Screw_Terminal_01x10','power push-in','TerminalBlock_Phoenix:TerminalBlock_Phoenix_PT-1,5-10-5.0-H_1x10_P5.00mm_Horizontal',
     {'1':'V12_AUX_IN','2':G,'3':'OUT1_C','4':'OUT1_NO','5':'OUT1_NC','6':'OUT2_C','7':'OUT2_NO','8':'OUT2_NC','9':'TRUMA_12V','10':G},'1 12V AUX+ (EBL Spare 4), 2 GND, 3-5 Output 1 C/NO/NC, 6-8 Output 2 C/NO/NC, 9 CP plus 12V+, 10 GND')
-add('F2','Device:Fuse','10A mini blade','Fuse:Fuseholder_Blade_Mini_Keystone_3568',{'1':'V12_AUX_IN','2':'V12_AUX'})
+add('F2','Device:Fuse','10A mini blade','Fuse:Fuseholder_Blade_Mini_Keystone_3568',{'1':'V12_AUX_IN','2':'V12_AUX_F'})
+# reverse-polarity protection of 12 V AUX: P-MOSFET, drain to the fused input, source to the load side
+add('Q3','Device:Q_PMOS_GDS','IPD90P04P4L-04','Package_TO_SOT_SMD:TO-252-2',{'1':'Q3_G','2':'V12_AUX_F','3':'V12_AUX'},'Infineon -40 V, 4.2 mOhm: 0.4 W at 10 A; reversed AUX keeps it off')
+R('R7','10k','Q3_G',G)
+D('D13','Device:D_Zener','BZT52C12','Diode_SMD:D_SOD-123','Q3_G','V12_AUX')  # VGS clamp -12 V (max +-20 V)
+add('D14','Device:D_TVS','SMBJ15A','Diode_SMD:D_SMB',{'1':'V12_AUX','2':G},'unidirectional, band to V12_AUX; clamps 24.4 V, below INA180 26 V and the 30 V MOSFETs')
 D('D2','Diode:SS34','SS34','Diode_SMD:D_SMA','V12_AUX','V12_SYS')
 add('D4','Device:D_TVS','SMBJ18A','Diode_SMD:D_SMB',{'1':'V12_SYS','2':G},'unidirectional, band to V12_SYS; clamps 29.2 V, below C1 35 V and TSR-1 36 V')
 C('C1','47u/35V','V12_SYS',G,'Capacitor_SMD:C_1210_3225Metric')
 add('U1','Regulator_Switching:TSR_1-2450','TSR 1-2450','Converter_DCDC:Converter_DCDC_TRACO_TSR-1_THT',{'1':'V12_SYS','2':G,'3':'+5V'})
-C('C2','22u','+5V',G,C8)
+C('C2','22u','+5V',G,C8)  # at U2 input
+C('C9','10u','+5V',G,C8)  # at U1 (TSR-1) output
 add('U2','Regulator_Linear:AP7361C-33E','AP7361C-33E','Package_TO_SOT_SMD:SOT-223-3_TabPin2',{'1':'+5V','2':G,'3':'+3V3'},'-33E = SOT223: 1 IN, 2 GND (tab), 3 OUT')
 C('C3','22u','+3V3',G,C8)
 D('D3','Diode:SS34','SS14','Diode_SMD:D_SMA','VBUS_PROG','+5V')
@@ -52,9 +58,9 @@ R('R15','10k','+3V3','EBL_12V_SENSE')
 R('R13','2.2k','EBL_MAINS','N_MAINS_Z'); D('D8','Device:D_Zener','2V4','Diode_SMD:D_SOD-123','N_MAINS_A','N_MAINS_Z')
 add('U8','Isolator:PC817','PC817','Package_DIP:SMDIP-4_W9.53mm',{'1':'N_MAINS_A','2':G,'4':'EBL_MAINS_SENSE','3':G})
 R('R16','10k','+3V3','EBL_MAINS_SENSE')
-R('R14','2.2k','EBL_12V','N_LED12'); D('D9','Device:LED','green 3mm','LED_THT:LED_D3.0mm','N_LED12',G)
-add('SW3','Switch:SW_Push','12V ON','Button_Switch_THT:SW_PUSH-12mm',{'1':'EBL_ON','2':G},'front plate, works without the ESP32')
-add('SW4','Switch:SW_Push','12V OFF','Button_Switch_THT:SW_PUSH-12mm',{'1':'EBL_OFF','2':G},'front plate, works without the ESP32')
+R('R14','2.2k','EBL_12V','N_LED12'); D('D9','Device:LED','green 3mm','LED_THT:LED_D3.0mm_Horizontal_O1.27mm_Z2.0mm','N_LED12',G)
+add('SW3','Switch:SW_Push','PTS645VL83-2 LFS','Button_Switch_THT:SW_Tactile_SPST_Angled_PTS645Vx83-2LFS',{'1':'EBL_ON','2':G},'front plate, works without the ESP32')
+add('SW4','Switch:SW_Push','PTS645VL83-2 LFS','Button_Switch_THT:SW_Tactile_SPST_Angled_PTS645Vx83-2LFS',{'1':'EBL_OFF','2':G},'front plate, works without the ESP32')
 # ---------------- 4 tanks
 add('J6','Connector_Generic:Conn_01x06','ST2 FRESH','Connector_Molex:Molex_Micro-Fit_3.0_43650-0600_1x06_P3.00mm_Horizontal',
     {'1':'FRESH_T_RAW','2':'FRESH_P_RAW','3':G,'4':'FRESH_5V','5':'FRESH_3V3','6':'NC'},'1 grey temp data, 2 yellow pressure, 3 green GND, 4 brown +5V, 5 white +3.3V, 6 spare')
@@ -83,7 +89,9 @@ for n in (1,2):
     add(f'U{n}1','Amplifier_Current:INA180A3','INA180A3','Package_TO_SOT_SMD:SOT-23-5',{'3':f'SH{n}_SP','4':f'SH{n}_SN','1':f'ISENSE{n}','2':G,'5':'+3V3'})
     add(f'NT{n}1','Device:NetTie_2','NetTie','NetTie:NetTie-2_SMD_Pad0.5mm',{'1':f'SH{n}_P','2':f'SH{n}_SP'},'Kelvin tap at the shunt')
     add(f'NT{n}2','Device:NetTie_2','NetTie','NetTie:NetTie-2_SMD_Pad0.5mm',{'1':f'SH{n}_N','2':f'SH{n}_SN'},'Kelvin tap at the shunt')
-    add(f'U{n}2','Comparator:LMV331','LMV331','Package_TO_SOT_SMD:SOT-23-5',{'1':f'ISENSE{n}','3':'VREF','4':f'OUT{n}_SENSE','2':G,'5':'+3V3'})
+    add(f'U{n}2','Comparator:LMV331','LMV331','Package_TO_SOT_SMD:SOT-23-5',{'1':f'ISENSE{n}','3':'VREF','4':f'OUT{n}_SENSE','2':G,'5':'+5V'},'5 V supply: input range to 4.2 V covers the INA180 output (up to 3.3 V); open-drain output pulled to 3.3 V')
+    C(f'C9{2+2*n}','100n','+3V3',G)  # INA180 VS bypass
+    C(f'C9{3+2*n}','100n','+5V',G)   # LMV331 VCC bypass
     R(f'R{n}08','10k','+3V3',f'OUT{n}_SENSE')
 # ---------------- 6 Truma + inputs
 for ref,v in [('J8','RJ12 Truma IN'),('J9','RJ12 Truma OUT')]:
@@ -98,7 +106,7 @@ add('J10','Connector:Screw_Terminal_01x04','inputs push-in','TerminalBlock_Phoen
 add('JP10','Jumper:SolderJumper_2_Bridged','JP COM','Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm',{'1':'IN_COM','2':G})
 for k in (1,2,3):
     D(f'D7{k}','Diode:1N4148W','1N4148W','Diode_SMD:D_SOD-123',f'IN{k}_T',f'IN{k}_D')
-    R(f'R7{k}','4.7k',f'IN{k}_D',f'IN{k}_A')
+    R(f'R7{k}','4.7k 0.25W',f'IN{k}_D',f'IN{k}_A','Resistor_SMD:R_1206_3216Metric')  # 30 V: 169 mW
     add(f'U7{k}','Isolator:PC817','PC817','Package_DIP:SMDIP-4_W9.53mm',{'1':f'IN{k}_A','2':'IN_COM','4':f'IN{k}','3':G})
     R(f'R7{k+3}','10k','+3V3',f'IN{k}')
 # ---------------- 7 USB PD module, sensors, expansion
@@ -122,6 +130,7 @@ R('R92','100','EXP_INT_MCU','EXP_INT')  # expansion interrupt: open drain on the
 # dI2C termination + idle bias at this end of the cable (NXP PCA9615 Fig. 5/7: 600-120-600 at VDD(B) 5 V)
 for (pp,mm,ra,rb,rc) in (('DSCL_P','DSCL_M','R94','R95','R96'),('DSDA_P','DSDA_M','R97','R98','R99')):
     R(ra,'620','+5V',pp); R(rb,'120',pp,mm); R(rc,'620',mm,G)
+add('U93','Power_Protection:ESDA6V1-5SC6','ESDA6V1-5SC6','Package_TO_SOT_SMD:SOT-23-6',{'1':'DSDA_P','3':'DSDA_M','4':'DSCL_P','5':'DSCL_M','6':'EXP_INT','2':G},'ESD on the expansion cable lines')
 add('J3','Connector:RJ45','RJ45 EXPANSION','Connector_RJ:RJ45_Amphenol_54602-x08_Horizontal',{'1':'EXP_12V','2':'EXP_12V','3':'DSDA_P','6':'DSDA_M','4':'DSCL_P','5':'DSCL_M','7':'EXP_INT','8':G})
 # power flags
 FLAGS=['GND','V12_SYS','V12_AUX','ST1_12V','LIN_VBAT','PD_12V','+5V','+3V3','VBUS_PROG']

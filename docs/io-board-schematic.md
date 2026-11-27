@@ -1,7 +1,9 @@
 # I/O board: schematic, parts and design review
 
 Planning schematic for the board in [io-board.md](io-board.md), drawn sheet by sheet with every
-part and value. It is the base for the KiCad schematic and layout, not yet a manufacturing file.
+part and value. The sheet images below are the original planning drawings; the **current design
+is the KiCad project** (rev 0.3) – where they differ, the KiCad files and the parts table below
+are right.
 
 **KiCad project:** [hardware/io-board](../hardware/io-board/README.md) (schematic, placed board,
 parts list).
@@ -33,26 +35,29 @@ humidity sensor. The programming USB-C sits behind the plate.
 | U3 | ESP32-S3-WROOM-1-N8 | controller, Wi-Fi, Bluetooth |
 | U1 | Traco TSR 1-2450 | 12 → 5 V, 1 A |
 | U2 | AP7361C-33E (SOT223) | 5 → 3.3 V, 1 A |
-| D1, D2 | SS34 | supply OR-ing, reverse polarity |
+| D1, D2 | SS34 | supply OR-ing, reverse polarity of the electronics supply |
+| Q3, D13, R7 | IPD90P04P4L-04 P-MOSFET, BZT52C12, 10 k | reverse-polarity protection of 12 V AUX (0.4 W at 10 A) |
+| D14 | SMBJ15A | 12 V AUX transient clamp (24.4 V, below the INA180's 26 V) |
 | D4 | SMBJ18A | 12 V transient clamp (clamps 29.2 V, below the 35 V parts) |
-| F1 / F2 | 0.5 A PTC / 10 A blade fuse | ST1 supply / 12 V AUX |
+| F1 / F2 | 0.5 A 30 V PTC / 10 A mini blade fuse | ST1 supply / 12 V AUX |
 | U5, U6 | AQY212EH photoMOS | EBL ON / OFF pulses from the ESP32 |
-| SW3, SW4 | front push buttons | EBL ON / OFF by hand (direct) |
-| U7, U8, U70–U72 | PC817 | "12 V on", mains, inputs 1–3 |
-| K1, K2 | 12 V relay, changeover, 5 A (e.g. Song Chuan 833H-1C-C) | Output 1, Output 2 |
+| SW3, SW4 | C&K PTS645VL83-2 LFS right-angle buttons on the front edge | EBL ON / OFF by hand (direct) |
+| U7, U8, U71–U73 | PC817 | "12 V on", mains, inputs 1–3 (input resistors 4.7 k 1206 for 30 V) |
+| K1, K2 | Omron G5LE-1 12 VDC, changeover | Output 1, Output 2 (5 A fuse each) |
 | Q1, Q2 | AO3400 | relay drivers |
-| U11, U21 | INA180A3 + LMV331 | output current sense ("output on") |
-| F4, F5 | 5 A fuse | Output 1, Output 2 |
+| U11, U21 / U12, U22 | INA180A3 / LMV331 (LMV331 on 5 V) | output current sense ("output on"), Kelvin taps NT11–NT22 |
+| F4, F5 | 5 A 32 V fast SMD fuse | Output 1, Output 2 |
 | U60 | TJA1021T/20 | Truma LIN bus |
 | D60 | PESD1LIN | LIN ESD protection |
 | F6 | 1 A PTC | 12 V for the CP plus |
-| U80 | SW3516H (+ reference parts) | USB-C PD 30 W |
+| J2, F7 | 2-pin header, 4 A fuse | ready-made 12 V → USB-C PD 30 W module (no PD chip on the board) |
 | Q80, Q81 | AO3401A, 2N7002 | USB PD on/off (R80/R83 halve the gate voltage, VGS max ±12 V) |
 | U90 | LIS3DH | tilt (LGA-16 3 × 3), INT1 push-pull on its own GPIO47 |
 | U91 | SHT40 | humidity + temperature |
 | U92 | PCA9615 | differential I²C to the RJ45; R94–R99 620/120/620 Ω termination + idle bias on both pairs (needed at each cable end) |
 | U4 | USBLC6-2SC6 | USB ESD |
-| J | Molex Micro-Fit 3.0: 43045-0600 (ST1, 2 rows), 43650-0600 (ST2), 43650-0500 (ST3); 2 × RJ12 6P6C; RJ45; 2 × USB-C; push-in terminals 5.08 mm (power) and 3.5 mm (inputs) | connectors |
+| U93 | ESDA6V1-5SC6 | ESD on the RJ45 expansion lines |
+| J | Molex Micro-Fit 3.0: 43045-0600 (ST1, 2 rows), 43650-0600 (ST2), 43650-0500 (ST3); 2 × RJ12 6P6C; RJ45; 1 × USB-C (programming; the tablet socket is on the PD module); push-in terminals 5.08 mm (power) and 3.5 mm (inputs) | connectors |
 
 ## Design review
 
@@ -65,8 +70,9 @@ projects. What is right, what to check, and what I recommend changing.
   manual (6-5-4 over 3-2-1, wire side, clip on top).
 * ST2 (fresh water): white carries the probe's 3.3 V, so a wrong plug into an LT 100 (12 V on
   white) never reaches the pressure sensor; the tank plug cable half is confirmed.
-* The board can't be powered backwards (D1/D2), transients are clamped (D4), every cable input
-  has a series resistor and ESD protection.
+* The board can't be powered backwards (D1/D2 for the electronics, Q3 for 12 V AUX), transients
+  are clamped (D4 on the 12 V system rail, D14 on 12 V AUX), every cable input has a series
+  resistor and ESD protection.
 * Heavy loads only on 12 V AUX (EBL Spare 4), so the LT 100's old battery sense line (ST1 blue)
   only feeds the electronics and stays an accurate voltage measurement.
 
@@ -100,5 +106,5 @@ projects. What is right, what to check, and what I recommend changing.
 
 **Next steps**
 
-* Measure the Truma RJ12 (pin 3 and 5) and decide on points 1–5.
-* Then the schematic goes into KiCad, followed by the layout, a design check, and one prototype.
+* Measure the Truma RJ12 (pin 3 and 5) before connecting the board.
+* KiCad schematic, layout and design audit are done (rev 0.3); next is one prototype.
