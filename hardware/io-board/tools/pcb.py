@@ -101,7 +101,7 @@ order=sorted(b.GetFootprints(),key=lambda f:-pcbnew.ToMM(f.GetBoundingBox(False,
 moved=0; bad=[]
 for f in order:
     r=f.Reference(); big=pcbnew.ToMM(f.GetBoundingBox(False,False).GetWidth())>8
-    sz=1.0 if big else 0.7
+    sz=1.0 if big else 0.8
     r.SetTextSize(pcbnew.VECTOR2I(mm(sz),mm(sz))); r.SetTextThickness(mm(0.12 if not big else 0.15)); r.SetLayer(pcbnew.F_SilkS); r.SetTextAngle(pcbnew.EDA_ANGLE(0,pcbnew.DEGREES_T))
     fb=f.GetBoundingBox(False,False); c=fb.GetCenter()
     cands=[(c.x, fb.GetTop()-mm(0.8)),(c.x, fb.GetBottom()+mm(0.8)),(fb.GetLeft()-mm(2.2),c.y),(fb.GetRight()+mm(2.2),c.y),(c.x,c.y)]

@@ -7,7 +7,8 @@ KiCad 7 or newer.
 | File | What |
 |---|---|
 | `io-board.kicad_sch` | Schematic: 146 parts, every part with a real library symbol and footprint, connected by net labels, grouped in 7 sections (power, ESP32, EBL, tanks, outputs, Truma + inputs, USB PD + sensors + expansion) |
-| `io-board.kicad_pcb` | Board 120 × 140 mm with all footprints placed as in the placement plan, nets assigned (ratsnest shown), 4 × M3 holes. **Not routed yet** |
+| `io-board.kicad_pcb` | Board 120 × 140 mm with all footprints placed as in the placement plan, nets assigned (ratsnest shown), 4 × M3 holes, GND planes on both layers. **Tracks not routed yet** |
+| `io-board.dsn` | The board exported for the Freerouting autorouter (with the net classes) |
 | `io-board-schematic.pdf` | The schematic as PDF |
 | `io-board-bom.csv` | Parts list grouped by value and footprint |
 | `io-board.net` | Netlist exported by KiCad |
@@ -48,13 +49,38 @@ KiCad 7 or newer.
    12 V AUX, the outputs and the relay contacts (5 A); keep the antenna end free of copper.
 8. Then DRC, gerbers, one prototype.
 
+## Routing (next step)
+
+Design rules are in the project (net classes):
+
+| Class | Track | Clearance | Nets |
+|---|---|---|---|
+| HighCurrent | 2.0 mm | 0.4 mm | 12 V AUX, both outputs (C/NO/NC, shunts, fuses), USB PD supply |
+| Power | 0.6 mm | 0.25 mm | 12 V system, +5 V, +3.3 V, GND, LIN supply, sensor and CP plus 12 V, relay coils |
+| Default | 0.25 mm | 0.2 mm | all signals |
+
+GND is a copper plane on both layers (the ESP32 antenna end stays free of copper).
+
+To route with **Freerouting** (free):
+
+1. Install Java 17+ and download `freerouting-1.9.0.jar` from github.com/freerouting/freerouting.
+2. `java -jar freerouting-1.9.0.jar -de io-board.dsn -do io-board.ses -mp 30`
+   (or open the .dsn in its window and press *Autorouter*).
+3. KiCad PCB editor: *File → Import → Specctra Session* → `io-board.ses`.
+4. *Edit → Fill All Zones* (B), then *Inspect → Design Rules Checker*; fix what it reports.
+5. Check by eye: the 2 mm tracks for the outputs, short tracks around the 5 V/3.3 V parts,
+   the LIN line and USB lines kept short.
+
+KiCad's own interactive router (X key) works just as well for hand-routing, starting with the
+HighCurrent nets.
+
 ## Regenerating
 
 The schematic and the board are generated from `tools/parts.py`: change the netlist there and
 run, with KiCad 7's Python (`pcbnew` module):
 
 ```
-cd hardware/io-board/tools && python3 pcb.py
+cd hardware/io-board/tools && python3 pcb.py && python3 rules.py && python3 zones.py
 ```
 
 It writes `io-board.kicad_sch` and `io-board.kicad_pcb` into the current folder. Once routing
