@@ -13,7 +13,7 @@ connections below are agreed and the van wiring is measured; the schematic is ne
 | Power | From the EBL ↔ LT 100 cable (ST1, blue + / brown −), optional second input **12 V AUX** for the relay, outputs and display; two diodes pick the input with power | ST1 + push-in |
 | EBL 119 on/off | **Replaces the LT 100**: the EBL's ST1 cable plugs into the board; short pulse to ground on ON (green) or OFF (yellow); reads "12 V on" (white) and mains (pink) | Micro-Fit 6-pin, 2 rows |
 | 12 V button + LED | Push button on the front: press = 12 V system on/off (also without Wi-Fi, phone or display); green LED driven directly by the "12 V on" wire | front plate |
-| USB out | USB-C charging socket, 5 V 3 A (own 12 → 5 V converter from 12 V AUX), can be switched off by the board | front plate |
+| USB out | USB-C charging socket for a phone or tablet, **USB PD up to 30 W** (5 / 9 / 12 / 15 / 20 V, a PD charger chip such as SW3516 or IP6557 from 12 V AUX); plain 5 V for devices without PD; can be switched off by the board | front plate |
 | Fresh water | Pressure sensor QDY30A 0–3.3 V + water temperature probe | Micro-Fit 6-pin, 1 row, label **PRESSURE** |
 | Grey water | Rod sender (common + 4 rods), same plug as on the LT 100 | Micro-Fit 5-pin, 1 row |
 | Truma CP plus | LIN bus, TJA1021 transceiver | RJ12 |
