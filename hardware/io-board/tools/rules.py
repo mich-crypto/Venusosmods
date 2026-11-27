@@ -7,4 +7,5 @@ d['net_settings']['classes']=[base,cls('Power',0.3,0.15),cls('HighCurrent',2.0,0
 d['net_settings']['netclass_patterns']=[{'netclass':'HighCurrent','pattern':p} for p in ['V12_AUX*','SH?_?','OUT?_C','OUT?_NO','OUT?_NC','PD_SUPPLY','PD_12V']]+\
   [{'netclass':'Power','pattern':p} for p in ['V12_SYS','ST1_12V*','+5V','+3V3','LIN_VBAT','FRESH_5V','TRUMA_12V','EXP_12V','GND','VBUS_PROG','K?_COIL']]
 d['board']['design_settings']['rules']['min_resolved_spokes']=1
+d['board']['design_settings']['rules']['min_hole_clearance']=0.19  # GCT USB4105 footprint: NPTH pegs 0.194 mm from its GND pads
 json.dump(d,open('io-board.kicad_pro','w'),indent=2)
