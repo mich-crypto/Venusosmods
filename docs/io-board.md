@@ -2,7 +2,7 @@
 
 One printed circuit board that replaces the hand-wired I/O extension (ESP32-S3 dev board,
 buck converter, resistors). It reads the tanks, talks to the Truma CP plus, switches the
-EBL 119 on and off, and has relays, inputs and a tilt sensor. Status: **planning**, all
+EBL 119 on and off, and has a relay for the light, outputs, inputs and a tilt sensor. Status: **planning**, all
 connections below are agreed and the van wiring is measured; the schematic is next.
 
 ## Overview
@@ -10,12 +10,12 @@ connections below are agreed and the van wiring is measured; the schematic is ne
 | Block | What | Connection |
 |---|---|---|
 | ESP32-S3 | Module **ESP32-S3-WROOM-1-N8** (antenna on the module; the box sits in the living area, plastic surroundings) | – |
-| Power | From the EBL ↔ LT 100 cable (ST1, blue + / brown −), optional second input **12 V AUX** for relays, outputs and display; two diodes pick the input with power | ST1 + push-in |
+| Power | From the EBL ↔ LT 100 cable (ST1, blue + / brown −), optional second input **12 V AUX** for the relay, outputs and display; two diodes pick the input with power | ST1 + push-in |
 | EBL 119 on/off | Pass-through on ST1: short pulse to ground on ON (green) or OFF (yellow); reads "12 V on" (white) and mains (pink) | 2 × Micro-Fit 6-pin, 2 rows |
 | Fresh water | Pressure sensor QDY30A 0–3.3 V + water temperature probe | Micro-Fit 6-pin, 1 row, label **PRESSURE** |
 | Grey water | Rod sender (common + 4 rods), same plug as on the LT 100 | Micro-Fit 5-pin, 1 row |
 | Truma CP plus | LIN bus, TJA1021 transceiver | RJ12 |
-| 4 relays | 10 A at 14 V DC, changeover contacts (C / NO / NC), LED each | push-in, ≥ 10 A |
+| 1 relay: light | 10 A at 14 V DC, changeover contact (C / NO / NC), LED; switches the light | push-in, ≥ 10 A |
 | 4 silent outputs | Low-side MOSFET, on/off, about 5 A, flyback diode, LED each | push-in |
 | 8 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
 | 2 analog inputs | Jumper per input: 0–10 V, 4–20 mA, or resistive sender (0–190 Ω / 240–33 Ω, e.g. a second tank or a fuel sender); 16-bit (ADS1115) | push-in |
@@ -68,7 +68,7 @@ Check the moulded pin-1 mark before crimping the extension cable.
 * The board sits between the EBL and the LT 100 (plug in, plug out); the LT 100 buttons keep working.
 * The ON/OFF switches are optocoupler outputs to ground, pulse about 300 ms; the white wire confirms.
 * The blue/brown lines also feed the LT 100's battery voltage display. The electronics (≈ 50 mA)
-  are fine on them; relays, outputs and the display should use **12 V AUX** (EBL "Spare 4",
+  are fine on them; the relay, outputs and the display should use **12 V AUX** (EBL "Spare 4",
   unswitched, or the battery with its own fuse) so the LT 100 keeps reading the right voltage.
 * EBL notes (manual 811.0421): heater, frost valve, fridge, step light and Spare 4 stay on when
   the main switch is off; below 10.5 V everything except the frost valve is cut.
@@ -141,7 +141,8 @@ together with Wi-Fi, so the ESP32's own analog signals are there.
 | Lines | Function |
 |---|---|
 | GPA0–GPA7 | Inputs 1–8 (optocouplers) |
-| GPB0–GPB3 | Relays 1–4 (through a driver with flyback diodes) |
+| GPB0 | Relay: light (through a driver with a flyback diode) |
+| GPB1–GPB3 | spare (brought out on the spare header) |
 | GPB4 / GPB5 | EBL ON / OFF pulse (optocoupler to ground) |
 | GPB6 / GPB7 | EBL "12 V on" / mains indicator (optocoupler inputs) |
 
@@ -159,14 +160,14 @@ I²C addresses: LIS2DW12 0x18, MCP23017 0x20, ADS1115 0x48; the expansion header
 
 * 12 V inputs: fuse (polyfuse), reverse-polarity protection, TVS diode (van transients).
 * Sensor, rod and probe lines: series resistors and ESD protection.
-* Relay coils and outputs: flyback diodes.
-* Power use about 0.5 W idle (≈ 1 Ah/day from the leisure battery); each switched-on relay adds about 0.4 W.
+* Relay coil and outputs: flyback diodes.
+* Power use about 0.5 W idle (≈ 1 Ah/day from the leisure battery); the relay adds about 0.4 W while on.
 
 ## Firmware and pages (after the board)
 
 * EBL: "12 V system" switch in Venus OS, on the mods page and on the display; mains present as a status.
 * Inputs: gas/CO and smoke as Venus OS alarms and notifications.
-* Relays and outputs: switches in Venus OS (switch pane) and on the display.
+* Light relay and outputs: switches in Venus OS (switch pane) and on the display.
 * Rules on the board itself, also without the Pi: e.g. pump off when the fresh tank is empty, fan on
   above a temperature, light on when the door opens, warning when driving with the step out.
 * Tilt: levelling page (pitch, roll, how much to raise which wheel), water volume corrected for
