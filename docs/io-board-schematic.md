@@ -3,6 +3,9 @@
 Planning schematic for the board in [io-board.md](io-board.md), drawn sheet by sheet with every
 part and value. It is the base for the KiCad schematic and layout, not yet a manufacturing file.
 
+**KiCad project:** [hardware/io-board](../hardware/io-board/README.md) (schematic, placed board,
+parts list).
+
 ## 3D view
 
 | Board | Casing, lid off | Casing closed (front plate) |

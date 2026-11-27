@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name "io_board")(type "KiCad")(uri "${KIPRJMOD}/io_board.kicad_sym")(options "")(descr "Venus OS mods I/O board custom symbols"))
+)
