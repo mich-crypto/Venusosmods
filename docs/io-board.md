@@ -22,10 +22,10 @@ measured, the schematic is next.
 | 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
 | 2 outputs, 5 A | Relays with changeover contact (C / NO / NC), 5 A at 14 V DC, LED each. **Output 1 = light** (two-way with the wall switch, with "light on" sense), output 2 free | push-in |
 | Tilt | Accelerometer LIS2DW12: levelling, water tank slope correction, movement | on the board |
-| Temperature probe 2 | DS18B20 ("under the van") | push-in |
+| Humidity + temperature | **SHT40** on the board (I²C), in the front plate area behind a vent slot, cut off from the warm parts by a slot in the board; replaces temperature probe 2 | on the board |
 | **Expansion (RJ45)** | 12 V, ground and I²C for expansion boards (more inputs/outputs later), I²C as a differential pair (PCA9615) so the cable can be several metres | RJ45 |
 | Status | RGB status LED (front plate) | – |
-| Removed (simplified) | CAN, MOSFET outputs, analog inputs, 8 inputs → 3, display power out, spare header, I/O expander and ADC chips, separate PRESSURE socket | – |
+| Removed (simplified) | CAN, MOSFET outputs, analog inputs, 8 inputs → 3, display power out, spare header, I/O expander and ADC chips, separate PRESSURE socket, temperature probe 2 | – |
 
 ## Size and casing
 
@@ -167,7 +167,7 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 | Function | GPIO |
 |---|---|
 | Pressure sensor (ST2 green) | 4 |
-| Temperature probe 1 (water, ST2 yellow) / 2 | 5 / 6 |
+| Temperature probe (water, ST2 yellow) | 5 |
 | Grey rods ST3: common / rods (lowest first) | 9 / 1, 2, 7, 8 |
 | Leisure battery voltage (ST1 blue, divider) | 10 |
 | I²C (tilt sensor, expansion) | 15, 16 |
@@ -182,9 +182,10 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 | USB tablet socket on/off | 41 |
 | RGB status LED | 48 |
 | USB-C programming | 19, 20 |
+| Free | 6 |
 | Kept free | 0, 3, 45, 46 (strapping) |
 
-I²C address: LIS2DW12 0x18; expansion boards use other addresses.
+I²C addresses: LIS2DW12 0x18, SHT40 0x44; expansion boards use other addresses.
 
 ## Protection
 
@@ -201,6 +202,7 @@ I²C address: LIS2DW12 0x18; expansion boards use other addresses.
 * Tanks: fresh water in litres (pressure sensor), grey water from the rods.
 * Inputs: gas/CO and smoke as Venus OS alarms and notifications.
 * Outputs: light and output 2 as switches in Venus OS (switch pane) and on the tablet.
+* Humidity and temperature in the living area: Venus OS temperature service (with humidity), condensation warning.
 * Tilt: levelling page (pitch, roll, how much to raise which wheel), water volume corrected for
   slope, "set level" calibration, movement alarm.
 
