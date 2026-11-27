@@ -53,17 +53,19 @@ button and LED, the USB-C tablet socket and the status LED.
 
 ![ST1 pinout](io-board/ebl-lt100-st1.png)
 
-| Pin* | Wire | Function | Idle / off | Active / on | On the board |
+| Pin | Wire | Function | Idle / off | Active / on | On the board |
 |---|---|---|---|---|---|
 | 6 | blue | +12 V permanent | 12 V | 12 V | supply + and battery voltage |
-| 4 | brown | ground | 0 V | 0 V | supply − |
+| 5 | brown | ground | 0 V | 0 V | supply − |
 | 2 | green | ON button | 12 V | pulled to 0 V | pulse to ground |
 | 1 | yellow | OFF button | 12 V | pulled to 0 V | pulse to ground |
 | 3 | white | "12 V on" indicator | ≈ 2 V | 12 V | input, threshold ≈ 6 V; also the front LED |
-| 5 | pink | mains (230 V) indicator | 0 V | ≈ 8 V | input, threshold ≈ 4 V |
+| 4 | pink | mains (230 V) indicator | 0 V | ≈ 8 V | input, threshold ≈ 4 V |
 
-\* Pin numbers from the LT 100 wiring diagram; colours and functions are measured in the van.
-Check the moulded pin-1 mark on the plug.
+Pin numbers from the LT 100 wiring diagram (Fig. 3: 1 OFF, 2 ON, 3 indicator, 4 mains,
+5 − sensor, 6 + sensor); colours and functions measured in the van. Plug position confirmed:
+looking at the wire side with the clip on top, the clip row is **pink · brown · blue** (pins 4, 5, 6)
+and the other row holds yellow, green and white (pins 1, 2, 3).
 
 * The EBL needs a panel on ST1 to work; that is now the board.
 * ON/OFF: optocoupler outputs to ground, pulse about 300 ms; the white wire confirms.
@@ -221,5 +223,5 @@ I²C addresses: LIS2DW12 0x18, SHT40 0x44; expansion boards use other addresses.
 
 ## Still open
 
-* Confirm the pin-1 marks of ST1 and ST2.
+* ST1 bottom row order (yellow, green, white expected; check left to right with the clip on top).
 * Schematic, parts list with order numbers, layout (KiCad), then one prototype before more.
