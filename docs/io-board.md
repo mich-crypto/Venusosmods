@@ -17,12 +17,12 @@ measured, the schematic is next.
 | **LT 100: EBL 119 on/off** | Short pulse to ground on ON (green) or OFF (yellow); reads "12 V on" (white) and mains (pink); battery voltage from the blue wire | **ST1**: Micro-Fit 6-pin, 2 rows |
 | **LT 100: fresh water** | The existing fresh water cable, now connected to the **pressure sensor** (QDY30A 0–3.3 V) and the water temperature probe at the tank | **ST2**: Micro-Fit 6-pin, 1 row |
 | **LT 100: grey water** | Rod sender, common + 4 rods | **ST3**: Micro-Fit 5-pin, 1 row |
-| 12 V button + LED | Push button on the front plate: 12 V system on/off, also without Wi-Fi or the tablet; green LED driven straight by the "12 V on" wire | front plate |
+| 12 V ON / OFF buttons + LED | Two push buttons on the front plate, wired **straight to the EBL** (ST1 green / yellow) like the LT 100's buttons: they work even with the ESP32 off or being updated. Green LED driven straight by the "12 V on" wire | front plate |
 | Truma CP plus | LIN bus (TJA1021), **in and out**: two RJ12 sockets in parallel, so the board sits in the Truma cable chain | 2 × RJ12 |
 | USB-C programming | Flashing and serial log (ESP32 native USB), Boot and Reset buttons | USB-C |
 | USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W** (PD charger chip, e.g. SW3516 or IP6557, from 12 V AUX), plain 5 V for devices without PD; the board can switch it off | USB-C, front plate |
 | 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V = on" or "contact to ground = on"; what each input means is set later in the settings | push-in |
-| 2 outputs, 5 A | Relays with changeover contact, C fed from 12 V AUX (5 A fuse each, solder jumper for a dry contact). **Output 1 = inside light**, **output 2 = outdoor light**, both two-way capable with a wall switch and with "light on" current sense | push-in |
+| Output 1, Output 2 | Relays with changeover contact, 5 A, C fed from 12 V AUX (5 A fuse each, solder jumper for a dry contact); both two-way capable with a wall switch and with an "output on" current sense. Use decided per output (e.g. a light) | push-in |
 | CP plus 12 V | Fused 12 V out (1 A PTC, from 12 V AUX) for the Truma CP plus panel's own supply wires (red, red/black) | push-in |
 | Tilt | Accelerometer LIS2DW12: levelling, water tank slope correction, movement | on the board |
 | Humidity + temperature | **SHT40** on the board (I²C), in the front plate area behind a vent slot, cut off from the warm parts by a slot in the board; replaces temperature probe 2 | on the board |
@@ -40,7 +40,7 @@ Every plug seen from the wire side, clip on top:
 
 The board sits **in place of the LT 100**: its casing slides in flat through the LT 100 opening
 and lies in the space behind the panel; its front plate closes the opening and carries the 12 V
-button and LED, the USB-C tablet socket and the status LED.
+ON/OFF buttons and LED, the USB-C tablet socket and the status LED.
 
 | | Size |
 |---|---|
@@ -144,15 +144,16 @@ cable from the CP plus in, the other out to the next device if there is one. **P
 also needs its own 12 V supply: the board's fused **CP plus 12 V** terminal. The TJA1021
 transceiver listens and answers like an iNet box (see [truma.md](truma.md)).
 
-## Outputs: 2 relays, 5 A
+## Output 1 and Output 2: 2 relays, 5 A
 
 Both relay commons are fed on the board from **12 V AUX**, each through its own 5 A fuse
 (blade or polyfuse), so the NO and NC terminals carry switched +12 V and only the load's wire
 goes to the board; the load's minus goes to ground. A solder jumper per relay separates C from
 the 12 V again, for a dry (potential-free) contact; C is still on a terminal for that.
 
-**Output 1: light.** The wall switch keeps working, also when the board's software has stopped:
-relay and switch form a two-way (stairway) circuit, now fed from the board's side.
+**Output 1 and Output 2** are identical. Example with a light and its wall switch: the wall switch keeps
+working, also when the board's software has stopped; relay and switch form a two-way (stairway)
+circuit, fed from the board's side.
 
 ```
  12 V AUX ── fuse 5 A ── current sense ── relay 1 C
@@ -165,15 +166,15 @@ relay and switch form a two-way (stairway) circuit, now fed from the board's sid
 * The round on/off rocker is replaced by a round **ON-ON changeover rocker** of the same size
   (3 tabs): A and B to the board's NO and NC, the middle tab to the lamp. Two wires from the
   board to the switch, the lamp wire stays at the switch.
-* **"Light on"** comes from a small current sensor on relay 1's feed (shunt + comparator): when
+* **"Output on"** comes from a small current sensor on each relay's feed (shunt + comparator): when
   the lamp draws current it is on, whichever way the switch and the relay stand. No extra wire.
-* **Decided: the light works with the EBL main switch off.** 12 V AUX is connected to the EBL's
+* **Decided: the outputs work with the EBL main switch off.** 12 V AUX is connected to the EBL's
   **Spare 4** output (block 5, pins 4 + / 5 −, fused in the EBL), which the main switch does not
   turn off. The EBL's low-voltage cut-off (below 10.5 V) still switches Spare 4 off, so a
   forgotten light can't drain the battery; the board warns before that from the battery voltage.
-* The relay stays where it is if the ESP32 restarts; only without power on 12 V AUX the light is off.
+* Normal (non-latching) relays (decided): they drop for a moment if the ESP32 restarts.
 
-**Output 2: outdoor light**, wired the same way: two-way with its own switch if it has one, or lamp + on NO only; its own "light on" sense (GPIO6).
+Without a wall switch: the load's + on NO only.
 
 ## Inputs (3)
 
@@ -215,12 +216,12 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 | I²C (tilt sensor, expansion) | 15, 16 |
 | Interrupt (tilt sensor, expansion) | 47 |
 | Truma LIN RX / TX / SLP | 17 / 18 / 21 |
-| Relay 1 (inside light) / relay 2 (outdoor light) | 38 / 39 |
-| "Light on" inside / outdoor (current sense) | 14 / 6 |
+| Output 1 / Output 2 relay | 38 / 39 |
+| Output 1 / 2 on (current sense) | 14 / 6 |
 | Inputs 1 / 2 / 3 | 11 / 12 / 13 |
 | EBL ON / OFF pulse | 35 / 36 |
 | EBL "12 V on" / mains | 37 / 42 |
-| 12 V button | 40 |
+| Free (was the 12 V button) | 40 |
 | USB tablet socket on/off | 41 |
 | RGB status LED | 48 |
 | USB-C programming | 19, 20 |
