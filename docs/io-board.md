@@ -20,7 +20,7 @@ measured, the schematic is next.
 | USB-C programming | Flashing and serial log (ESP32 native USB), Boot and Reset buttons | USB-C |
 | USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W** (PD charger chip, e.g. SW3516 or IP6557, from 12 V AUX), plain 5 V for devices without PD; the board can switch it off | USB-C, front plate |
 | 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V = on" or "contact to ground = on"; what each input means is set later in the settings | push-in |
-| 2 outputs, 5 A | Relays with changeover contact (C / NO / NC), 5 A at 14 V DC, LED each. **Output 1 = light** (two-way with the wall switch, with "light on" sense), output 2 free | push-in |
+| 2 outputs, 5 A | Relays with changeover contact, 5 A at 14 V DC, LED each; the common (C) is **fed from 12 V AUX on the board** through a 5 A fuse, so NO / NC give switched 12 V (a solder jumper turns a relay back into a dry contact). **Output 1 = light** (two-way with the wall switch, "light on" by current sensing), output 2 free | push-in |
 | Tilt | Accelerometer LIS2DW12: levelling, water tank slope correction, movement | on the board |
 | Humidity + temperature | **SHT40** on the board (I²C), in the front plate area behind a vent slot, cut off from the warm parts by a slot in the board; replaces temperature probe 2 | on the board |
 | **Expansion (RJ45)** | 12 V, ground and I²C for expansion boards (more inputs/outputs later), I²C as a differential pair (PCA9615) so the cable can be several metres | RJ45 |
@@ -117,25 +117,34 @@ transceiver listens and answers like an iNet box (see [truma.md](truma.md)).
 
 ## Outputs: 2 relays, 5 A
 
-**Output 1: light.** The wall switch keeps working, also when the board is off: the relay and the
-switch form a two-way (stairway) circuit.
+Both relay commons are fed on the board from **12 V AUX**, each through its own 5 A fuse
+(blade or polyfuse), so the NO and NC terminals carry switched +12 V and only the load's wire
+goes to the board; the load's minus goes to ground. A solder jumper per relay separates C from
+the 12 V again, for a dry (potential-free) contact; C is still on a terminal for that.
+
+**Output 1: light.** The wall switch keeps working, also when the board's software has stopped:
+relay and switch form a two-way (stairway) circuit, now fed from the board's side.
 
 ```
- +12 V (fused) ──── wall switch C
-                   (ON-ON changeover)
-                     A ─────────── relay 1 NO
-                     B ─────────── relay 1 NC
-                                   relay 1 C ──── lamp + ──── lamp − ── GND
-                                           │
-                                           └── "light on" sense (optocoupler)
+ 12 V AUX ── fuse 5 A ── current sense ── relay 1 C
+                                           NO ─────────── wall switch A
+                                           NC ─────────── wall switch B
+                                                          (ON-ON changeover)
+                                                          wall switch C ──── lamp + ── lamp − ── GND
 ```
 
 * The round on/off rocker is replaced by a round **ON-ON changeover rocker** of the same size
-  (3 tabs); one more wire to the board.
-* The "light on" sense tells the board whether the lamp is really on (the wall switch may have
-  changed it).
+  (3 tabs): A and B to the board's NO and NC, the middle tab to the lamp. Two wires from the
+  board to the switch, the lamp wire stays at the switch.
+* **"Light on"** comes from a small current sensor on relay 1's feed (shunt + comparator): when
+  the lamp draws current it is on, whichever way the switch and the relay stand. No extra wire.
+* The light now takes its 12 V from 12 V AUX, so it also works with the EBL main switch off (if
+  12 V AUX comes from Spare 4 or the battery). To keep the old behaviour (light only with the
+  12 V system on), feed 12 V AUX from an EBL circuit that the main switch turns off, or use relay
+  1 as a dry contact with the old supply wire on C.
+* The relay stays where it is if the ESP32 restarts; only without power on 12 V AUX the light is off.
 
-**Output 2: free**, changeover contact on push-in terminals (C / NO / NC), 5 A.
+**Output 2: free**, switched +12 V on NO (and NC), 5 A; dry contact by solder jumper.
 
 ## Inputs (3)
 
@@ -178,7 +187,7 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 | Interrupt (tilt sensor, expansion) | 47 |
 | Truma LIN RX / TX / SLP | 17 / 18 / 21 |
 | Relay 1 (light) / relay 2 | 38 / 39 |
-| "Light on" sense | 14 |
+| "Light on" (relay 1 current sense) | 14 |
 | Inputs 1 / 2 / 3 | 11 / 12 / 13 |
 | EBL ON / OFF pulse | 35 / 36 |
 | EBL "12 V on" / mains | 37 / 42 |
