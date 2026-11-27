@@ -15,7 +15,7 @@ connections below are agreed and the van wiring is measured; the schematic is ne
 | Fresh water | Pressure sensor QDY30A 0–3.3 V + water temperature probe | Micro-Fit 6-pin, 1 row, label **PRESSURE** |
 | Grey water | Rod sender (common + 4 rods), same plug as on the LT 100 | Micro-Fit 5-pin, 1 row |
 | Truma CP plus | LIN bus, TJA1021 transceiver | RJ12 |
-| 1 relay: light | 10 A at 14 V DC, changeover contact (C / NO / NC), LED; switches the light | push-in, ≥ 10 A |
+| 1 relay: light | 10 A at 14 V DC, changeover contact (C / NO / NC), LED; two-way circuit with the wall switch, plus a "light on" sense input (see *Light*) | push-in, ≥ 10 A |
 | 4 silent outputs | Low-side MOSFET, on/off, about 5 A, flyback diode, LED each | push-in |
 | 8 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
 | 2 analog inputs | Jumper per input: 0–10 V, 4–20 mA, or resistive sender (0–190 Ω / 240–33 Ω, e.g. a second tank or a fuel sender); 16-bit (ADS1115) | push-in |
@@ -99,6 +99,30 @@ Micro-Fit 5-pin, same plug as the LT 100's grey socket (ST3), moved to the board
 grey LEDs stay dark. The board drives the common rod itself (short pulses, no constant voltage,
 see [wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug)).
 
+## Light (relay + existing wall switch)
+
+The wall switch keeps working, also when the board is off or broken: the relay and the switch
+form a two-way (stairway) circuit, like two switches for one lamp in a hallway. Either one
+changes the light.
+
+```
+ +12 V (fused) ──── wall switch C
+                   (ON-ON changeover)
+                     A ─────────── relay NO
+                     B ─────────── relay NC
+                                   relay C ──── lamp + ──── lamp − ── GND
+                                         │
+                                         └── "light on" sense (optocoupler) → GPB1
+```
+
+* The existing round rocker (single on/off) is replaced by a round **ON-ON changeover rocker** of
+  the same size, so the hole in the panel stays the same; one more wire runs from the switch to the
+  board (3 wires instead of 2).
+* The board can't know from the relay alone whether the lamp is on (the wall switch may have
+  changed it), so it reads the lamp wire: the "light on" sense. Venus OS and the display show the
+  real state, and "switch on" from the board only flips the relay when the light is off.
+* The lamp current goes through the relay contact (10 A); typical LED lighting is well below that.
+
 ## Inputs
 
 | Input | Use | Signal |
@@ -142,7 +166,8 @@ together with Wi-Fi, so the ESP32's own analog signals are there.
 |---|---|
 | GPA0–GPA7 | Inputs 1–8 (optocouplers) |
 | GPB0 | Relay: light (through a driver with a flyback diode) |
-| GPB1–GPB3 | spare (brought out on the spare header) |
+| GPB1 | "Light on" sense (optocoupler on the lamp wire) |
+| GPB2–GPB3 | spare (brought out on the spare header) |
 | GPB4 / GPB5 | EBL ON / OFF pulse (optocoupler to ground) |
 | GPB6 / GPB7 | EBL "12 V on" / mains indicator (optocoupler inputs) |
 
