@@ -32,9 +32,9 @@ humidity sensor. The programming USB-C sits behind the plate.
 |---|---|---|
 | U3 | ESP32-S3-WROOM-1-N8 | controller, Wi-Fi, Bluetooth |
 | U1 | Traco TSR 1-2450 | 12 → 5 V, 1 A |
-| U2 | AP7361C-33E | 5 → 3.3 V, 1 A |
+| U2 | AP7361C-33E (SOT223) | 5 → 3.3 V, 1 A |
 | D1, D2 | SS34 | supply OR-ing, reverse polarity |
-| D4 | SMBJ24A | 12 V transient clamp |
+| D4 | SMBJ18A | 12 V transient clamp (clamps 29.2 V, below the 35 V parts) |
 | F1 / F2 | 0.5 A PTC / 10 A blade fuse | ST1 supply / 12 V AUX |
 | U5, U6 | AQY212EH photoMOS | EBL ON / OFF pulses from the ESP32 |
 | SW3, SW4 | front push buttons | EBL ON / OFF by hand (direct) |
@@ -47,8 +47,8 @@ humidity sensor. The programming USB-C sits behind the plate.
 | D60 | PESD1LIN | LIN ESD protection |
 | F6 | 1 A PTC | 12 V for the CP plus |
 | U80 | SW3516H (+ reference parts) | USB-C PD 30 W |
-| Q80, Q81 | AO3401, 2N7002 | USB PD on/off |
-| U90 | LIS2DW12 | tilt |
+| Q80, Q81 | AO3401A, 2N7002 | USB PD on/off (R80/R83 halve the gate voltage, VGS max ±12 V) |
+| U90 | LIS3DH | tilt (LGA-16 3 × 3) |
 | U91 | SHT40 | humidity + temperature |
 | U92 | PCA9615 | differential I²C to the RJ45 |
 | U4 | USBLC6-2SC6 | USB ESD |

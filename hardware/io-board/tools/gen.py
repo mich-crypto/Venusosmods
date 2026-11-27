@@ -10,14 +10,14 @@ CUSTOM={'io_board:PCA9615':'''(symbol "io_board:PCA9615" (pin_names (offset 1.01
   (symbol "PCA9615_0_1" (rectangle (start -7.62 10.16) (end 7.62 -10.16) (stroke (width 0.254) (type default)) (fill (type background))))
   (symbol "PCA9615_1_1"
     (pin power_in line (at -10.16 7.62 0) (length 2.54) (name "VDDA" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
-    (pin bidirectional line (at -10.16 2.54 0) (length 2.54) (name "SCL" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))
-    (pin bidirectional line (at -10.16 0 0) (length 2.54) (name "SDA" (effects (font (size 1.27 1.27)))) (number "3" (effects (font (size 1.27 1.27)))))
-    (pin power_in line (at -10.16 -7.62 0) (length 2.54) (name "GND" (effects (font (size 1.27 1.27)))) (number "4" (effects (font (size 1.27 1.27)))))
-    (pin input line (at -10.16 -2.54 0) (length 2.54) (name "EN" (effects (font (size 1.27 1.27)))) (number "5" (effects (font (size 1.27 1.27)))))
-    (pin bidirectional line (at 10.16 2.54 180) (length 2.54) (name "DSDAM" (effects (font (size 1.27 1.27)))) (number "6" (effects (font (size 1.27 1.27)))))
-    (pin bidirectional line (at 10.16 5.08 180) (length 2.54) (name "DSDAP" (effects (font (size 1.27 1.27)))) (number "7" (effects (font (size 1.27 1.27)))))
-    (pin bidirectional line (at 10.16 0 180) (length 2.54) (name "DSCLP" (effects (font (size 1.27 1.27)))) (number "8" (effects (font (size 1.27 1.27)))))
-    (pin bidirectional line (at 10.16 -2.54 180) (length 2.54) (name "DSCLM" (effects (font (size 1.27 1.27)))) (number "9" (effects (font (size 1.27 1.27)))))
+    (pin bidirectional line (at -10.16 2.54 0) (length 2.54) (name "SCL" (effects (font (size 1.27 1.27)))) (number "4" (effects (font (size 1.27 1.27)))))
+    (pin bidirectional line (at -10.16 0 0) (length 2.54) (name "SDA" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))
+    (pin power_in line (at -10.16 -7.62 0) (length 2.54) (name "GND" (effects (font (size 1.27 1.27)))) (number "5" (effects (font (size 1.27 1.27)))))
+    (pin input line (at -10.16 -2.54 0) (length 2.54) (name "EN" (effects (font (size 1.27 1.27)))) (number "3" (effects (font (size 1.27 1.27)))))
+    (pin bidirectional line (at 10.16 2.54 180) (length 2.54) (name "DSDAM" (effects (font (size 1.27 1.27)))) (number "9" (effects (font (size 1.27 1.27)))))
+    (pin bidirectional line (at 10.16 5.08 180) (length 2.54) (name "DSDAP" (effects (font (size 1.27 1.27)))) (number "8" (effects (font (size 1.27 1.27)))))
+    (pin bidirectional line (at 10.16 0 180) (length 2.54) (name "DSCLP" (effects (font (size 1.27 1.27)))) (number "7" (effects (font (size 1.27 1.27)))))
+    (pin bidirectional line (at 10.16 -2.54 180) (length 2.54) (name "DSCLM" (effects (font (size 1.27 1.27)))) (number "6" (effects (font (size 1.27 1.27)))))
     (pin power_in line (at 10.16 7.62 180) (length 2.54) (name "VDDB" (effects (font (size 1.27 1.27)))) (number "10" (effects (font (size 1.27 1.27)))))
   )
 )'''}
@@ -77,12 +77,12 @@ def text(s,X,Y,size=3.81):
     items.append(f'(text "{q(s)}" (at {X} {Y} 0) (effects (font (size {size} {size}) bold) (justify left bottom)) (uuid {U()}))')
 # group by section using ref order in parts.P (sections in file order)
 sections=[('1 · Power',lambda r:r in ('J4','F1','D1','J5','F2','D2','D4','C1','U1','C2','U2','C3','D3','R1','R2','C4')),
-          ('2 · ESP32-S3, USB-C programming, status LED',lambda r:r in ('U3','C5','C6','R3','C7','SW1','SW2','J1','R4','R5','U4','D5','R6','C8')),
+          ('2 · ESP32-S3, USB-C programming, status LED',lambda r:r in ('U3','C5','C6','R3','C7','SW1','SW2','J1','R4','R5','U4','D5','D6','R6','C8')),
           ('3 · EBL 119 (ST1) and front plate buttons',lambda r:r in ('R10','R11','U5','U6','R12','D7','U7','R15','R13','D8','U8','R16','R14','D9','SW3','SW4')),
           ('4 · Tanks: ST2 fresh water, ST3 grey water',lambda r:r in ('J6','R20','F3','D20','R21','C20','R22','D21','R23','R24','J7','R30') or re.match(r'^(R3[1-4]|C3[1-4]|R4[1-4]|D3[1-4])$',r)),
           ('5 · Output 1 and Output 2 (relays with current sense)',lambda r:r in ('R58','R59','F4','F5','R50','R51','JP1','JP2','K1','K2','Q1','Q2','D11','D12','D41','D42','U11','U12','U21','U22') or re.match(r'^R[12]0[5-8]$',r)),
           ('6 · Truma LIN, CP plus 12 V, inputs',lambda r:r in ('J8','J9','D60','D61','C60','U60','R61','R62','R63','F6','J10','JP10') or re.match(r'^(D7[1-3]|R7[1-6]|U7[1-3])$',r)),
-          ('7 · USB PD module, tilt + humidity sensors, RJ45 expansion',lambda r:r in ('F7','Q80','R80','Q81','R81','R82','J2','R90','R91','R93','U90','C90','U91','C91','U92','C92','C93','F8','R92','J3'))]
+          ('7 · USB PD module, tilt + humidity sensors, RJ45 expansion',lambda r:r in ('F7','Q80','R80','Q81','R81','R82','R83','J2','R90','R91','R93','U90','C90','U91','C91','U92','C92','C93','F8','R92','J3'))]
 used=set(); PAGEW=760
 y=30
 allnets={}

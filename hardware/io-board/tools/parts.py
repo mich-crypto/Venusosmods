@@ -15,11 +15,11 @@ add('J5','Connector:Screw_Terminal_01x10','power push-in','TerminalBlock_Phoenix
     {'1':'V12_AUX_IN','2':G,'3':'OUT1_C','4':'OUT1_NO','5':'OUT1_NC','6':'OUT2_C','7':'OUT2_NO','8':'OUT2_NC','9':'TRUMA_12V','10':G},'1 12V AUX+ (EBL Spare 4), 2 GND, 3-5 Output 1 C/NO/NC, 6-8 Output 2 C/NO/NC, 9 CP plus 12V+, 10 GND')
 add('F2','Device:Fuse','10A','Fuse:Fuseholder_Blade_Mini_Keystone_3568',{'1':'V12_AUX_IN','2':'V12_AUX'})
 D('D2','Diode:SS34','SS34','Diode_SMD:D_SMA','V12_AUX','V12_SYS')
-add('D4','Device:D_TVS','SMBJ24CA','Diode_SMD:D_SMB',{'1':'V12_SYS','2':G})
+add('D4','Device:D_TVS','SMBJ18A','Diode_SMD:D_SMB',{'1':'V12_SYS','2':G},'unidirectional, band to V12_SYS; clamps 29.2 V, below C1 35 V and TSR-1 36 V')
 C('C1','47u/35V','V12_SYS',G,'Capacitor_SMD:C_1210_3225Metric')
 add('U1','Regulator_Switching:TSR_1-2450','TSR 1-2450','Converter_DCDC:Converter_DCDC_TRACO_TSR-1_THT',{'1':'V12_SYS','2':G,'3':'+5V'})
 C('C2','22u','+5V',G,C8)
-add('U2','Regulator_Linear:AP7361C-33E','AP7361C-33E','Package_TO_SOT_SMD:SOT-89-3',{'1':'+5V','2':G,'3':'+3V3'})
+add('U2','Regulator_Linear:AP7361C-33E','AP7361C-33E','Package_TO_SOT_SMD:SOT-223-3_TabPin2',{'1':'+5V','2':G,'3':'+3V3'},'-33E = SOT223: 1 IN, 2 GND (tab), 3 OUT')
 C('C3','22u','+3V3',G,C8)
 D('D3','Diode:SS34','SS14','Diode_SMD:D_SMA','VBUS_PROG','+5V')
 R('R1','100k','ST1_12V','VBAT_SENSE'); R('R2','22k','VBAT_SENSE',G); C('C4','100n','VBAT_SENSE',G)
@@ -39,8 +39,9 @@ add('J1','Connector:USB_C_Receptacle_USB2.0_16P','USB PROG','Connector_USB:USB_C
      'A6':'USB_DP','B6':'USB_DP','A7':'USB_DM','B7':'USB_DM','A8':'NC','B8':'NC'})
 R('R4','5.1k','CC1_PROG',G); R('R5','5.1k','CC2_PROG',G)
 add('U4','Power_Protection:USBLC6-2SC6','USBLC6-2SC6','Package_TO_SOT_SMD:SOT-23-6',{'1':'USB_DM','6':'USB_DM','3':'USB_DP','4':'USB_DP','5':'VBUS_PROG','2':G})
-add('D5','LED:SK6812MINI','SK6812MINI-E','LED_SMD:LED_SK6812MINI_PLCC4_3.5x3.5mm_P1.75mm',{'4':'+5V','2':G,'3':'LED_DIN','1':'NC'},'status LED, front plate')
-R('R6','330','LED_DATA','LED_DIN'); C('C8','100n','+5V',G)
+add('D5','LED:SK6812MINI','SK6812MINI','LED_SMD:LED_SK6812MINI_PLCC4_3.5x3.5mm_P1.75mm',{'4':'LED_VDD','2':G,'3':'LED_DIN','1':'NC'},'status LED, front plate; SK6812MINI (3.5 x 3.5, top mount), not the -E (3.2 x 2.8, other pinout)')
+D('D6','Diode:1N4148W','1N4148W','Diode_SMD:D_SOD-123','+5V','LED_VDD')  # LED at 4.3 V so 3.3 V data meets VIH 0.7 VDD
+R('R6','330','LED_DATA','LED_DIN'); C('C8','100n','LED_VDD',G)
 # ---------------- 3 EBL
 for ref,rr,drv,line in [('U5','R10','EBL_ON_DRV','EBL_ON'),('U6','R11','EBL_OFF_DRV','EBL_OFF')]:
     R(rr,'330',drv,ref+'_LED')
@@ -72,7 +73,7 @@ for k in range(1,5):
 R('R59','100k','+3V3','VREF'); R('R58','4.7k','VREF',G)
 for n in (1,2):
     add(f'F{3+n}','Device:Fuse','5A','Fuse:Fuse_1812_4532Metric',{'1':'V12_AUX','2':f'SH{n}_P'})
-    R(f'R5{n-1}','0.05','SH'+str(n)+'_P',f'SH{n}_N','Resistor_SMD:R_2512_6332Metric')
+    R(f'R5{n-1}','0.05 2W','SH'+str(n)+'_P',f'SH{n}_N','Resistor_SMD:R_2512_6332Metric')  # 5 A: 1.25 W
     add(f'JP{n}','Jumper:SolderJumper_2_Bridged','JP C-feed','Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm',{'1':f'SH{n}_N','2':f'OUT{n}_C'})
     add(f'K{n}','Relay:G5LE-1','G5LE-1 12VDC',"Relay_THT:Relay_SPDT_Omron-G5LE-1",{'5':'V12_AUX','2':f'K{n}_COIL','1':f'OUT{n}_C','3':f'OUT{n}_NO','4':f'OUT{n}_NC'},f'Output {n}')
     add(f'Q{n}','Transistor_FET:AO3400A','AO3400A','Package_TO_SOT_SMD:SOT-23',{'1':f'Q{n}_G','2':G,'3':f'K{n}_COIL'})
@@ -102,16 +103,17 @@ for k in (1,2,3):
 add('F7','Device:Fuse','4A','Fuse:Fuse_1812_4532Metric',{'1':'V12_AUX','2':'PD_SUPPLY'})
 add('Q80','Transistor_FET:AO3401A','AO3401A','Package_TO_SOT_SMD:SOT-23',{'2':'PD_SUPPLY','3':'PD_12V','1':'PD_G'})
 R('R80','100k','PD_SUPPLY','PD_G')
-add('Q81','Transistor_FET:2N7002','2N7002','Package_TO_SOT_SMD:SOT-23',{'3':'PD_G','2':G,'1':'PD_EN_G'})
+add('Q81','Transistor_FET:2N7002','2N7002','Package_TO_SOT_SMD:SOT-23',{'3':'PD_G_DRV','2':G,'1':'PD_EN_G'})
+R('R83','100k','PD_G_DRV','PD_G')  # with R80: VGS = -V/2, inside AO3401A +-12 V
 R('R81','1k','USB_PD_EN','PD_EN_G'); R('R82','100k','PD_EN_G',G)
 add('J2','Connector_Generic:Conn_01x02','PD module','Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical',{'1':'PD_12V','2':G},'ready-made 12 V to USB-C PD 30 W module, its socket in the front plate')
 R('R90','4.7k','+3V3','SDA'); R('R91','4.7k','+3V3','SCL'); R('R93','10k','+3V3','I2C_INT')
-add('U90','Sensor_Motion:LIS3DH','LIS2DH12','Package_LGA:LGA-16_3x3mm_P0.5mm_LayoutBorder3x5y',
-    {'1':'+3V3','14':'+3V3','5':G,'10':G,'12':G,'4':'SCL','6':'SDA','7':G,'8':'+3V3','11':'I2C_INT','9':'NC','13':'NC','15':'NC','16':'NC','2':'NC','3':'NC'},'tilt, I2C 0x18, INT1 open drain')
+add('U90','Sensor_Motion:LIS3DH','LIS3DH','Package_LGA:LGA-16_3x3mm_P0.5mm_LayoutBorder3x5y',
+    {'1':'+3V3','14':'+3V3','5':G,'10':G,'12':G,'4':'SCL','6':'SDA','7':G,'8':'+3V3','11':'I2C_INT','9':'NC','13':'NC','15':'NC','16':'NC','2':'NC','3':'NC'},'tilt, I2C 0x18 (LIS2DH12 is LGA-12 2x2, not this footprint)')
 C('C90','100n','+3V3',G)
 add('U91','Sensor_Humidity:SHT4x','SHT40-AD1B','Sensor_Humidity:Sensirion_DFN-4_1.5x1.5mm_P0.8mm_SHT4x_NoCentralPad',{'1':'SDA','2':'SCL','3':'+3V3','4':G},'humidity + temperature, I2C 0x44')
 C('C91','100n','+3V3',G)
-add('U92','io_board:PCA9615','PCA9615DP','Package_SO:TSSOP-10_3x3mm_P0.5mm',{'1':'+3V3','2':'SCL','3':'SDA','4':G,'5':'+3V3','6':'DSDA_M','7':'DSDA_P','8':'DSCL_P','9':'DSCL_M','10':'+5V'},'pinout to verify against the NXP datasheet before layout')
+add('U92','io_board:PCA9615','PCA9615DP','Package_SO:TSSOP-10_3x3mm_P0.5mm',{'1':'+3V3','2':'SDA','3':'+3V3','4':'SCL','5':G,'6':'DSCL_M','7':'DSCL_P','8':'DSDA_P','9':'DSDA_M','10':'+5V'},'pinout from NXP PCA9615 Rev. 2, Table 3: 1 VDD(A), 2 SDA, 3 EN, 4 SCL, 5 VSS, 6 DSCLM, 7 DSCLP, 8 DSDAP, 9 DSDAM, 10 VDD(B)')
 C('C92','100n','+3V3',G); C('C93','100n','+5V',G)
 add('F8','Device:Polyfuse','1A','Fuse:Fuse_1812_4532Metric',{'1':'V12_AUX','2':'EXP_12V'})
 R('R92','100','I2C_INT','EXP_INT')
