@@ -85,14 +85,17 @@ wire (the LT 100's 12 V for the rods) now carries the sensor supply.
 | Pin* | Wire | Was (rods, LT 100) | Now (board) | Sensor / probe wire |
 |---|---|---|---|---|
 | 5 | white | Base, +12 V | **+5 V sensor supply** | QDY30A red (V+) |
-| 4 | brown | ¼ rod | **GND** | QDY30A green (V−) + probe black (GND) |
+| 4 | brown | ¼ rod | **GND pressure sensor** | QDY30A green (V−) |
 | 3 | green | ½ rod | **pressure signal** (10 kΩ + RC to GPIO4) | QDY30A yellow (out) |
 | 2 | yellow | ¾ rod | **water temperature data** (DS18B20, 4.7 kΩ to 3.3 V) | probe yellow (data) |
 | 1 | grey | Full rod | **+3.3 V** for the temperature probe | probe red (VDD) |
-| 6 | – | not connected | not connected | – |
+| 6 | – (new wire) | not connected | **GND temperature probe** | probe black (GND) |
 
 \* Pin numbers as on the LT 100's ST2 (grey 1 … white 5); confirm the pin-1 mark.
 
+* Pin 6 was empty in the LT 100 cable, so the cable has only 5 wires: add a 6th wire (and a
+  Micro-Fit crimp contact) for the probe's ground. Both grounds are joined on the board; a
+  separate wire keeps the probe's return current off the pressure signal's ground.
 * **5 V, not 12 V**, on the white wire: the 0–3.3 V version of the QDY30A runs on 5 V (see
   [wiring.md](wiring.md)). Do not plug this cable back into an LT 100 afterwards.
 * The pressure sensor's vent tube needs open air: make the joint at the tank in a small dry box
