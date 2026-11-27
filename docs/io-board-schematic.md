@@ -95,8 +95,9 @@ projects. What is right, what to check, and what I recommend changing.
 3. **Check the EBL Spare 4 fuse.** 12 V AUX can draw up to about 10 A (two lights, 30 W charging,
    CP plus, expansion); the board's F2 is 10 A. The fuse in the EBL's Spare 4 slot must be at
    least that, or the lights and charging share whatever it allows.
-4. **Is there a grey water sensor?** The LT 100's grey socket was empty in your photo. If there
-   is no sensor, ST3 can stay on the board for later, but nothing needs wiring now.
+4. **Grey water sensor:** a passive 5-rod probe on about 5 m of cable. Its wire colours from the
+   datasheet are uncertain (two of ge/gr): find the common and each level with the beep test.
+   The rod inputs now use 10 kΩ series, 100 nF and 100 kΩ pull-down (sheet 4) for the long cable.
 5. **RJ45 carries 12 V.** Keep the "NOT ETHERNET" label on the casing, or use a different plug
    (e.g. a 6-pin Micro-Fit) so nobody plugs a network cable in by mistake.
 

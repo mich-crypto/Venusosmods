@@ -1,5 +1,7 @@
 # I/O board: specification (planning)
 
+> Full planning schematic, parts list, 3D view and design review: [io-board-schematic.md](io-board-schematic.md).
+
 One printed circuit board that **replaces the LT 100 panel** and the hand-wired I/O extension
 (ESP32-S3 dev board, buck converter, resistors). It switches the EBL 119, reads the fresh and grey
 tanks, talks to the Truma CP plus, charges a tablet, and has 3 inputs, 2 outputs and a tilt
@@ -20,7 +22,8 @@ measured, the schematic is next.
 | USB-C programming | Flashing and serial log (ESP32 native USB), Boot and Reset buttons | USB-C |
 | USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W** (PD charger chip, e.g. SW3516 or IP6557, from 12 V AUX), plain 5 V for devices without PD; the board can switch it off | USB-C, front plate |
 | 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V = on" or "contact to ground = on"; what each input means is set later in the settings | push-in |
-| 2 outputs, 5 A | Relays with changeover contact, 5 A at 14 V DC, LED each; the common (C) is **fed from 12 V AUX on the board** through a 5 A fuse, so NO / NC give switched 12 V (a solder jumper turns a relay back into a dry contact). **Output 1 = light** (two-way with the wall switch, "light on" by current sensing), output 2 free | push-in |
+| 2 outputs, 5 A | Relays with changeover contact, C fed from 12 V AUX (5 A fuse each, solder jumper for a dry contact). **Output 1 = inside light**, **output 2 = outdoor light**, both two-way capable with a wall switch and with "light on" current sense | push-in |
+| CP plus 12 V | Fused 12 V out (1 A PTC, from 12 V AUX) for the Truma CP plus panel's own supply wires (red, red/black) | push-in |
 | Tilt | Accelerometer LIS2DW12: levelling, water tank slope correction, movement | on the board |
 | Humidity + temperature | **SHT40** on the board (I²C), in the front plate area behind a vent slot, cut off from the warm parts by a slot in the board; replaces temperature probe 2 | on the board |
 | **Expansion (RJ45)** | 12 V, ground and I²C for expansion boards (more inputs/outputs later), I²C as a differential pair (PCA9615) so the cable can be several metres | RJ45 |
@@ -120,14 +123,25 @@ Step-by-step guide: [fresh-water-wiring.md](fresh-water-wiring.md).
 
 ## ST3: grey water rods
 
-Micro-Fit 5-pin, same plug as the LT 100's grey socket. The board drives the common rod with short
-pulses (no constant voltage, so the rods don't corrode) and reads the four rods, see
-[wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug).
+Micro-Fit 5-pin, same plug as the LT 100's grey socket. The sensor is a passive rod probe (5
+stainless rods in a 53 mm cap, up to 380 mm deep, about 5 m of cable): common (longest) rod plus
+¼, ½, ¾ and full. Its wire colours (ge/gr, gn, br, ws) are not certain from the datasheet:
+find the common and each level wire with the beep test before crimping.
+
+* Common rod driven from GPIO9 only during a short pulse (10–50 ms), never constant: no
+  corrosion; 1 kΩ in series.
+* Each level rod: **10 kΩ in series, 100 nF to GND and 100 kΩ pull-down** at the board (filter
+  for the 5 m cable, ignores thin soap films), read on ADC1 (GPIO1, 2, 7, 8). Grey water conducts
+  well, so 3.3 V is plenty.
+* A wet rod above a dry one is reported as a fault (grease, a broken wire), see
+  [wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug).
 
 ## Truma CP plus (LIN)
 
-Two RJ12 sockets wired in parallel (pins straight through), like the CP plus's own sockets: one
-cable from the CP plus in, the other out to the next device if there is one. The TJA1021
+Two RJ12 sockets wired in parallel (pins straight through), like a Truma TIN distributor: one
+cable from the CP plus in, the other out to the next device if there is one. **Pin 3 = LIN, pin 5
+= GND** (from the inetbox.py project, to confirm with a meter); use a 1:1 RJ12 cable. The CP plus
+also needs its own 12 V supply: the board's fused **CP plus 12 V** terminal. The TJA1021
 transceiver listens and answers like an iNet box (see [truma.md](truma.md)).
 
 ## Outputs: 2 relays, 5 A
@@ -159,7 +173,7 @@ relay and switch form a two-way (stairway) circuit, now fed from the board's sid
   forgotten light can't drain the battery; the board warns before that from the battery voltage.
 * The relay stays where it is if the ESP32 restarts; only without power on 12 V AUX the light is off.
 
-**Output 2: free**, switched +12 V on NO (and NC), 5 A; dry contact by solder jumper.
+**Output 2: outdoor light**, wired the same way: two-way with its own switch if it has one, or lamp + on NO only; its own "light on" sense (GPIO6).
 
 ## Inputs (3)
 
@@ -201,8 +215,8 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 | I²C (tilt sensor, expansion) | 15, 16 |
 | Interrupt (tilt sensor, expansion) | 47 |
 | Truma LIN RX / TX / SLP | 17 / 18 / 21 |
-| Relay 1 (light) / relay 2 | 38 / 39 |
-| "Light on" (relay 1 current sense) | 14 |
+| Relay 1 (inside light) / relay 2 (outdoor light) | 38 / 39 |
+| "Light on" inside / outdoor (current sense) | 14 / 6 |
 | Inputs 1 / 2 / 3 | 11 / 12 / 13 |
 | EBL ON / OFF pulse | 35 / 36 |
 | EBL "12 V on" / mains | 37 / 42 |
@@ -210,7 +224,6 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 | USB tablet socket on/off | 41 |
 | RGB status LED | 48 |
 | USB-C programming | 19, 20 |
-| Free | 6 |
 | Kept free | 0, 3, 45, 46 (strapping) |
 
 I²C addresses: LIS2DW12 0x18, SHT40 0x44; expansion boards use other addresses.
