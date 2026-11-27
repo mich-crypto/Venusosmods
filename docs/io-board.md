@@ -38,8 +38,11 @@ in flat through the LT 100 opening and lies in the space behind the panel (more 
 |---|---|
 | LT 100 opening in the panel (measured from photos) | about 135 × 60 mm |
 | Casing outside, width × height | at most **130 × 55 mm** |
-| Casing length (into the depth) | depth behind the panel minus about 10 mm; **to measure** (130 mm or more fits everything comfortably) |
-| Board | about 120 mm wide, casing length minus about 10 mm; parts up to about 40 mm high |
+| Depth behind the panel (measured) | at least 150 mm |
+| Casing outside | about **130 × 55 × 145 mm** |
+| Board | **120 × 140 mm**, parts up to about 40 mm high |
+
+![Placement plan](io-board/placement.png)
 
 * Casing: plastic (Wi-Fi and Bluetooth), 3D-printed to fit the board exactly: bottom tray with
   screw posts for the board, a lid, openings for the plugs and the USB-C on the front end (the end
