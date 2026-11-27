@@ -29,8 +29,25 @@ connections below are agreed and the van wiring is measured; the schematic is ne
 | Service | USB-C (flashing, native USB), Boot and Reset buttons, RGB status LED | – |
 | Not on the board | Buzzer, RS485, LT 100 tank LED drive | – |
 
-Enclosure: ABS box about 160 × 120 mm (with 4 relays and 8 inputs) with cable glands, screwed to the wall; the board
-screwed down firmly (the tilt sensor needs it).
+## Size and casing
+
+One board with everything on it, in its own casing, behind the LT 100 panel: the casing slides
+in flat through the LT 100 opening and lies in the space behind the panel (more than 60 mm deep).
+
+| | Size |
+|---|---|
+| LT 100 opening in the panel (measured from photos) | about 135 × 60 mm |
+| Casing outside, width × height | at most **130 × 55 mm** |
+| Casing length (into the depth) | depth behind the panel minus about 10 mm; **to measure** (130 mm or more fits everything comfortably) |
+| Board | about 120 mm wide, casing length minus about 10 mm; parts up to about 40 mm high |
+
+* Casing: plastic (Wi-Fi and Bluetooth), 3D-printed to fit the board exactly: bottom tray with
+  screw posts for the board, a lid, openings for the plugs and the USB-C on the front end (the end
+  that faces the LT 100 opening), and a slot for the status LED.
+* Fixed with two screws at the back or a flat bracket, so it can't move: the tilt sensor needs it
+  to sit firmly.
+* All plugs face the opening and can be reached through it; the LT 100 goes back into its opening
+  in front, with the short ST1 extension cable to the casing.
 
 ## EBL 119 ↔ LT 100 cable (ST1) – measured
 
