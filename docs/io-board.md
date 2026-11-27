@@ -138,10 +138,10 @@ relay and switch form a two-way (stairway) circuit, now fed from the board's sid
   board to the switch, the lamp wire stays at the switch.
 * **"Light on"** comes from a small current sensor on relay 1's feed (shunt + comparator): when
   the lamp draws current it is on, whichever way the switch and the relay stand. No extra wire.
-* The light now takes its 12 V from 12 V AUX, so it also works with the EBL main switch off (if
-  12 V AUX comes from Spare 4 or the battery). To keep the old behaviour (light only with the
-  12 V system on), feed 12 V AUX from an EBL circuit that the main switch turns off, or use relay
-  1 as a dry contact with the old supply wire on C.
+* **Decided: the light works with the EBL main switch off.** 12 V AUX is connected to the EBL's
+  **Spare 4** output (block 5, pins 4 + / 5 −, fused in the EBL), which the main switch does not
+  turn off. The EBL's low-voltage cut-off (below 10.5 V) still switches Spare 4 off, so a
+  forgotten light can't drain the battery; the board warns before that from the battery voltage.
 * The relay stays where it is if the ESP32 restarts; only without power on 12 V AUX the light is off.
 
 **Output 2: free**, switched +12 V on NO (and NC), 5 A; dry contact by solder jumper.
