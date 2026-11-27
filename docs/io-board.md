@@ -1,219 +1,208 @@
 # I/O board: specification (planning)
 
-One printed circuit board that replaces the hand-wired I/O extension (ESP32-S3 dev board,
-buck converter, resistors). It reads the tanks, talks to the Truma CP plus, switches the
-EBL 119 on and off, and has a relay for the light, outputs, inputs and a tilt sensor. Status: **planning**, all
-connections below are agreed and the van wiring is measured; the schematic is next.
+One printed circuit board that **replaces the LT 100 panel** and the hand-wired I/O extension
+(ESP32-S3 dev board, buck converter, resistors). It switches the EBL 119, reads the fresh and grey
+tanks, talks to the Truma CP plus, charges a tablet, and has 3 inputs, 2 outputs and a tilt
+sensor; more I/O comes later on expansion boards over RJ45. Status: **planning**; the van wiring is
+measured, the schematic is next.
 
 ## Overview
 
 | Block | What | Connection |
 |---|---|---|
-| ESP32-S3 | Module **ESP32-S3-WROOM-1-N8** (antenna on the module; the box sits in the living area, plastic surroundings) | – |
-| Power | From the EBL ↔ LT 100 cable (ST1, blue + / brown −), optional second input **12 V AUX** for the relay, outputs and display; two diodes pick the input with power | ST1 + push-in |
-| EBL 119 on/off | **Replaces the LT 100**: the EBL's ST1 cable plugs into the board; short pulse to ground on ON (green) or OFF (yellow); reads "12 V on" (white) and mains (pink) | Micro-Fit 6-pin, 2 rows |
-| 12 V button + LED | Push button on the front: press = 12 V system on/off (also without Wi-Fi, phone or display); green LED driven directly by the "12 V on" wire | front plate |
-| USB out | USB-C charging socket for a phone or tablet, **USB PD up to 30 W** (5 / 9 / 12 / 15 / 20 V, a PD charger chip such as SW3516 or IP6557 from 12 V AUX); plain 5 V for devices without PD; can be switched off by the board | front plate |
-| Fresh water | Pressure sensor QDY30A 0–3.3 V + water temperature probe | Micro-Fit 6-pin, 1 row, label **PRESSURE** |
-| Grey water | Rod sender (common + 4 rods), same plug as on the LT 100 | Micro-Fit 5-pin, 1 row |
-| Truma CP plus | LIN bus, TJA1021 transceiver | RJ12 |
-| 1 relay: light | 10 A at 14 V DC, changeover contact (C / NO / NC), LED; two-way circuit with the wall switch, plus a "light on" sense input (see *Light*) | push-in, ≥ 10 A |
-| 4 silent outputs | Low-side MOSFET, on/off, about 5 A, flyback diode, LED each | push-in |
-| 8 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
-| 2 analog inputs | Jumper per input: 0–10 V, 4–20 mA, or resistive sender (0–190 Ω / 240–33 Ω, e.g. a second tank or a fuel sender); 16-bit (ADS1115) | push-in |
-| Battery voltage | Precise measurement of the leisure battery (ST1 blue) and of 12 V AUX (ADS1115) | – |
-| CAN bus | Transceiver (SN65HVD230) with jumper for the 120 Ω end resistor, for later (e.g. vehicle or other CAN devices); the ESP32's own CAN controller | push-in or RJ45 |
-| Spare pins | 4 native GPIO + 3.3 V + GND on a header | 2.54 mm header |
-| Tilt | Accelerometer LIS2DW12 (levelling, water tank slope correction, movement) | on the board |
-| Temperature probe 2 | DS18B20 | push-in |
-| Display power | 12 V out, fused 1 A, for the wall display (its own ESP32, data over Wi-Fi) | push-in |
-| Expansion | I²C + 3.3 V + GND (e.g. humidity sensor) | 4-pin header |
-| Service | USB-C (flashing, native USB), Boot and Reset buttons, RGB status LED | – |
-| Not on the board | Buzzer, RS485 | – |
+| ESP32-S3 | Module **ESP32-S3-WROOM-1-N8** (antenna on the module; plastic casing in the living area) | – |
+| Power | From the EBL cable (ST1 blue + / brown −) for the electronics; **12 V AUX** for the outputs and the USB charging socket; two diodes pick the input with power | ST1 + push-in |
+| **LT 100: EBL 119 on/off** | Short pulse to ground on ON (green) or OFF (yellow); reads "12 V on" (white) and mains (pink); battery voltage from the blue wire | **ST1**: Micro-Fit 6-pin, 2 rows |
+| **LT 100: fresh water** | The existing fresh water cable, now connected to the **pressure sensor** (QDY30A 0–3.3 V) and the water temperature probe at the tank | **ST2**: Micro-Fit 6-pin, 1 row |
+| **LT 100: grey water** | Rod sender, common + 4 rods | **ST3**: Micro-Fit 5-pin, 1 row |
+| 12 V button + LED | Push button on the front plate: 12 V system on/off, also without Wi-Fi or the tablet; green LED driven straight by the "12 V on" wire | front plate |
+| Truma CP plus | LIN bus (TJA1021), **in and out**: two RJ12 sockets in parallel, so the board sits in the Truma cable chain | 2 × RJ12 |
+| USB-C programming | Flashing and serial log (ESP32 native USB), Boot and Reset buttons | USB-C |
+| USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W** (PD charger chip, e.g. SW3516 or IP6557, from 12 V AUX), plain 5 V for devices without PD; the board can switch it off | USB-C, front plate |
+| 3 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
+| 2 outputs, 5 A | Relays with changeover contact (C / NO / NC), 5 A at 14 V DC, LED each. **Output 1 = light** (two-way with the wall switch, with "light on" sense), output 2 free | push-in |
+| Tilt | Accelerometer LIS2DW12: levelling, water tank slope correction, movement | on the board |
+| Temperature probe 2 | DS18B20 ("under the van") | push-in |
+| **Expansion (RJ45)** | 12 V, ground and I²C for expansion boards (more inputs/outputs later), I²C as a differential pair (PCA9615) so the cable can be several metres | RJ45 |
+| Status | RGB status LED (front plate) | – |
+| Removed (simplified) | CAN, MOSFET outputs, analog inputs, 8 inputs → 3, display power out, spare header, I/O expander and ADC chips, separate PRESSURE socket | – |
 
 ## Size and casing
 
-One board with everything on it, in its own casing, **in place of the LT 100**: the casing slides
-in flat through the LT 100 opening and lies in the space behind the panel; its front plate closes
-the opening (like the LT 100 did) and carries the 12 V button and LED, the USB charging socket and
-the status LED.
+The board sits **in place of the LT 100**: its casing slides in flat through the LT 100 opening
+and lies in the space behind the panel; its front plate closes the opening and carries the 12 V
+button and LED, the USB-C tablet socket and the status LED.
 
 | | Size |
 |---|---|
 | LT 100 opening in the panel (measured from photos) | about 135 × 60 mm |
-| Casing outside, width × height | at most **130 × 55 mm** |
 | Depth behind the panel (measured) | at least 150 mm |
 | Casing outside | about **130 × 55 × 145 mm** |
 | Board | **120 × 140 mm**, parts up to about 40 mm high |
 
 ![Placement plan](io-board/placement.png)
 
-* Casing: plastic (Wi-Fi and Bluetooth), 3D-printed to fit the board exactly: bottom tray with
-  screw posts for the board, a lid, openings for the plugs and the USB-C on the front end (the end
-  that faces the LT 100 opening), and a slot for the status LED.
-* Fixed with two screws at the back or a flat bracket, so it can't move: the tilt sensor needs it
-  to sit firmly.
-* All plugs are on the front end, right behind the front plate: take the plate off to reach them.
-  The LT 100 is removed; later the wall display can take the opening instead (it fits a small
-  3.5" screen) with the board's front plate moved elsewhere, or the display goes next to it.
+* Casing: plastic (Wi-Fi and Bluetooth), 3D-printed to fit the board: bottom tray with screw
+  posts, a lid, the front plate, openings for the plugs.
+* Fixed with two screws at the back or a flat bracket, so it can't move (the tilt sensor needs it).
+* The LT 100 plugs (ST1, ST2, ST3) and the programming USB-C are on the front edge, right behind
+  the front plate. Truma, expansion and the push-in terminals are on the side edges: slide the
+  casing out to reach them, so leave about 20 cm of slack in those cables.
 
-## EBL 119 cable (ST1, was to the LT 100) – measured
+## ST1: EBL 119 cable (was to the LT 100) – measured
 
 ![ST1 pinout](io-board/ebl-lt100-st1.png)
 
 | Pin* | Wire | Function | Idle / off | Active / on | On the board |
 |---|---|---|---|---|---|
-| 6 | blue | +12 V permanent | 12 V | 12 V | supply + |
+| 6 | blue | +12 V permanent | 12 V | 12 V | supply + and battery voltage |
 | 4 | brown | ground | 0 V | 0 V | supply − |
 | 2 | green | ON button | 12 V | pulled to 0 V | pulse to ground |
 | 1 | yellow | OFF button | 12 V | pulled to 0 V | pulse to ground |
-| 3 | white | "12 V on" indicator | ≈ 2 V | 12 V | input, threshold ≈ 6 V |
+| 3 | white | "12 V on" indicator | ≈ 2 V | 12 V | input, threshold ≈ 6 V; also the front LED |
 | 5 | pink | mains (230 V) indicator | 0 V | ≈ 8 V | input, threshold ≈ 4 V |
 
 \* Pin numbers from the LT 100 wiring diagram; colours and functions are measured in the van.
-Check the moulded pin-1 mark before crimping the extension cable.
+Check the moulded pin-1 mark on the plug.
 
-* The board replaces the LT 100: the EBL's ST1 cable plugs into the board. The front button and the
-  pages/Venus OS/display switch the 12 V; the EBL itself still needs a panel on ST1 to work, which is
-  now the board.
-* The ON/OFF switches are optocoupler outputs to ground, pulse about 300 ms; the white wire confirms.
-* The blue/brown lines are protected by a 2.5 A self-resetting fuse in the EBL and are the board's
-  battery voltage measurement. The electronics (≈ 50 mA) run from them; the relay, the outputs,
-  the USB socket and the display use **12 V AUX** (EBL "Spare 4", unswitched, or the battery with
-  its own fuse), so the measurement stays right and the EBL's fuse isn't overloaded.
-* EBL notes (manual 811.0421): heater, frost valve, fridge, step light and Spare 4 stay on when
-  the main switch is off; below 10.5 V everything except the frost valve is cut.
+* The EBL needs a panel on ST1 to work; that is now the board.
+* ON/OFF: optocoupler outputs to ground, pulse about 300 ms; the white wire confirms.
+* The blue/brown lines have a 2.5 A self-resetting fuse in the EBL: they feed only the electronics
+  (≈ 50 mA) and the voltage measurement. The relays and the USB charging socket use **12 V AUX**
+  (EBL "Spare 4", unswitched, or the battery with its own fuse).
+* EBL notes (manual 811.0421): heater, frost valve, fridge, step light and Spare 4 stay on when the
+  main switch is off; below 10.5 V everything except the frost valve is cut.
 
-## Fresh water tank
+## ST2: fresh water cable → pressure sensor
 
-![Fresh water rods to the LT 100](io-board/fresh-water-rods-lt100.png)
+The existing fresh water cable (it went from the rod sender to the LT 100) is reused: at the
+tank its wires are connected to the pressure sensor and the water temperature probe instead of
+the rods; at the board it plugs into ST2. The board decides what each pin carries, so the white
+wire (the LT 100's 12 V for the rods) now carries the sensor supply.
 
-The rod sender's cable (ST2: grey Full, yellow ¾, green ½, brown ¼, white Base, 6 empty) went to
-the LT 100; with the LT 100 removed it is not connected (to decide: read it as a second fresh
-water reading, see *Still open*). The board measures the fresh tank with the pressure sensor on
-its own 6-pin socket:
+![Fresh water cable, colours as on the LT 100](io-board/fresh-water-rods-lt100.png)
 
-| Pin | Signal |
-|---|---|
-| 1 | +5 V sensor supply |
-| 2 | GND |
-| 3 | sensor signal (10 kΩ + RC to GPIO4) |
-| 4 | DS18B20 data (water temperature) |
-| 5 | +3.3 V for the DS18B20 |
-| 6 | shield / not connected |
+| Pin* | Wire | Was (rods, LT 100) | Now (board) | Sensor / probe wire |
+|---|---|---|---|---|
+| 5 | white | Base, +12 V | **+5 V sensor supply** | QDY30A red (V+) |
+| 4 | brown | ¼ rod | **GND** | QDY30A green (V−) + probe black (GND) |
+| 3 | green | ½ rod | **pressure signal** (10 kΩ + RC to GPIO4) | QDY30A yellow (out) |
+| 2 | yellow | ¾ rod | **water temperature data** (DS18B20, 4.7 kΩ to 3.3 V) | probe yellow (data) |
+| 1 | grey | Full rod | **+3.3 V** for the temperature probe | probe red (VDD) |
+| 6 | – | not connected | not connected | – |
 
-The LT 100 rod cable uses the same plug type: label the board socket **PRESSURE** so they
-can't be swapped.
+\* Pin numbers as on the LT 100's ST2 (grey 1 … white 5); confirm the pin-1 mark.
 
-## Grey water tank
+* **5 V, not 12 V**, on the white wire: the 0–3.3 V version of the QDY30A runs on 5 V (see
+  [wiring.md](wiring.md)). Do not plug this cable back into an LT 100 afterwards.
+* The pressure sensor's vent tube needs open air: make the joint at the tank in a small dry box
+  (see the note on extending the sensor cable in [wiring.md](wiring.md)).
+* The fresh tank is then measured in litres (pressure sensor); the 4-step rod reading is no longer
+  used.
 
-Micro-Fit 5-pin, same plug as the LT 100's grey socket (ST3), moved to the board. The board drives the common rod itself (short pulses, no constant voltage,
-see [wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug)).
+## ST3: grey water rods
 
-## Light (relay + existing wall switch)
+Micro-Fit 5-pin, same plug as the LT 100's grey socket. The board drives the common rod with short
+pulses (no constant voltage, so the rods don't corrode) and reads the four rods, see
+[wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug).
 
-The wall switch keeps working, also when the board is off or broken: the relay and the switch
-form a two-way (stairway) circuit, like two switches for one lamp in a hallway. Either one
-changes the light.
+## Truma CP plus (LIN)
+
+Two RJ12 sockets wired in parallel (pins straight through), like the CP plus's own sockets: one
+cable from the CP plus in, the other out to the next device if there is one. The TJA1021
+transceiver listens and answers like an iNet box (see [truma.md](truma.md)).
+
+## Outputs: 2 relays, 5 A
+
+**Output 1: light.** The wall switch keeps working, also when the board is off: the relay and the
+switch form a two-way (stairway) circuit.
 
 ```
  +12 V (fused) ──── wall switch C
                    (ON-ON changeover)
-                     A ─────────── relay NO
-                     B ─────────── relay NC
-                                   relay C ──── lamp + ──── lamp − ── GND
-                                         │
-                                         └── "light on" sense (optocoupler) → GPB1
+                     A ─────────── relay 1 NO
+                     B ─────────── relay 1 NC
+                                   relay 1 C ──── lamp + ──── lamp − ── GND
+                                           │
+                                           └── "light on" sense (optocoupler)
 ```
 
-* The existing round rocker (single on/off) is replaced by a round **ON-ON changeover rocker** of
-  the same size, so the hole in the panel stays the same; one more wire runs from the switch to the
-  board (3 wires instead of 2).
-* The board can't know from the relay alone whether the lamp is on (the wall switch may have
-  changed it), so it reads the lamp wire: the "light on" sense. Venus OS and the display show the
-  real state, and "switch on" from the board only flips the relay when the light is off.
-* The lamp current goes through the relay contact (10 A); typical LED lighting is well below that.
+* The round on/off rocker is replaced by a round **ON-ON changeover rocker** of the same size
+  (3 tabs); one more wire to the board.
+* The "light on" sense tells the board whether the lamp is really on (the wall switch may have
+  changed it).
 
-## Inputs
+**Output 2: free**, changeover contact on push-in terminals (C / NO / NC), 5 A.
+
+## Inputs (3)
 
 | Input | Use | Signal |
 |---|---|---|
 | 1 | Gas/CO alarm Karman 3Gas+ (white wire "Alarm out") | **12 V on alarm** (measured) |
-| 2 | Smoke alarm (separate 12 V detector with alarm contact; the 3Gas+ does not detect smoke) | to choose |
-| 3–8 | spare, e.g. ignition / D+, entrance door, electric step out, roof hatch, water pump running, 2nd gas sensor | – |
+| 2 | Smoke alarm (12 V detector with alarm contact; the 3Gas+ does not detect smoke) | to choose |
+| 3 | free (e.g. ignition / D+, door, step out) | – |
 
 Mains present and "12 V on" come from ST1 and don't use these inputs.
 
-## Pin plan
+## Expansion (RJ45)
 
-All ESP32 pins are used directly for the things that need speed or the ESP32's own hardware
-(ADC, LIN, CAN, 1-Wire). Everything that only switches or reads on/off goes through an
-I/O expander on the I²C bus, which gives 16 more lines without using pins.
+For later boards with more inputs and outputs (they plug in with a normal network cable;
+**not** Ethernet, don't plug it into a router).
 
-**ESP32-S3 (native)**
+| RJ45 pin | Signal |
+|---|---|
+| 1, 2 | +12 V (from 12 V AUX, fused 1 A) |
+| 3 / 6 | I²C data + / − (PCA9615, differential) |
+| 4 / 5 | I²C clock + / − |
+| 7 | interrupt (open drain, shared with the tilt sensor) |
+| 8 | GND |
+
+## Pin plan (ESP32-S3)
+
+All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 
 | Function | GPIO |
 |---|---|
-| Pressure sensor | 4 |
-| Temperature probe 1 / 2 | 5 / 6 |
-| Grey tank: common / rods (lowest first) | 9 / 1, 2, 7, 8 |
-| Supply voltage (fallback, ADC) | 10 |
-| I²C (tilt sensor, I/O expander, ADC, expansion) | 15, 16 |
-| Interrupt from the tilt sensor and the I/O expander (shared, open-drain) | 47 |
+| Pressure sensor (ST2 green) | 4 |
+| Temperature probe 1 (water, ST2 yellow) / 2 | 5 / 6 |
+| Grey rods ST3: common / rods (lowest first) | 9 / 1, 2, 7, 8 |
+| Leisure battery voltage (ST1 blue, divider) | 10 |
+| I²C (tilt sensor, expansion) | 15, 16 |
+| Interrupt (tilt sensor, expansion) | 47 |
 | Truma LIN RX / TX / SLP | 17 / 18 / 21 |
-| Silent outputs 1–4 | 38, 39, 40, 41 |
-| CAN TX / RX | 11 / 12 |
-| Spare header | 13, 14, 35, 36 |
+| Relay 1 (light) / relay 2 | 38 / 39 |
+| "Light on" sense | 14 |
+| Inputs 1 / 2 / 3 | 11 / 12 / 13 |
+| EBL ON / OFF pulse | 35 / 36 |
+| EBL "12 V on" / mains | 37 / 42 |
+| 12 V button | 40 |
+| USB tablet socket on/off | 41 |
 | RGB status LED | 48 |
-| USB-C | 19, 20 |
-| Kept free | 37, 42 (reserve), 45, 46, 0, 3 (strapping) |
+| USB-C programming | 19, 20 |
+| Kept free | 0, 3, 45, 46 (strapping) |
 
-GPIO35–37 are free on the N8 module (no octal PSRAM). Only GPIO1–10 have the ADC that works
-together with Wi-Fi, so the ESP32's own analog signals are there.
-
-**I/O expander MCP23017 (I²C, 16 lines)**
-
-| Lines | Function |
-|---|---|
-| GPA0–GPA7 | Inputs 1–8 (optocouplers) |
-| GPB0 | Relay: light (through a driver with a flyback diode) |
-| GPB1 | "Light on" sense (optocoupler on the lamp wire) |
-| GPB2 | 12 V button on the front (input) |
-| GPB3 | USB out on/off |
-| GPB4 / GPB5 | EBL ON / OFF pulse (optocoupler to ground) |
-| GPB6 / GPB7 | EBL "12 V on" / mains indicator (optocoupler inputs) |
-
-**ADC ADS1115 (I²C, 4 channels, 16-bit)**
-
-| Channel | Function |
-|---|---|
-| A0 / A1 | Analog inputs 1 / 2 (0–10 V, 4–20 mA or resistive, by jumper) |
-| A2 | Leisure battery voltage (ST1 blue, divider) |
-| A3 | 12 V AUX voltage (divider) |
-
-I²C addresses: LIS2DW12 0x18, MCP23017 0x20, ADS1115 0x48; the expansion header shares the bus.
+I²C address: LIS2DW12 0x18; expansion boards use other addresses.
 
 ## Protection
 
 * 12 V inputs: fuse (polyfuse), reverse-polarity protection, TVS diode (van transients).
 * Sensor, rod and probe lines: series resistors and ESD protection.
-* Relay coil and outputs: flyback diodes.
-* Power use about 0.5 W idle (≈ 1 Ah/day from the leisure battery); the relay adds about 0.4 W while on.
+* Relay coils: flyback diodes.
+* Power use about 0.5 W idle (≈ 1 Ah/day from the leisure battery); each relay adds about
+  0.4 W while on; a charging tablet up to 30 W.
 
 ## Firmware and pages (after the board)
 
-* EBL: "12 V system" switch in Venus OS, on the mods page and on the display; mains present as a status.
+* EBL: "12 V system" switch in Venus OS, on the mods page and on the tablet; mains present as a
+  status; battery voltage.
+* Tanks: fresh water in litres (pressure sensor), grey water from the rods.
 * Inputs: gas/CO and smoke as Venus OS alarms and notifications.
-* Light relay and outputs: switches in Venus OS (switch pane) and on the display.
-* Rules on the board itself, also without the Pi: e.g. pump off when the fresh tank is empty, fan on
-  above a temperature, light on when the door opens, warning when driving with the step out.
+* Outputs: light and output 2 as switches in Venus OS (switch pane) and on the tablet.
 * Tilt: levelling page (pitch, roll, how much to raise which wheel), water volume corrected for
   slope, "set level" calibration, movement alarm.
 
 ## Still open
 
 * Smoke detector model (12 V with alarm contact).
-* Confirm the pin-1 mark of ST1.
-* Fresh water rods (ST2 cable): leave unconnected, or read them on the board as a second reading
-  (needs a 6-pin socket and 5 more lines).
+* Confirm the pin-1 marks of ST1 and ST2.
 * Schematic, parts list with order numbers, layout (KiCad), then one prototype before more.
