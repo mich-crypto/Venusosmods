@@ -792,24 +792,72 @@ class WifiTransportTests(unittest.TestCase):
 class AlarmTests(unittest.TestCase):
     """Venus OS alarms: frost in the water tank, and the Truma heater's W/E codes."""
 
+    def frost_driver(self, cfg='custom_name = Fresh water\n', saved=None):
+        import esp32_hydro_tank
+        path = os.path.join(tempfile.mkdtemp(), 's.frost')
+        if saved is not None:
+            with open(path, 'w') as f:
+                f.write('%d\n' % saved)
+        real = esp32_hydro_tank.Esp32HydroDriver._load_frost_since
+        esp32_hydro_tank.Esp32HydroDriver._load_frost_since = lambda d: real(type('D', (), {'frost_file': path})())
+        try:
+            d = Esp32HydroDriver('s', section(cfg))
+        finally:
+            esp32_hydro_tank.Esp32HydroDriver._load_frost_since = real
+        if d.frost is not None:
+            d.frost_file = path
+        return d
+
+    def at(self, t, fn, *args):
+        import esp32_hydro_tank
+        real = esp32_hydro_tank.time.time
+        esp32_hydro_tank.time.time = lambda: t
+        try:
+            fn(*args)
+        finally:
+            esp32_hydro_tank.time.time = real
+
     def test_frost_alarm_with_water_at_or_below_3_c_and_hysteresis(self):
-        d = Esp32HydroDriver('s', section('custom_name = Fresh water\n'))
+        d = self.frost_driver()
         a = d.frost.service
-        d._frost_check(40.0, {1: 5.0})
+        t0 = 1_800_000_000
+        self.at(t0, d._frost_check, 40.0, {1: 5.0})
         self.assertEqual(a['/Alarm'], 0)
-        d._frost_check(40.0, {1: 3.0})                                     # at the limit: alarm
+        self.at(t0, d._frost_check, 40.0, {1: 3.0})                        # at the limit: alarm
         self.assertEqual((a['/Alarm'], a['/State']), (2, 9))
         self.assertIn('Fresh water: water 3.0', a['/CustomName'])
-        d._frost_check(40.0, {1: 3.8})                                     # within 1 C above: still on
+        self.at(t0 + 60, d._frost_check, 40.0, {1: 3.8})                   # within 1 C above: still on
         self.assertEqual(a['/Alarm'], 2)
-        d._frost_check(40.0, {1: 4.2})
+        self.at(t0 + 3600, d._frost_check, 40.0, {1: 4.2})                 # warmer, but held for 24 h
+        self.assertEqual(a['/Alarm'], 2)
+        self.assertIn('frost in the last 24 h', a['/CustomName'])
+        self.at(t0 + 86400, d._frost_check, 40.0, {1: 4.2})                # a day later: cleared
         self.assertEqual(a['/Alarm'], 0)
-        d._frost_check(1.0, {1: 0.5})                                      # (almost) empty tank: no alarm
+        self.at(t0 + 86400, d._frost_check, 1.0, {1: 0.5})                 # (almost) empty tank: no alarm
         self.assertEqual(a['/Alarm'], 0)
+
+    def test_frost_alarm_rises_at_most_once_a_day_also_across_restarts(self):
+        d = self.frost_driver()
+        a = d.frost.service
+        t0 = 1_800_000_000
+        rises, last = [], 0
+        for minute in range(0, 7 * 1440, 10):                              # a week of warm days, freezing nights
+            temp = 1.0 if minute % 1440 < 8 * 60 else 8.0
+            self.at(t0 + minute * 60, d._frost_check, 40.0, {1: temp})
+            if a['/Alarm'] == 2 and last == 0:
+                rises.append(minute * 60)
+            last = a['/Alarm']
+        self.assertGreaterEqual(len(rises), 3)
+        self.assertTrue(all(b - a_ >= 86400 for a_, b in zip(rises, rises[1:])), rises)
+        d2 = self.frost_driver(saved=t0 + 3600)                            # restarted: still raised, no new alarm
+        self.at(t0 + 7200, d2._frost_check, 40.0, {1: 8.0})
+        self.assertEqual(d2.frost.service['/Alarm'], 2)
+        self.at(t0 + 3600 + 86400, d2._frost_check, 40.0, {1: 8.0})
+        self.assertEqual(d2.frost.service['/Alarm'], 0)
 
     def test_frost_alarm_can_be_switched_off_and_uses_the_chosen_probe(self):
         self.assertIsNone(Esp32HydroDriver('s', section('frost_alarm = no\n')).frost)
-        d = Esp32HydroDriver('s', section('frost_alarm_probe = 2\nfrost_alarm_c = 1\n'))
+        d = self.frost_driver('frost_alarm_probe = 2\nfrost_alarm_c = 1\n')
         d._frost_check(40.0, {1: -5.0, 2: 2.0})
         self.assertEqual(d.frost.service['/Alarm'], 0)
         d._frost_check(40.0, {1: 9.0, 2: 0.5})

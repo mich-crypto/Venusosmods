@@ -230,8 +230,9 @@ SCHEMA = {
             F('temperature2_name', 'text', 'Name of temperature 2', 'Shown in Venus OS and VRM.', default='Temperature 2'),
             F('temperature2_type', 'select', 'Temperature 2 type', '', options=TEMP_TYPES, default='generic'),
             F('frost_alarm', 'bool', 'Frost alarm', 'Alarm in Venus OS while there is water in the tank and the '
-              'water temperature is at or below the limit.', options=YES_NO, default='yes'),
-            F('frost_alarm_c', 'float', 'Frost alarm at', 'Water temperature; it clears 1 °C above.', unit='°C',
+              'water temperature is at or below the limit. Once raised it stays on for 24 h, so VRM e-mails it at '
+              'most once a day.', options=YES_NO, default='yes'),
+            F('frost_alarm_c', 'float', 'Frost alarm at', 'Water temperature; it clears 1 °C above, after 24 h at the earliest.', unit='°C',
               min=-10, max=15, default='3'),
             F('frost_alarm_min_l', 'float', 'Only with more than', 'Litres in the tank (an empty tank does not '
               'freeze).', unit='L', min=0, max=1000, default='2', advanced=True),

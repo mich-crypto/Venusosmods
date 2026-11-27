@@ -234,7 +234,9 @@ class Esp32HydroDriver(BleDriver):
             self.frost_min_l = config.getfloat('frost_alarm_min_l', 2.0)
             self.frost_probe = 2 if config.get('frost_alarm_probe', '1').strip() == '2' else 1
             self.frost_name = config.get('custom_name', '') or 'Water tank'
-            self._frost_on = False
+            self.frost_file = os.path.join(os.path.dirname(self.ip_file), '%s.frost' % uid)
+            self._frost_since = self._load_frost_since()
+            self._frost_on = self._frost_since is not None and time.time() - self._frost_since < self.FROST_HOLD_S
             self.frost = DigitalInputDevice(
                 self.bus, uid + '_frost', product_name='Water tank frost alarm', connection=connection,
                 default_instance=config.getint('frost_instance', 27),
@@ -300,23 +302,51 @@ class Esp32HydroDriver(BleDriver):
             self._wclient.host = ip
         self._start_poller()
 
+    FROST_HOLD_S = 24 * 3600     # once raised, the frost alarm stays on a day: VRM e-mails each new alarm
+
     def _frost_check(self, litres, temps):
-        """Alarm while there is water in the tank and it is at or below the limit; off again 1 C above it
-        (or when the tank is empty), so it doesn't flap."""
+        """Alarm while there is water in the tank and it is at or below the limit. Once raised it stays on
+        for at least 24 h (also across restarts) and clears only after that, 1 C above the limit or with the
+        tank empty - so the water warming up during the day and freezing again at night is one VRM e-mail
+        a day, not one per crossing."""
         if self.frost is None:
             return
         t = temps.get(self.frost_probe)
         if t is None or litres is None:
             return
-        if not self._frost_on and litres > self.frost_min_l and t <= self.frost_c:
+        now = time.time()
+        freezing = litres > self.frost_min_l and t <= self.frost_c
+        if not self._frost_on and freezing:
             self._frost_on = True
+            self._frost_since = now
+            self._save_frost_since(now)
             log.warning('frost alarm: water %.1f C with %.0f L in the tank', t, litres)
-        elif self._frost_on and (t > self.frost_c + 1 or litres <= self.frost_min_l):
+        elif (self._frost_on and (t > self.frost_c + 1 or litres <= self.frost_min_l)
+              and now - (self._frost_since or 0) >= self.FROST_HOLD_S):
             self._frost_on = False
             log.info('frost alarm cleared: water %.1f C, %.0f L', t, litres)
-        self.frost.publish(2 if self._frost_on else 0,
-                           ('%s: water %.1f °C with %.0f L - risk of freezing' % (self.frost_name, t, litres))
-                           if self._frost_on else '%s frost' % self.frost_name)
+        if not self._frost_on:
+            name = '%s frost' % self.frost_name
+        elif freezing:
+            name = '%s: water %.1f °C with %.0f L - risk of freezing' % (self.frost_name, t, litres)
+        else:
+            name = '%s: frost in the last 24 h, water now %.1f °C' % (self.frost_name, t)
+        self.frost.publish(2 if self._frost_on else 0, name)
+
+    def _load_frost_since(self):
+        try:
+            with open(self.frost_file) as f:
+                return float(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _save_frost_since(self, when):
+        try:
+            os.makedirs(os.path.dirname(self.frost_file), exist_ok=True)
+            with open(self.frost_file, 'w') as f:
+                f.write('%d\n' % when)
+        except OSError as e:
+            log.warning('cannot save the frost alarm time: %s', e)
 
     def _saved_ip(self):
         try:
