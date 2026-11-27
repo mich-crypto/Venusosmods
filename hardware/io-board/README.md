@@ -55,11 +55,15 @@ Design rules are in the project (net classes):
 
 | Class | Track | Clearance | Nets |
 |---|---|---|---|
-| HighCurrent | 2.0 mm | 0.4 mm | 12 V AUX, both outputs (C/NO/NC, shunts, fuses), USB PD supply |
-| Power | 0.6 mm | 0.25 mm | 12 V system, +5 V, +3.3 V, GND, LIN supply, sensor and CP plus 12 V, relay coils |
-| Default | 0.25 mm | 0.2 mm | all signals |
+| HighCurrent | 2.0 mm | 0.3 mm | 12 V AUX, both outputs (C/NO/NC, shunts, fuses), USB PD supply |
+| Power | 0.4 mm | 0.15 mm | 12 V system, +5 V, +3.3 V, GND, LIN supply, sensor and CP plus 12 V, relay coils |
+| Default | 0.25 mm | 0.15 mm | all signals |
 
 GND is a copper plane on both layers (the ESP32 antenna end stays free of copper).
+
+The clearances are 0.15 mm so tracks can reach the 0.5 mm pitch pins (LIS2DH12, PCA9615, USB-C);
+for 12 V a gap of 0.1 mm is enough (IPC-2221). With 0.25 mm and 0.6 mm Power tracks, Freerouting
+left every pin on those parts unconnected.
 
 To route with **Freerouting** (free):
 
