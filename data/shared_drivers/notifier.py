@@ -26,7 +26,12 @@ except ImportError:         # not verified on every Venus OS image: then there i
 
 REPEAT_ALARM_S = 3 * 3600           # a battery that stays at "alarm" is repeated this often
 REPEAT_WARN_S = 12 * 3600
-DEVICE_ALARM_REPEAT_S = 24 * 3600   # the same device alarm (and its all-clear): at most one a day (also across restarts)
+# How often the same message may come again (kept across restarts by the sender):
+DEVICE_ALARM_REPEAT_S = 3 * 3600    # a device in alarm (red): again after 3 h at the earliest - it may matter
+DEVICE_WARN_REPEAT_S = 24 * 3600    # a device warning (orange) and an all-clear: at most once a day
+FENCE_REPEAT_S = 3600               # "left the area" again (a restart outside it, GPS jumps at the edge)
+FENCE_STILL_S = 3600                # away but not moving: a position update this often
+ORION_REPEAT_S = 3600               # charging switched on (smart alternators switch it on and off a lot)
 FROST_REPEAT_S = 24 * 3600          # frost / cold messages: at most one a day (also across restarts)
 MOVED_UPDATE_S = 600                # while outside the fence: a new position this often
 COLD_HOURS = 2                      # below freezing this long: a warning
@@ -172,7 +177,7 @@ class Notifier(object):
                     text = '🔴 %s is almost empty: %d %%. Charge it now.' % (name, round(soc))
                 else:
                     text = '🟠 %s is getting low: %d %%.' % (name, round(soc))
-                self._say('battery-' + name, text)
+                self._say('battery-%s-%s' % (name, level), text, cooldown=repeat)    # also not again after a restart
                 self.battery[name] = [level, now]
             else:
                 self.battery[name] = [level, sent_at]
@@ -192,13 +197,15 @@ class Notifier(object):
             if st['seen'] >= CONFIRM and value > st['sent']:
                 st['sent'] = value
                 text = '%s %s: %s' % ('🔴' if value >= 2 else '🟠', key[0], pretty(key[1]) + (' (alarm)' if value >= 2 else ' (warning)'))
-                self._say('alarm-%s-%s-%d' % (key[0], key[1], min(value, 2)), text, cooldown=DEVICE_ALARM_REPEAT_S)
+                if self._say('alarm-%s-%s-%d' % (key[0], key[1], min(value, 2)), text,
+                             cooldown=DEVICE_ALARM_REPEAT_S if value >= 2 else DEVICE_WARN_REPEAT_S) is not False:
+                    st['told'] = True
         for key in list(self.alarms):
             if key not in active:
                 st = self.alarms.pop(key)
-                if st['sent']:
+                if st.get('told'):                       # only the all-clear of an alarm that was reported
                     self._say('alarm-%s-%s-clear' % key, '✅ %s: %s is back to normal' % (key[0], pretty(key[1])),
-                              cooldown=DEVICE_ALARM_REPEAT_S)
+                              cooldown=DEVICE_WARN_REPEAT_S)
 
     def _geofence(self, gps):
         f = self.fence
@@ -213,10 +220,14 @@ class Notifier(object):
             f['in_seen'] = 0
             if f['state'] != 'out' and f['out_seen'] >= CONFIRM:
                 f['state'], f['last'] = 'out', now
+                f['at'] = (gps['lat'], gps['lon'])
                 self._say('fence-out', '🚨 The camper left its %d m area: now %d m from home.\n%s' % (
-                    self.fence_m, round(d), map_link(gps['lat'], gps['lon'])))
-            elif f['state'] == 'out' and now - f['last'] >= MOVED_UPDATE_S:
-                f['last'] = now
+                    self.fence_m, round(d), map_link(gps['lat'], gps['lon'])), cooldown=FENCE_REPEAT_S)
+            elif f['state'] == 'out' and now - f['last'] >= MOVED_UPDATE_S and (
+                    now - f['last'] >= FENCE_STILL_S
+                    or distance_m(f['at'][0], f['at'][1], gps['lat'], gps['lon']) >= self.fence_m):
+                # moving (it may be stolen): every 10 min; parked somewhere else: once an hour
+                f['last'], f['at'] = now, (gps['lat'], gps['lon'])
                 self._say('fence-update', '📍 Still away: %d m from home.\n%s' % (round(d), map_link(gps['lat'], gps['lon'])))
         else:
             f['in_seen'] += 1
@@ -244,7 +255,8 @@ class Notifier(object):
                 extra = ''
                 if u.get('volts') is not None:
                     extra = ' (%.1f V%s)' % (u['volts'], '' if u.get('amps') is None else ', %.1f A' % u['amps'])
-                self._say('orion-' + name, '⚡ %s: charging was switched on, %s%s.' % (name, ORION_STATES.get(state, 'state %s' % state), extra), cooldown=60)
+                self._say('orion-' + name, '⚡ %s: charging was switched on, %s%s.' % (name, ORION_STATES.get(state, 'state %s' % state), extra),
+                          cooldown=ORION_REPEAT_S)
         for name in list(self.orion):
             if name not in seen:
                 del self.orion[name]

@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(HERE, '..', 'data', 'shared_drivers'))
 
 import fakes  # noqa: E402,F401
 import esp32_hydro_protocol as proto  # noqa: E402
+from venus_service import monotonic_s as venus_service_monotonic  # noqa: E402
 from esp32_hydro_tank import Esp32HydroDriver  # noqa: E402
 
 ROOT = os.path.join(HERE, '..')
@@ -876,13 +877,53 @@ class AlarmTests(unittest.TestCase):
         import truma_heater as th
         self.assertEqual(set(th.BUILTIN_CODES), set(th.BUILTIN_HELP))     # every code has its "what to do"
         self.assertIn('E517', th.BUILTIN_CODES)
-        h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
-        self.assertEqual(h.alarm.service['/Alarm'], 0)
+        clock = [1000.0]
+        truma_heater.monotonic_s = lambda: clock[0]
+        try:
+            h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
+            self.assertEqual(h.alarm.service['/Alarm'], 2)                  # gone: held 10 min, no flapping
+            clock[0] += 300
+            h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 112, 'ecls': 'E'})
+            clock[0] += 300
+            h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
+            clock[0] += 599
+            h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
+            self.assertEqual(h.alarm.service['/Alarm'], 2)                  # came back: the 10 min start again
+            clock[0] += 1
+            h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
+            self.assertEqual(h.alarm.service['/Alarm'], 0)
+        finally:
+            truma_heater.monotonic_s = venus_service_monotonic
         self.assertEqual(truma_heater.code_text({'err': 517, 'ecls': 'E'}), 'E 517 H: Gas supply interrupted')
 
 
 class GreyTankTests(unittest.TestCase):
     """The grey water tank's rod sender on the same ESP32 (firmware 4.17+)."""
+
+    def setUp(self):
+        import esp32_hydro_tank
+        self.clock = [1000.0]
+        esp32_hydro_tank.monotonic_s = lambda: self.clock[0]
+
+    def tearDown(self):
+        import esp32_hydro_tank
+        esp32_hydro_tank.monotonic_s = venus_service_monotonic
+
+    def test_splashing_rods_do_not_toggle_the_alarm(self):
+        d = Esp32HydroDriver('s', section('grey_tank = yes\n'))
+        a = d.grey.alarm.service
+        for i in range(20):                                                 # driving: the top rod splashes
+            self.clock[0] += 10
+            d.grey.publish(0b1111 if i % 2 else 0b0111, 4, False)
+        self.assertEqual(a['/Alarm'], 0)
+        for _ in range(13):                                                 # really full for 2 min
+            self.clock[0] += 10
+            d.grey.publish(0b1111, 4, False)
+        self.assertEqual(a['/Alarm'], 2)
+        d.grey.publish(0b0111, 4, False)                                    # 75 %: still full enough
+        self.assertEqual(a['/Alarm'], 2)
+        d.grey.publish(0b0011, 4, False)                                    # emptied to half: cleared
+        self.assertEqual(a['/Alarm'], 0)
 
     def test_payload_carries_the_rods_and_older_packets_have_none(self):
         r = proto.parse(proto.build(1, 50, 40, 80, 200, grey=(0b0011, 4, False)))
@@ -907,6 +948,8 @@ class GreyTankTests(unittest.TestCase):
         self.assertEqual(d.grey.alarm.service['/Alarm'], 0)
         d.handle_advertisement('AA:BB:CC:DD:EE:01', {proto.COMPANY_ID: proto.build(
             1, 50, 40, 80, 200, sequence=2, grey=(0b1111, 4, False))}, -60)
+        self.clock[0] += 120
+        d.grey.publish(0b1111, 4, False)
         self.assertEqual(t['/Level'], 100.0)
         self.assertEqual(d.grey.alarm.service['/Alarm'], 2)                 # full: alarm in Venus OS
         self.assertIn('Grey: 100 %', d.grey.alarm.service['/CustomName'])
@@ -918,6 +961,8 @@ class GreyTankTests(unittest.TestCase):
         d = Esp32HydroDriver('s', section('grey_tank = yes\ngrey_levels = 20, 45, 70, 90\ngrey_alarm_pct = 70\n'))
         d.grey.publish(0b0001, 4, False)
         self.assertEqual(d.grey.tank.service['/Level'], 20.0)
+        d.grey.publish(0b0111, 4, False)
+        self.clock[0] += 120
         d.grey.publish(0b0111, 4, False)
         self.assertEqual((d.grey.tank.service['/Level'], d.grey.alarm.service['/Alarm']), (70.0, 2))
         d.grey.publish(0b0100, 4, True)                                     # a dry rod below a wet one: by the highest

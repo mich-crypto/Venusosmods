@@ -771,6 +771,28 @@ if you forget it. Open the address in Safari and add it to the home screen.
   restarts of the page), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
+
+  **How often each message may come** (kept across restarts, so nothing floods
+  your phone or the VRM e-mails):
+
+  | Message | Limit | Why |
+  |---|---|---|
+  | Battery almost empty (red) | again every 3 h while it stays low | you must act |
+  | Battery low (orange) | again every 12 h | |
+  | Device **alarm** (red) | the same alarm at most every 3 h | BMS, inverter: may matter |
+  | Device **warning** (orange), and *back to normal* | at most once a day | information |
+  | Left the parking spot | at once (again after 1 h at the earliest); position every 10 min while it moves, hourly while it stands | theft |
+  | Orion XS charging on | at most once an hour | smart alternators switch it often |
+  | Frost forecast, below 0 °C for 2 h | at most once a day | |
+  | Starlink offline | at most every 6 h; *reachable again* only after a sent *offline* | |
+  | Starlink packet loss | at most every 6 h | |
+  | Starlink hardware alert, new public IP, failed speed test | at most once a day | |
+
+  The Venus OS alarms of the I/O extension (which VRM e-mails on every new
+  alarm) are held so they don't flap: the **frost alarm** stays on for 24 h once
+  raised, the **grey tank full** alarm rises after 2 minutes full (not from
+  splashing while driving) and clears only once the tank is emptied to half, and a
+  **Truma** code stays shown until the heater has been clear for 10 minutes.
 * **Water → Live reading** – the real sensor voltage at GPIO4 and the height
   from it, without smoothing, about twice a second for 15 minutes (*Stop live
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches

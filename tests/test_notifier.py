@@ -90,15 +90,28 @@ class AlarmTests(unittest.TestCase):
         self.assertIn('back to normal', s.sent[-1])
         self.assertEqual(n.view()['active_alarms'], [])
 
-    def test_a_flapping_alarm_is_sent_once_a_day(self):
+    def test_a_flapping_red_alarm_is_sent_every_3_h_at_most(self):
         s = Sink(cooldowns=True)
         n = s.make()
+        times = []
         for hour in range(48):                                 # on and off again every hour, for two days
             s.t = hour * 3600
             for _ in range(3):
+                before = len(s.sent)
                 n.check(self.alarm(2, path='/Alarm') if hour % 2 == 0 else self.alarm(None, path='/Alarm'))
-        self.assertEqual(sum('(alarm)' in m for m in s.sent), 2)
-        self.assertEqual(sum('back to normal' in m for m in s.sent), 2)
+                times += [s.t] * (len(s.sent) > before and '(alarm)' in s.sent[-1])
+        self.assertTrue(all(b - a >= 3 * 3600 for a, b in zip(times, times[1:])), times)   # red: every 3 h at most
+        self.assertLessEqual(len(times), 16)
+        self.assertEqual(sum('back to normal' in m for m in s.sent), 2)                    # all-clear: once a day
+
+    def test_a_flapping_warning_is_sent_once_a_day(self):
+        s = Sink(cooldowns=True)
+        n = s.make()
+        for hour in range(48):
+            s.t = hour * 3600
+            for _ in range(3):
+                n.check(self.alarm(1) if hour % 2 == 0 else self.alarm(None))
+        self.assertEqual(sum('(warning)' in m for m in s.sent), 2)
 
     def test_a_blip_is_never_reported(self):
         s = Sink()

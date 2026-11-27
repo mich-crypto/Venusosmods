@@ -19,7 +19,7 @@ nothing is published as measured; the controls are there but greyed out (no read
 import json
 import logging
 
-from venus_service import DigitalInputDevice, SwitchDevice, TemperatureDevice, TEMPERATURE_TYPES
+from venus_service import DigitalInputDevice, SwitchDevice, TemperatureDevice, TEMPERATURE_TYPES, monotonic_s
 
 log = logging.getLogger('truma')
 
@@ -185,6 +185,8 @@ class TrumaHeater(object):
             bus, uid + '_truma_alarm', product_name='Truma Combi warnings and errors', connection=connection,
             default_instance=config.getint('heater_instance', 26), custom_name=name, timeout_s=timeout)
         self._last_code = None
+        self._shown = (0, None)          # what Venus OS shows: (level, text), held a while after the code went
+        self._gone_since = None
         self.devices = [self.room, self.switch, self.alarm]
 
     # ------------------------------------------------------------ Venus OS
@@ -270,7 +272,21 @@ class TrumaHeater(object):
             elif self._last_code:
                 log.info('heater code cleared (%s)', self._last_code)
             self._last_code = text
+        # A warning that comes and goes (low voltage, a window opened) would raise a new Venus OS alarm -
+        # and a VRM e-mail - every time: keep showing it until the heater has been clear for CODE_CLEAR_S.
+        now = monotonic_s()
+        if text:
+            self._gone_since = None
+            self._shown = (level, text)
+        elif self._shown[0]:
+            if self._gone_since is None:
+                self._gone_since = now
+            if now - self._gone_since >= self.CODE_CLEAR_S:
+                self._shown, self._gone_since = (0, None), None
+        level, text = self._shown
         self.alarm.publish(level, ('%s: %s' % (self.name, text)) if text else self.name)
+
+    CODE_CLEAR_S = 600
 
     def _frost(self, d):
         """Frost guard: room too cold with the heating off -> switch it on, once per cold spell."""

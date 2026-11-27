@@ -70,6 +70,7 @@ class GreyTank(object):
         self.devices = [self.tank]
         self.alarm = None
         self._alarm_on = False
+        self._full_since = None
         self._last = None
         if config.getboolean('grey_alarm', True):
             self.alarm_pct = config.getfloat('grey_alarm_pct', 100.0)
@@ -78,6 +79,8 @@ class GreyTank(object):
                 default_instance=config.getint('grey_alarm_instance', 28),
                 custom_name='%s full' % self.name, timeout_s=timeout)
             self.devices.append(self.alarm)
+
+    GREY_CONFIRM_S = 120     # full this long before the alarm rises
 
     def level_of(self, wet, rods):
         """Level in % with `wet` rods wet (counted by the highest wet one)."""
@@ -105,10 +108,22 @@ class GreyTank(object):
     def _alarm_check(self, level):
         if self.alarm is None:
             return
-        on = level >= self.alarm_pct
-        if on != self._alarm_on:
-            self._alarm_on = on
-            (log.warning if on else log.info)('grey tank %s: %.0f %%', 'full alarm' if on else 'alarm cleared', level)
+        # A rod splashed while driving must not toggle the alarm (VRM e-mails every new alarm): it rises only
+        # after the tank has been full for GREY_CONFIRM_S, and clears only when the tank has been emptied
+        # to half the alarm level or less.
+        now = monotonic_s()
+        if not self._alarm_on:
+            if level < self.alarm_pct:
+                self._full_since = None
+            elif self._full_since is None:
+                self._full_since = now
+            if self._full_since is not None and now - self._full_since >= self.GREY_CONFIRM_S:
+                self._alarm_on = True
+                log.warning('grey tank full alarm: %.0f %%', level)
+        elif level <= self.alarm_pct / 2.0:
+            self._alarm_on, self._full_since = False, None
+            log.info('grey tank alarm cleared: %.0f %%', level)
+        on = self._alarm_on
         self.alarm.publish(2 if on else 0, ('%s: %.0f %% - empty the grey water tank' % (self.name, level))
                            if on else '%s full' % self.name)
 
