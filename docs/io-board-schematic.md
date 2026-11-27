@@ -10,7 +10,7 @@ part and value. It is the base for the KiCad schematic and layout, not yet a man
 | ![board](io-board/3d-board.png) | ![open](io-board/3d-case-open.png) | ![closed](io-board/3d-case-closed.png) |
 
 The casing slides through the LT 100 opening; the front plate (135 × 60 mm) closes it and carries
-the USB-C tablet socket, the 12 V button, the "12 V on" and status LEDs and the vent slots for the
+the USB-C tablet socket, the 12 V ON and OFF buttons, the "12 V on" and status LEDs and the vent slots for the
 humidity sensor. The programming USB-C sits behind the plate.
 
 ## Schematic sheets
@@ -19,7 +19,7 @@ humidity sensor. The programming USB-C sits behind the plate.
 2. [ESP32-S3](io-board/schematic/sheet2.png): module, USB-C programming, reset/boot, all pin assignments
 3. [EBL 119 and front plate](io-board/schematic/sheet3.png): ON/OFF photoMOS, "12 V on" and mains inputs, front LED and button
 4. [Tanks](io-board/schematic/sheet4.png): ST2 fresh water (pressure sensor + probe), ST3 grey rods
-5. [Lights](io-board/schematic/sheet5.png): inside and outdoor light relays with current sense
+5. [Outputs 1 and 2](io-board/schematic/sheet5.png): relays with current sense
 6. [Truma, CP plus 12 V, inputs](io-board/schematic/sheet6.png): LIN transceiver, RJ12 in/out, fused 12 V for the CP plus, 3 inputs
 7. [USB PD, sensors, expansion](io-board/schematic/sheet7.png): 30 W tablet charging, tilt + humidity, RJ45 expansion
 
@@ -33,12 +33,13 @@ humidity sensor. The programming USB-C sits behind the plate.
 | D1, D2 | SS34 | supply OR-ing, reverse polarity |
 | D4 | SMBJ24A | 12 V transient clamp |
 | F1 / F2 | 0.5 A PTC / 10 A blade fuse | ST1 supply / 12 V AUX |
-| U5, U6 | AQY212EH photoMOS | EBL ON / OFF pulses |
+| U5, U6 | AQY212EH photoMOS | EBL ON / OFF pulses from the ESP32 |
+| SW3, SW4 | front push buttons | EBL ON / OFF by hand (direct) |
 | U7, U8, U70–U72 | PC817 | "12 V on", mains, inputs 1–3 |
-| K1, K2 | 12 V relay, changeover, 5 A (e.g. Song Chuan 833H-1C-C) | inside and outdoor light |
+| K1, K2 | 12 V relay, changeover, 5 A (e.g. Song Chuan 833H-1C-C) | Output 1, Output 2 |
 | Q1, Q2 | AO3400 | relay drivers |
-| U11, U21 | INA180A3 + LMV331 | lamp current sense ("light on") |
-| F4, F5 | 5 A fuse | light outputs |
+| U11, U21 | INA180A3 + LMV331 | output current sense ("output on") |
+| F4, F5 | 5 A fuse | Output 1, Output 2 |
 | U60 | TJA1021T/20 | Truma LIN bus |
 | D60 | PESD1LIN | LIN ESD protection |
 | F6 | 1 A PTC | 12 V for the CP plus |
@@ -81,25 +82,18 @@ projects. What is right, what to check, and what I recommend changing.
   the bus: the new fused **CP plus 12 V** terminal feeds it from Spare 4, so heating, frost guard
   and timer keep working with the EBL main switch off.
 
-**Recommended changes (not yet in the drawings, your choice)**
+**Decisions**
 
-1. **A 12 V on/off that works without the ESP32.** With the LT 100 gone, the front button
-   needs the firmware: if the ESP32 is dead or being updated, nothing switches the 12 V on.
-   Fix: two small front buttons (ON, OFF) wired **directly** to ST1 green and yellow, exactly
-   like the LT 100's buttons; the ESP32 only reads them. About €1.
-2. **Latching (bistable) relays for the lights.** A normal relay drops for a moment whenever the
-   ESP32 restarts (power dip, firmware update): in the two-way circuit that **toggles the
-   light**. A latching relay keeps its position without power and saves about 35 mA per light.
-   It needs a second drive line per relay: GPIO45 and GPIO46 can do that (with pull-downs they
-   stay low at start-up, as those pins require).
-3. **Check the EBL Spare 4 fuse.** 12 V AUX can draw up to about 10 A (two lights, 30 W charging,
-   CP plus, expansion); the board's F2 is 10 A. The fuse in the EBL's Spare 4 slot must be at
-   least that, or the lights and charging share whatever it allows.
+1. **12 V on/off without the ESP32: done.** Two front buttons (ON, OFF) wired straight to ST1
+   green and yellow, like the LT 100's (sheet 3). The ESP32 still switches the EBL itself through
+   the photoMOS outputs and sees every change on the "12 V on" wire.
+2. **Relays: normal (non-latching), decided.** They drop for a moment when the ESP32 restarts.
+3. **EBL Spare 4 fuse: to check in the van.** 12 V AUX can draw up to about 10 A (both outputs,
+   30 W charging, CP plus, expansion); the board's F2 is 10 A.
 4. **Grey water sensor:** a passive 5-rod probe on about 5 m of cable. Its wire colours from the
    datasheet are uncertain (two of ge/gr): find the common and each level with the beep test.
-   The rod inputs now use 10 kΩ series, 100 nF and 100 kΩ pull-down (sheet 4) for the long cable.
-5. **RJ45 carries 12 V.** Keep the "NOT ETHERNET" label on the casing, or use a different plug
-   (e.g. a 6-pin Micro-Fit) so nobody plugs a network cable in by mistake.
+   The rod inputs use 10 kΩ series, 100 nF and 100 kΩ pull-down (sheet 4) for the long cable.
+5. **RJ45 stays**, labelled "EXPANSION – NOT ETHERNET" on the casing.
 
 **Next steps**
 
