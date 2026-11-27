@@ -55,7 +55,6 @@ Qty,References,Value,Footprint,Symbol
 1,U60,TJA1021T/20,Package_SO:SOIC-8_3.9x4.9mm_P1.27mm,Interface_CAN_LIN:TJA1021T
 2,F6 F8,1A,Fuse:Fuse_1812_4532Metric,Device:Polyfuse
 1,J10,inputs push-in,"TerminalBlock_Phoenix:TerminalBlock_Phoenix_PT-1,5-4-3.5-H_1x04_P3.50mm_Horizontal",Connector:Screw_Terminal_01x04
-1,JP10,JP COM,Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm,Jumper:SolderJumper_2_Bridged
 1,F7,4A,Fuse:Fuse_1812_4532Metric,Device:Fuse
 1,Q80,AO3401A,Package_TO_SOT_SMD:SOT-23,Transistor_FET:AO3401A
 1,Q81,2N7002,Package_TO_SOT_SMD:SOT-23,Transistor_FET:2N7002

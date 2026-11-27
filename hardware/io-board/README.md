@@ -1,4 +1,4 @@
-# I/O board – KiCad project (rev 0.1, planning)
+# I/O board – KiCad project (rev 0.1, routed, ready to order)
 
 KiCad 7 project for the board described in [docs/io-board.md](../../docs/io-board.md) and
 [docs/io-board-schematic.md](../../docs/io-board-schematic.md). Open `io-board.kicad_pro` in
@@ -6,31 +6,43 @@ KiCad 7 or newer.
 
 | File | What |
 |---|---|
-| `io-board.kicad_sch` | Schematic: 148 parts, every part with a real library symbol and footprint, connected by net labels, grouped in 7 sections (power, ESP32, EBL, tanks, outputs, Truma + inputs, USB PD + sensors + expansion) |
-| `io-board.kicad_pcb` | Board 120 × 140 mm with all footprints placed as in the placement plan, nets assigned (ratsnest shown), 4 × M3 holes, GND planes on both layers. **Tracks not routed yet** |
-| `io-board.dsn` | The board exported for the Freerouting autorouter (with the net classes) |
+| `fab/io-board-gerbers.zip` | **Send this to the board maker:** Gerbers (2 layers, mask, paste, silkscreen, outline) and Excellon drill files (PTH and NPTH separate) |
+| `fab/io-board-pos.csv` | Pick-and-place file (147 parts, all on top) for assembly |
+| `fab/io-board-bom.csv`, `io-board-bom.csv` | Parts list grouped by value and footprint (147 parts; net ties and the JP10 solder jumper are copper only) |
+| `io-board.kicad_pcb` | Board 120 × 140 mm, 2 layers, **fully routed**: 0 unconnected, 0 DRC errors (see Checked) |
+| `io-board.kicad_sch` | Schematic: 152 symbols (148 parts + 4 net ties), grouped in 7 sections (power, ESP32, EBL, tanks, outputs, Truma + inputs, USB PD + sensors + expansion) |
 | `io-board-schematic.pdf` | The schematic as PDF |
-| `io-board-bom.csv` | Parts list grouped by value and footprint |
 | `io-board.net` | Netlist exported by KiCad |
-| `pcb-placement.png` | Preview of the placement |
+| `io-board.dsn` | The unrouted board for Freerouting (with the net classes) |
+| `pcb-front.png`, `pcb-back.png` | Copper previews of both layers |
+| `pcb-placement.png` | Preview of the placement (before routing) |
 | `io_board.kicad_sym`, `sym-lib-table` | Project library with the PCA9615 symbol (not in the KiCad library) |
-| `tools/` | The scripts that generate the schematic and the board from `parts.py` (the netlist in plain Python) |
+| `tools/` | Scripts: generate schematic and board from `parts.py`, rules, routing import, finishing, BOM, fab files |
 
-![placement](pcb-placement.png)
+**Order:** 2 layers, 1.6 mm FR-4, 1 oz (35 µm) copper, min. track/gap 0.15 mm, min. drill 0.3 mm,
+any solder mask colour, HASL or ENIG.
+
+![front](pcb-front.png)
+![back](pcb-back.png)
 
 ## Checked
 
-* KiCad reads the schematic and exports the netlist: 148 components, 113 named nets; the only
+* **DRC (KiCad 7, with the KiCad libraries): 0 errors, 0 unconnected pads.** 18 warnings remain,
+  all accepted: 12 × silkscreen of the 12 mm buttons over their pads (removed in the Gerbers,
+  which subtract the solder mask), 5 × silkscreen of J3/J8/J9 and the ESP32 antenna past the
+  board edge (these parts overhang on purpose), 1 × ESP32 footprint differs from the library
+  (its thermal vias are 0.3 mm instead of 0.2 mm, the 2-layer fab minimum).
+* KiCad reads the schematic and exports the netlist: 152 components, 117 named nets; the only
   one-pin nets are pins left open on purpose (spare ESP32 pins, sensor pins not used, SBU, LED DOUT).
 * Electrical rules checked on KiCad's netlist: no two outputs on one net, every power input fed
   (power flags on GND, V12_SYS, V12_AUX, LIN_VBAT and the supplies).
-* All 148 footprints are linked to their symbols (Tools → Update PCB from Schematic works).
+* All footprints are linked to their symbols (Tools → Update PCB from Schematic works).
 * No footprints overlap; all inside the outline (the ESP32 antenna keep-out sits at the back edge).
 * Silkscreen: only small reference designators (placed so none overlaps a pad or another text),
   pin names next to every push-in terminal (J5: AUX+, GND, O1 C/NO/NC, O2 C/NO/NC, CP+, GND;
   J10: COM, IN1–IN3); part values are on the Fab layer only.
-* KiCad 7's command line has no ERC/DRC: run **Inspect → Electrical Rules Checker** and, after
-  routing, the DRC in the KiCad GUI.
+* KiCad 7's command line has no ERC: run **Inspect → Electrical Rules Checker** once in the GUI
+  if you change the schematic.
 
 ## Before ordering
 
@@ -46,9 +58,9 @@ KiCad 7 or newer.
    front plate), switched by Q80; no PD chip on this board.
 6. **Tilt sensor:** order the **LIS3DH** (LGA-16 3 × 3, as on the board). The LIS2DH12 is LGA-12
    2 × 2 and does not fit this footprint.
-7. **Routing:** 2 layers, ground pour on both sides; wide tracks (≥ 2 mm, or copper pours) for
-   12 V AUX, the outputs and the relay contacts (5 A); keep the antenna end free of copper.
-8. Then DRC, gerbers, one prototype.
+7. **Stock:** check every BOM line at the distributor, especially PCA9615DP, LIS3DH, AQY212EH,
+   TSR 1-2450, the 2 W shunts and the 0 Ω 2512 links (JP1/JP2, rated ≥ 6 A).
+8. Order one prototype first.
 
 ## Checked against datasheets
 
@@ -75,45 +87,47 @@ wire is an ≈ 8 V indicator, so no high-voltage clearances are needed.
 
 **Still for you to check (not possible from here):**
 
-* **Stock:** check every line of the BOM at the distributor before ordering, especially PCA9615DP,
-  LIS3DH, AQY212EH, TSR 1-2450 and the 2 W shunts.
-* **12 V AUX current:** F2 is 10 A, but a 2 mm track on 35 µm copper carries ≈ 5–7 A at 10–20 °C rise.
-  Order **2 oz (70 µm) copper**, or add a V12_AUX copper pour from F2 to the relays, fuses and Q80.
-* **Heat:** R50/R51 (1.25 W each at 5 A), Q80 (≈ 0.4 W at 2.5 A) and U2 (up to ≈ 0.8 W) need copper
-  around their pads; look at them in the routed board.
+* **Stock:** see Before ordering, 7.
 * **Pressure sensor:** the ADC input has no divider, so it is for the 0–3.3 V sensor (QDY30A). A
   0.5–4.5 V sensor needs a divider at R21/R22.
-* **RJ45 expansion:** pins 1–2 carry 12 V, so mark the socket so no Ethernet cable is plugged in.
 * **AO3401A turn-off:** R80/R83 make Q80 switch slowly (100 k); fine for the PD module, not for PWM.
 
-## Routing (next step)
-
-Design rules are in the project (net classes):
+## Layout and routing
 
 | Class | Track | Clearance | Nets |
 |---|---|---|---|
-| HighCurrent | 2.0 mm | 0.3 mm | 12 V AUX, both outputs (C/NO/NC, shunts, fuses), USB PD supply |
-| Power | 0.4 mm | 0.15 mm | 12 V system, +5 V, +3.3 V, GND, LIN supply, sensor and CP plus 12 V, relay coils |
-| Default | 0.25 mm | 0.15 mm | all signals |
+| HighCurrent | 2.0 mm | 0.3 mm | 12 V AUX, both outputs (C/NO/NC, shunts, fuses, JP1/JP2), USB PD supply |
+| Power | 0.3 mm | 0.15 mm | 12 V system, +5 V, +3.3 V, GND, LIN supply, sensor and CP plus 12 V, relay coils |
+| Default | 0.25 mm | 0.15 mm | all signals, the INA180 sense lines |
 
-GND is a copper plane on both layers (the ESP32 antenna end stays free of copper).
+* **12 V AUX (F2, 10 A):** besides the 2 mm tracks, copper pours along every V12_AUX track
+  (up to 3 mm each side, both layers) carry the trunk from F2 to the output fuses, F7 and relays.
+* **Current sense:** the INA180s measure the shunts through net ties (Kelvin taps NT11–NT22), so
+  the 5 A current does not flow in their sense lines.
+* **GND:** routed as a net (tracks and vias) and in addition a copper pour on both layers; small
+  pads connect solidly, through-hole pads with thermal spokes. The ESP32 antenna end has no copper.
+* **Heat:** U2 (SOT223) sits with its tab in the GND pour; R50/R51 and Q80 have 2 mm tracks on both
+  pads; the relays and fuses have the V12_AUX pours.
+* **Silkscreen:** "EXPANSION 12V / NO ETHERNET" at the RJ45 (pins 1–2 carry 12 V).
+* The clearances are 0.15 mm so tracks reach the 0.5 mm pitch pins (LIS3DH, PCA9615, USB-C);
+  for 12 V a gap of 0.1 mm is enough (IPC-2221). The hole clearance is 0.19 mm because the USB-C
+  footprint (GCT USB4105) has its pegs 0.194 mm from its GND pads.
 
-The clearances are 0.15 mm so tracks can reach the 0.5 mm pitch pins (LIS2DH12, PCA9615, USB-C);
-for 12 V a gap of 0.1 mm is enough (IPC-2221). With 0.25 mm and 0.6 mm Power tracks, Freerouting
-left every pin on those parts unconnected.
+How the board was routed (to repeat after changes, with KiCad 7's Python and Freerouting 1.9.0;
+Freerouting needs a display, e.g. `xvfb-run`):
 
-To route with **Freerouting** (free):
-
-1. Install Java 17+ and download `freerouting-1.9.0.jar` from github.com/freerouting/freerouting.
-2. `java -jar freerouting-1.9.0.jar -de io-board.dsn -do io-board.ses -mp 30`
-   (or open the .dsn in its window and press *Autorouter*).
-3. KiCad PCB editor: *File → Import → Specctra Session* → `io-board.ses`.
-4. *Edit → Fill All Zones* (B), then *Inspect → Design Rules Checker*; fix what it reports.
-5. Check by eye: the 2 mm tracks for the outputs, short tracks around the 5 V/3.3 V parts,
-   the LIN line and USB lines kept short.
-
-KiCad's own interactive router (X key) works just as well for hand-routing, starting with the
-HighCurrent nets.
+1. `python3 tools/pcb.py && python3 tools/rules.py && python3 tools/zones.py` (in a scratch folder
+   with `io-board.kicad_pro`, see Regenerating), then remove the `(plane GND …)` entries from
+   `io-board.dsn` so GND is routed as a net.
+2. `java -jar freerouting-1.9.0.jar -de io-board.dsn -do io-board.ses -mp 100`
+3. `python3 tools/import_ses.py io-board.kicad_pcb io-board.ses drc.rpt` (KiCad 7 imports .ses only
+   in the GUI; this does it with the API).
+4. `python3 tools/stubs.py io-board.kicad_pcb` (exit tracks for the SHT40 pads past its keep-out),
+   then `python3 tools/finish_routes.py io-board.kicad_pcb` routes whatever Freerouting left
+   (grid A* with the net-class clearances) and removes dangling stubs.
+5. `python3 tools/finish.py io-board.kicad_pcb`: V12_AUX pours, JP10 off the plane, footprint library
+   names, RJ45 warning text, reference texts off other silkscreen, zones refilled.
+6. `sh tools/fab.sh` writes `fab/`.
 
 ## Regenerating
 
