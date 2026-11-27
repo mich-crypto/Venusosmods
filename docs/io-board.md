@@ -107,7 +107,7 @@ Step-by-step guide: [fresh-water-wiring.md](fresh-water-wiring.md).
 \* Pin numbers as on the LT 100's ST2 (grey 1 … white 5); confirm the pin-1 mark.
 
 * The cable has 5 wires, so the probe's ground is joined to the sensor's ground (QDY30A green)
-  in the tank plug's sensor half and shares the brown wire. Pin 6 on the board stays a spare.
+  in the tank plug's sensor half and shares the green wire. Pin 6 on the board stays a spare.
 * At the tank, the round 6-way plug's **sensor half** is re-wired (the rod probe comes out); the
   cable half and its colours stay. Its layout is the mirror image of the cable half.
 * **5 V, not 12 V**, on the brown wire: the 0–3.3 V version of the QDY30A runs on 5 V (see
