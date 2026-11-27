@@ -7,7 +7,7 @@ def C(ref,val,a,b,fp=C6): add(ref,'Device:C',val,fp,{'1':a,'2':b})
 def D(ref,sym,val,fp,a,k): add(ref,sym,val,fp,{'2':a,'1':k})
 G='GND'
 # ---------------- 1 power
-add('J4','Connector_Generic:Conn_02x03_Odd_Even','ST1 EBL (Micro-Fit 2x3)','Connector_Molex:Molex_Micro-Fit_3.0_43045-0600_2x03_P3.00mm_Horizontal',
+add('J4','Connector_Generic:Conn_02x03_Odd_Even','ST1 EBL','Connector_Molex:Molex_Micro-Fit_3.0_43045-0600_2x03_P3.00mm_Horizontal',
     {'1':'EBL_OFF','2':'EBL_ON','3':'EBL_12V','4':'EBL_MAINS','5':G,'6':'ST1_12V'},'1 yellow OFF, 2 green ON, 3 white 12V-on, 4 pink mains, 5 brown GND, 6 blue +12V')
 add('F1','Device:Polyfuse','0.5A','Fuse:Fuse_1206_3216Metric',{'1':'ST1_12V','2':'ST1_12V_F'})
 D('D1','Diode:SS34','SS34','Diode_SMD:D_SMA','ST1_12V_F','V12_SYS')
@@ -34,7 +34,7 @@ C('C5','10u','+3V3',G,C8); C('C6','100n','+3V3',G)
 R('R3','10k','+3V3','EN'); C('C7','1u','EN',G)
 add('SW1','Switch:SW_Push','RESET','Button_Switch_SMD:SW_SPST_TL3342',{'1':'EN','2':G})
 add('SW2','Switch:SW_Push','BOOT','Button_Switch_SMD:SW_SPST_TL3342',{'1':'BOOT','2':G})
-add('J1','Connector:USB_C_Receptacle_USB2.0_16P','USB-C programming','Connector_USB:USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal',
+add('J1','Connector:USB_C_Receptacle_USB2.0_16P','USB PROG','Connector_USB:USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal',
     {'A1':G,'A12':G,'B1':G,'B12':G,'S1':G,'A4':'VBUS_PROG','A9':'VBUS_PROG','B4':'VBUS_PROG','B9':'VBUS_PROG','A5':'CC1_PROG','B5':'CC2_PROG',
      'A6':'USB_DP','B6':'USB_DP','A7':'USB_DM','B7':'USB_DM','A8':'NC','B8':'NC'})
 R('R4','5.1k','CC1_PROG',G); R('R5','5.1k','CC2_PROG',G)
@@ -55,14 +55,14 @@ R('R14','2.2k','EBL_12V','N_LED12'); D('D9','Device:LED','green 3mm','LED_THT:LE
 add('SW3','Switch:SW_Push','12V ON','Button_Switch_THT:SW_PUSH-12mm',{'1':'EBL_ON','2':G},'front plate, works without the ESP32')
 add('SW4','Switch:SW_Push','12V OFF','Button_Switch_THT:SW_PUSH-12mm',{'1':'EBL_OFF','2':G},'front plate, works without the ESP32')
 # ---------------- 4 tanks
-add('J6','Connector_Generic:Conn_01x06','ST2 fresh (Micro-Fit 1x6)','Connector_Molex:Molex_Micro-Fit_3.0_43650-0600_1x06_P3.00mm_Horizontal',
+add('J6','Connector_Generic:Conn_01x06','ST2 FRESH','Connector_Molex:Molex_Micro-Fit_3.0_43650-0600_1x06_P3.00mm_Horizontal',
     {'1':'FRESH_T_RAW','2':'FRESH_P_RAW','3':G,'4':'FRESH_5V','5':'FRESH_3V3','6':'NC'},'1 grey temp data, 2 yellow pressure, 3 green GND, 4 brown +5V, 5 white +3.3V, 6 spare')
 R('R20','100','+3V3','FRESH_3V3'); add('F3','Device:Polyfuse','50mA','Fuse:Fuse_1206_3216Metric',{'1':'+5V','2':'FRESH_5V'})
 add('D20','Device:D_TVS','ESD 5V','Diode_SMD:D_SOD-323',{'1':'FRESH_P_RAW','2':G})
 R('R21','10k','FRESH_P_RAW','FRESH_PRESSURE'); C('C20','100n','FRESH_PRESSURE',G); R('R22','1M','FRESH_PRESSURE',G)
 add('D21','Device:D_TVS','ESD 5V','Diode_SMD:D_SOD-323',{'1':'FRESH_T_RAW','2':G})
 R('R23','100','FRESH_T_RAW','FRESH_TEMP'); R('R24','4.7k','+3V3','FRESH_TEMP')
-add('J7','Connector_Generic:Conn_01x05','ST3 grey (Micro-Fit 1x5)','Connector_Molex:Molex_Micro-Fit_3.0_43650-0500_1x05_P3.00mm_Horizontal',
+add('J7','Connector_Generic:Conn_01x05','ST3 GREY','Connector_Molex:Molex_Micro-Fit_3.0_43650-0500_1x05_P3.00mm_Horizontal',
     {'1':'ROD4_RAW','2':'ROD3_RAW','3':'ROD2_RAW','4':'ROD1_RAW','5':'GREY_COM'},'1 full, 2 3/4, 3 1/2, 4 1/4, 5 base (common)')
 R('R30','1k','GREY_COM_DRV','GREY_COM')
 for k in range(1,5):
@@ -73,7 +73,7 @@ R('R59','100k','+3V3','VREF'); R('R58','4.7k','VREF',G)
 for n in (1,2):
     add(f'F{3+n}','Device:Fuse','5A','Fuse:Fuse_1812_4532Metric',{'1':'V12_AUX','2':f'SH{n}_P'})
     R(f'R5{n-1}','0.05','SH'+str(n)+'_P',f'SH{n}_N','Resistor_SMD:R_2512_6332Metric')
-    add(f'JP{n}','Jumper:SolderJumper_2_Bridged','C fed (cut = dry)','Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm',{'1':f'SH{n}_N','2':f'OUT{n}_C'})
+    add(f'JP{n}','Jumper:SolderJumper_2_Bridged','JP C-feed','Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm',{'1':f'SH{n}_N','2':f'OUT{n}_C'})
     add(f'K{n}','Relay:G5LE-1','G5LE-1 12VDC',"Relay_THT:Relay_SPDT_Omron-G5LE-1",{'5':'V12_AUX','2':f'K{n}_COIL','1':f'OUT{n}_C','3':f'OUT{n}_NO','4':f'OUT{n}_NC'},f'Output {n}')
     add(f'Q{n}','Transistor_FET:AO3400A','AO3400A','Package_TO_SOT_SMD:SOT-23',{'1':f'Q{n}_G','2':G,'3':f'K{n}_COIL'})
     R(f'R{n}05','1k',f'OUT{n}_DRV',f'Q{n}_G'); R(f'R{n}06','100k',f'Q{n}_G',G)
@@ -92,7 +92,7 @@ add('U60','Interface_CAN_LIN:TJA1021T','TJA1021T/20','Package_SO:SOIC-8_3.9x4.9m
 R('R61','10k','LIN_VBAT','LIN_WAKE'); R('R62','10k','+3V3','LIN_RXD'); R('R63','100k','LIN_SLP',G)
 add('F6','Device:Polyfuse','1A','Fuse:Fuse_1812_4532Metric',{'1':'V12_AUX','2':'TRUMA_12V'},'12 V for the CP plus panel')
 add('J10','Connector:Screw_Terminal_01x04','inputs push-in','TerminalBlock_Phoenix:TerminalBlock_Phoenix_PT-1,5-4-3.5-H_1x04_P3.50mm_Horizontal',{'1':'IN_COM','2':'IN1_T','3':'IN2_T','4':'IN3_T'},'1 COM, 2 IN1 (3Gas+), 3 IN2, 4 IN3')
-add('JP10','Jumper:SolderJumper_2_Bridged','COM=GND','Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm',{'1':'IN_COM','2':G})
+add('JP10','Jumper:SolderJumper_2_Bridged','JP COM','Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm',{'1':'IN_COM','2':G})
 for k in (1,2,3):
     D(f'D7{k}','Diode:1N4148W','1N4148W','Diode_SMD:D_SOD-123',f'IN{k}_T',f'IN{k}_D')
     R(f'R7{k}','4.7k',f'IN{k}_D',f'IN{k}_A')
@@ -104,9 +104,9 @@ add('Q80','Transistor_FET:AO3401A','AO3401A','Package_TO_SOT_SMD:SOT-23',{'2':'P
 R('R80','100k','PD_SUPPLY','PD_G')
 add('Q81','Transistor_FET:2N7002','2N7002','Package_TO_SOT_SMD:SOT-23',{'3':'PD_G','2':G,'1':'PD_EN_G'})
 R('R81','1k','USB_PD_EN','PD_EN_G'); R('R82','100k','PD_EN_G',G)
-add('J2','Connector_Generic:Conn_01x02','USB-C PD 30W module','Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical',{'1':'PD_12V','2':G},'ready-made 12 V to USB-C PD 30 W module, its socket in the front plate')
+add('J2','Connector_Generic:Conn_01x02','PD module','Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical',{'1':'PD_12V','2':G},'ready-made 12 V to USB-C PD 30 W module, its socket in the front plate')
 R('R90','4.7k','+3V3','SDA'); R('R91','4.7k','+3V3','SCL'); R('R93','10k','+3V3','I2C_INT')
-add('U90','Sensor_Motion:LIS3DH','LIS2DH12 / LIS3DH','Package_LGA:LGA-16_3x3mm_P0.5mm_LayoutBorder3x5y',
+add('U90','Sensor_Motion:LIS3DH','LIS2DH12','Package_LGA:LGA-16_3x3mm_P0.5mm_LayoutBorder3x5y',
     {'1':'+3V3','14':'+3V3','5':G,'10':G,'12':G,'4':'SCL','6':'SDA','7':G,'8':'+3V3','11':'I2C_INT','9':'NC','13':'NC','15':'NC','16':'NC','2':'NC','3':'NC'},'tilt, I2C 0x18, INT1 open drain')
 C('C90','100n','+3V3',G)
 add('U91','Sensor_Humidity:SHT4x','SHT40-AD1B','Sensor_Humidity:Sensirion_DFN-4_1.5x1.5mm_P0.8mm_SHT4x_NoCentralPad',{'1':'SDA','2':'SCL','3':'+3V3','4':G},'humidity + temperature, I2C 0x44')
@@ -115,6 +115,6 @@ add('U92','io_board:PCA9615','PCA9615DP','Package_SO:TSSOP-10_3x3mm_P0.5mm',{'1'
 C('C92','100n','+3V3',G); C('C93','100n','+5V',G)
 add('F8','Device:Polyfuse','1A','Fuse:Fuse_1812_4532Metric',{'1':'V12_AUX','2':'EXP_12V'})
 R('R92','100','I2C_INT','EXP_INT')
-add('J3','Connector:RJ45','RJ45 expansion (NOT Ethernet)','Connector_RJ:RJ45_Amphenol_54602-x08_Horizontal',{'1':'EXP_12V','2':'EXP_12V','3':'DSDA_P','6':'DSDA_M','4':'DSCL_P','5':'DSCL_M','7':'EXP_INT','8':G})
+add('J3','Connector:RJ45','RJ45 EXPANSION','Connector_RJ:RJ45_Amphenol_54602-x08_Horizontal',{'1':'EXP_12V','2':'EXP_12V','3':'DSDA_P','6':'DSDA_M','4':'DSCL_P','5':'DSCL_M','7':'EXP_INT','8':G})
 # power flags
 FLAGS=['GND','V12_SYS','V12_AUX','ST1_12V','LIN_VBAT','PD_12V','+5V','+3V3','VBUS_PROG']

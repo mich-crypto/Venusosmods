@@ -25,6 +25,9 @@ KiCad 7 or newer.
   (power flags on GND, V12_SYS, V12_AUX, LIN_VBAT and the supplies).
 * All 146 footprints are linked to their symbols (Tools → Update PCB from Schematic works).
 * No footprints overlap; all inside the outline (the ESP32 antenna keep-out sits at the back edge).
+* Silkscreen: only small reference designators (placed so none overlaps a pad or another text),
+  pin names next to every push-in terminal (J5: AUX+, GND, O1 C/NO/NC, O2 C/NO/NC, CP+, GND;
+  J10: COM, IN1–IN3); part values are on the Fab layer only.
 * KiCad 7's command line has no ERC/DRC: run **Inspect → Electrical Rules Checker** and, after
   routing, the DRC in the KiCad GUI.
 

@@ -11,10 +11,10 @@ FIX={'U3':(60,12.75,0),'K1':(24,52,0),'K2':(24,76,0),'U1':(30,97,0),'U2':(42,97,
  'J5':(5,66,270),'J10':(115,37,90),'J8':(112,67,90),'J9':(112,84,90),'J3':(111,103,90),
  'J4':(40,131,180),'J6':(64,131,180),'J7':(88,131,180),'J1':(16,134,0),'J2':(26,126,0),
  'SW3':(52,116,0),'SW4':(70,116,0),'D9':(106,128,0),'D5':(113,128,0),
- 'U60':(90,40,0),'U92':(92,80,0),'U90':(64,74,0),'U91':(110,118,0),
- 'U5':(56,48,0),'U6':(56,56,0),'U7':(69,48,0),'U8':(69,56,0),'U71':(102,28,0),'U72':(102,36,0),'U73':(102,44,0),
+ 'U60':(85,40,0),'U92':(92,80,0),'U90':(64,74,0),'U91':(110,118,0),
+ 'U5':(56,48,0),'U6':(56,56,0),'U7':(69,48,0),'U8':(69,56,0),'U71':(97,27,0),'U72':(97,35,0),'U73':(97,43,0),
  'R50':(42,58,90),'R51':(42,82,90),'F4':(42,48,90),'F5':(42,72,90),'U11':(49,62,0),'U12':(49,67,0),'U21':(49,84,0),'U22':(49,89,0),
- 'Q1':(36,60,0),'Q2':(36,84,0),'Q80':(20,120,0),'Q81':(28,120,0),'F7':(13,120,90),'D4':(16,104,0),'D1':(16,96,0),'D2':(16,110,0),'F1':(16,90,0),
+ 'Q1':(36,60,0),'Q2':(36,84,0),'Q80':(20,120,0),'Q81':(28,120,0),'F7':(13,120,90),'D4':(16,104,0),'D1':(16,96,0),'D2':(16,110,0),'F1':(20,90,0),
  'SW1':(80,7,0),'SW2':(91,7,0),'U4':(16,127,0)}
 # remaining parts grouped near their circuit: region (x0,y0,x1) to pack into
 REG=[('^(R1|R2|C2|C3|C4|D3)$',(52,94,64)),('^(C5|C6|C7|R3|R4|R5|R6|C8)$',(76,16,104)),
@@ -65,6 +65,57 @@ for i,(x,y) in enumerate([(4,4),(116,4),(4,136),(116,136)]):
 # notes on the user layer
 t=pcbnew.PCB_TEXT(b); t.SetText('FRONT: ST1 / ST2 / ST3 / USB-C - faces the LT 100 opening'); t.SetPosition(pcbnew.VECTOR2I(mm(OX+60),mm(OY+146))); t.SetLayer(pcbnew.Cmts_User); t.SetTextSize(pcbnew.VECTOR2I(mm(2),mm(2))); b.Add(t)
 t=pcbnew.PCB_TEXT(b); t.SetText('ESP32 antenna: no copper under it, board edge'); t.SetPosition(pcbnew.VECTOR2I(mm(OX+60),mm(OY-4))); t.SetLayer(pcbnew.Cmts_User); t.SetTextSize(pcbnew.VECTOR2I(mm(1.5),mm(1.5))); b.Add(t)
+# ---- tidy text: values only on Fab, small references placed where they hit nothing
+for f in b.GetFootprints():
+    f.Value().SetLayer(pcbnew.F_Fab); f.Value().SetVisible(True)
+    f.Value().SetTextSize(pcbnew.VECTOR2I(mm(0.6),mm(0.6))); f.Value().SetTextThickness(mm(0.1))
+    for g in f.GraphicalItems():                      # stray footprint texts (e.g. "KEEP-OUT ZONE") -> Fab
+        if isinstance(g,pcbnew.PCB_TEXT) and g.GetLayer()==pcbnew.F_SilkS: g.SetLayer(pcbnew.F_Fab)
+def boxes_of(f):
+    out=[]
+    for p in f.Pads(): out.append(p.GetBoundingBox())
+    return out
+obst=[]
+for f in b.GetFootprints(): obst+=boxes_of(f)
+# ---- pin names next to the push-in terminals
+PINLBL={'J5':{'1':'AUX+','2':'GND','3':'O1 C','4':'O1 NO','5':'O1 NC','6':'O2 C','7':'O2 NO','8':'O2 NC','9':'CP+','10':'GND'},
+        'J10':{'1':'COM','2':'IN1','3':'IN2','4':'IN3'}}
+for f in b.GetFootprints():
+    lab=PINLBL.get(f.GetReference())
+    if not lab: continue
+    fb=f.GetBoundingBox(False,False)
+    for p in f.Pads():
+        t=pcbnew.PCB_TEXT(b); t.SetText(lab[p.GetNumber()]); t.SetLayer(pcbnew.F_SilkS)
+        t.SetTextSize(pcbnew.VECTOR2I(mm(0.9),mm(0.9))); t.SetTextThickness(mm(0.14))
+        y=p.GetPosition().y
+        if f.GetReference()=='J5':
+            t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT); t.SetPosition(pcbnew.VECTOR2I(fb.GetRight()+mm(0.8),y))
+        else:
+            t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_RIGHT); t.SetPosition(pcbnew.VECTOR2I(fb.GetLeft()-mm(0.8),y))
+        b.Add(t); obst.append(t.GetBoundingBox())
+placed_txt=[]
+def free(bb):
+    if pcbnew.ToMM(bb.GetLeft())<OX+0.3 or pcbnew.ToMM(bb.GetRight())>OX+119.7 or pcbnew.ToMM(bb.GetTop())<OY+0.3 or pcbnew.ToMM(bb.GetBottom())>OY+139.7: return False
+    return not any(bb.Intersects(o) for o in obst) and not any(bb.Intersects(t) for t in placed_txt)
+order=sorted(b.GetFootprints(),key=lambda f:-pcbnew.ToMM(f.GetBoundingBox(False,False).GetArea())/1e6)
+moved=0; bad=[]
+for f in order:
+    r=f.Reference(); big=pcbnew.ToMM(f.GetBoundingBox(False,False).GetWidth())>8
+    sz=1.0 if big else 0.7
+    r.SetTextSize(pcbnew.VECTOR2I(mm(sz),mm(sz))); r.SetTextThickness(mm(0.12 if not big else 0.15)); r.SetLayer(pcbnew.F_SilkS); r.SetTextAngle(pcbnew.EDA_ANGLE(0,pcbnew.DEGREES_T))
+    fb=f.GetBoundingBox(False,False); c=fb.GetCenter()
+    cands=[(c.x, fb.GetTop()-mm(0.8)),(c.x, fb.GetBottom()+mm(0.8)),(fb.GetLeft()-mm(2.2),c.y),(fb.GetRight()+mm(2.2),c.y),(c.x,c.y)]
+    for dx in (0,-2,2,-4,4):
+        for dy in (0,-1.5,1.5,-3,3):
+            cands.append((c.x+mm(dx),fb.GetTop()-mm(0.8)+mm(dy)))
+    ok=False
+    for (x,y) in cands:
+        r.SetPosition(pcbnew.VECTOR2I(int(x),int(y)))
+        bb=r.GetBoundingBox()
+        if free(bb): placed_txt.append(bb); ok=True; break
+    if not ok:
+        r.SetPosition(pcbnew.VECTOR2I(int(cands[0][0]),int(cands[0][1]))); placed_txt.append(r.GetBoundingBox()); bad.append(f.GetReference())
+print('reference texts not placed freely:',bad)
 pcbnew.SaveBoard('io-board.kicad_pcb',b)
 fps=list(b.GetFootprints())
 def box(f):
