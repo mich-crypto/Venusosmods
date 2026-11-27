@@ -95,14 +95,14 @@ wire (the LT 100's 12 V for the rods) now carries the sensor supply.
 | 5 | white | Base, +12 V | **GND** (pressure sensor + temperature probe) | c → QDY30A green + probe black |
 | 4 | brown | ¼ rod | **+5 V** pressure sensor supply | b → QDY30A red |
 | 3 | green | ½ rod | **+3.3 V** temperature probe supply | a → probe red |
-| 2 | yellow | ¾ rod | **pressure signal** (10 kΩ + RC to GPIO4) | d → QDY30A yellow |
+| 2 | yellow | ¾ rod | **pressure signal** (10 kΩ + RC to GPIO4) | f → QDY30A yellow |
 | 1 | grey | Full rod | **temperature data** (DS18B20, 4.7 kΩ to 3.3 V, GPIO5) | e → probe yellow |
-| 6 | – | not connected | spare | f → – |
+| 6 | – | not connected | spare | d → – |
 
 \* ST2 order (wire side, clip on top, left to right): 6 · 5 white · 4 brown · 3 green · 2 yellow · 1 grey.
-The assignment follows how the sensors are wired into the tank plug's sensor half (holes a–f,
-see the drawing); tank plug cable half, latch on top: top row white · brown · green, bottom row
-empty · grey · yellow (bottom row to confirm on the plug).
+The assignment follows the sensor wiring at the tank plug; tank plug cable half (wire side,
+latch on top, confirmed): top row white · brown · green, bottom row yellow · grey · empty.
+Step-by-step guide: [fresh-water-wiring.md](fresh-water-wiring.md).
 
 \* Pin numbers as on the LT 100's ST2 (grey 1 … white 5); confirm the pin-1 mark.
 
