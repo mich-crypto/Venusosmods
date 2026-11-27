@@ -15,9 +15,13 @@ connections below are agreed and the van wiring is measured; the schematic is ne
 | Fresh water | Pressure sensor QDY30A 0–3.3 V + water temperature probe | Micro-Fit 6-pin, 1 row, label **PRESSURE** |
 | Grey water | Rod sender (common + 4 rods), same plug as on the LT 100 | Micro-Fit 5-pin, 1 row |
 | Truma CP plus | LIN bus, TJA1021 transceiver | RJ12 |
-| 2 relays | 10 A at 14 V DC, changeover contacts (C / NO / NC), LED each | push-in, ≥ 10 A |
-| 2 silent outputs | Low-side MOSFET, about 3 A, flyback diode, LED each | push-in |
-| 4 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
+| 4 relays | 10 A at 14 V DC, changeover contacts (C / NO / NC), LED each | push-in, ≥ 10 A |
+| 4 silent outputs, dimmable | Low-side MOSFET, about 5 A, PWM (LED strips, fan speed), flyback diode, LED each | push-in |
+| 8 inputs | Isolated (optocoupler), 5–30 V; jumper per input: "12 V on alarm" or "switches to ground" | push-in |
+| 2 analog inputs | Jumper per input: 0–10 V, 4–20 mA, or resistive sender (0–190 Ω / 240–33 Ω, e.g. a second tank or a fuel sender); 16-bit (ADS1115) | push-in |
+| Battery voltage | Precise measurement of the leisure battery (ST1 blue) and of 12 V AUX (ADS1115) | – |
+| CAN bus | Transceiver (SN65HVD230) with jumper for the 120 Ω end resistor, for later (e.g. vehicle or other CAN devices); the ESP32's own CAN controller | push-in or RJ45 |
+| Spare pins | 4 native GPIO + 3.3 V + GND on a header | 2.54 mm header |
 | Tilt | Accelerometer LIS2DW12 (levelling, water tank slope correction, movement) | on the board |
 | Temperature probe 2 | DS18B20 | push-in |
 | Display power | 12 V out, fused 1 A, for the wall display (its own ESP32, data over Wi-Fi) | push-in |
@@ -25,7 +29,7 @@ connections below are agreed and the van wiring is measured; the schematic is ne
 | Service | USB-C (flashing, native USB), Boot and Reset buttons, RGB status LED | – |
 | Not on the board | Buzzer, RS485, LT 100 tank LED drive | – |
 
-Enclosure: ABS box about 120 × 80 mm with cable glands, screwed to the wall; the board
+Enclosure: ABS box about 160 × 120 mm (with 4 relays and 8 inputs) with cable glands, screwed to the wall; the board
 screwed down firmly (the tilt sensor needs it).
 
 ## EBL 119 ↔ LT 100 cable (ST1) – measured
@@ -84,45 +88,70 @@ see [wiring.md](wiring.md#grey-water-tank-rod-sender-5-wire-plug)).
 |---|---|---|
 | 1 | Gas/CO alarm Karman 3Gas+ (white wire "Alarm out") | **12 V on alarm** (measured) |
 | 2 | Smoke alarm (separate 12 V detector with alarm contact; the 3Gas+ does not detect smoke) | to choose |
-| 3, 4 | spare | – |
+| 3–8 | spare, e.g. ignition / D+, entrance door, electric step out, roof hatch, water pump running, 2nd gas sensor | – |
 
 Mains present and "12 V on" come from ST1 and don't use these inputs.
 
-## Pin plan (ESP32-S3)
+## Pin plan
+
+All ESP32 pins are used directly for the things that need speed or the ESP32's own hardware
+(ADC, PWM, LIN, CAN, 1-Wire). Everything that only switches or reads on/off goes through an
+I/O expander on the I²C bus, which gives 16 more lines without using pins.
+
+**ESP32-S3 (native)**
 
 | Function | GPIO |
 |---|---|
 | Pressure sensor | 4 |
 | Temperature probe 1 / 2 | 5 / 6 |
 | Grey tank: common / rods (lowest first) | 9 / 1, 2, 7, 8 |
-| Supply voltage measurement | 10 |
-| Inputs 1–4 | 11, 12, 13, 14 |
-| I²C (tilt sensor, expansion) | 15, 16 |
-| Tilt sensor interrupt | 47 |
+| Supply voltage (fallback, ADC) | 10 |
+| I²C (tilt sensor, I/O expander, ADC, expansion) | 15, 16 |
+| Interrupt from the tilt sensor and the I/O expander (shared, open-drain) | 47 |
 | Truma LIN RX / TX / SLP | 17 / 18 / 21 |
-| Relay 1 / 2 | 38 / 39 |
-| Silent output 1 / 2 | 40 / 41 |
-| EBL ON / OFF / "12 V on" | 35 / 36 / 37 |
-| Mains indicator | 42 |
+| Silent outputs 1–4 (PWM) | 38, 39, 40, 41 |
+| CAN TX / RX | 11 / 12 |
+| Spare header | 13, 14, 35, 36 |
 | RGB status LED | 48 |
 | USB-C | 19, 20 |
-| Kept free | 45, 46 (strapping), 0, 3 |
+| Kept free | 37, 42 (reserve), 45, 46, 0, 3 (strapping) |
 
 GPIO35–37 are free on the N8 module (no octal PSRAM). Only GPIO1–10 have the ADC that works
-together with Wi-Fi, so all analog signals are there.
+together with Wi-Fi, so the ESP32's own analog signals are there.
+
+**I/O expander MCP23017 (I²C, 16 lines)**
+
+| Lines | Function |
+|---|---|
+| GPA0–GPA7 | Inputs 1–8 (optocouplers) |
+| GPB0–GPB3 | Relays 1–4 (through a driver with flyback diodes) |
+| GPB4 / GPB5 | EBL ON / OFF pulse (optocoupler to ground) |
+| GPB6 / GPB7 | EBL "12 V on" / mains indicator (optocoupler inputs) |
+
+**ADC ADS1115 (I²C, 4 channels, 16-bit)**
+
+| Channel | Function |
+|---|---|
+| A0 / A1 | Analog inputs 1 / 2 (0–10 V, 4–20 mA or resistive, by jumper) |
+| A2 | Leisure battery voltage (ST1 blue, divider) |
+| A3 | 12 V AUX voltage (divider) |
+
+I²C addresses: LIS2DW12 0x18, MCP23017 0x20, ADS1115 0x48; the expansion header shares the bus.
 
 ## Protection
 
 * 12 V inputs: fuse (polyfuse), reverse-polarity protection, TVS diode (van transients).
 * Sensor, rod and probe lines: series resistors and ESD protection.
 * Relay coils and outputs: flyback diodes.
-* Power use about 0.5 W (≈ 1 Ah/day from the leisure battery).
+* Power use about 0.5 W idle (≈ 1 Ah/day from the leisure battery); each switched-on relay adds about 0.4 W.
 
 ## Firmware and pages (after the board)
 
 * EBL: "12 V system" switch in Venus OS, on the mods page and on the display; mains present as a status.
 * Inputs: gas/CO and smoke as Venus OS alarms and notifications.
-* Relays and outputs: switches in Venus OS (switch pane) and on the display.
+* Relays and outputs: switches in Venus OS (switch pane) and on the display; outputs also dimmable (0–100 %).
+* Rules on the board itself, also without the Pi: e.g. pump off when the fresh tank is empty, fan on
+  above a temperature, light on when the door opens, warning when driving with the step out.
 * Tilt: levelling page (pitch, roll, how much to raise which wheel), water volume corrected for
   slope, "set level" calibration, movement alarm.
 
