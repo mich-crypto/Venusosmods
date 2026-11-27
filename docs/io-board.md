@@ -90,14 +90,19 @@ wire (the LT 100's 12 V for the rods) now carries the sensor supply.
 
 ![Fresh water: board plug, cable and tank plug](io-board/fresh-water-cable.png)
 
-| Pin* | Wire | Was (rods, LT 100) | Now (board) | Sensor / probe wire |
+| Pin* | Wire | Was (rods, LT 100) | Now (board) | Tank plug hole → sensor wire |
 |---|---|---|---|---|
-| 5 | white | Base, +12 V | **+5 V sensor supply** | QDY30A red (V+) |
-| 4 | brown | ¼ rod | **GND** (pressure sensor and temperature probe) | QDY30A green (V−) + probe black, joined in the tank plug |
-| 3 | green | ½ rod | **pressure signal** (10 kΩ + RC to GPIO4) | QDY30A yellow (out) |
-| 2 | yellow | ¾ rod | **water temperature data** (DS18B20, 4.7 kΩ to 3.3 V) | probe yellow (data) |
-| 1 | grey | Full rod | **+3.3 V** for the temperature probe | probe red (VDD) |
-| 6 | – | not connected | spare (probe GND if a 6th wire is ever run) | – |
+| 5 | white | Base, +12 V | **GND** (pressure sensor + temperature probe) | c → QDY30A green + probe black |
+| 4 | brown | ¼ rod | **+5 V** pressure sensor supply | b → QDY30A red |
+| 3 | green | ½ rod | **+3.3 V** temperature probe supply | a → probe red |
+| 2 | yellow | ¾ rod | **pressure signal** (10 kΩ + RC to GPIO4) | d → QDY30A yellow |
+| 1 | grey | Full rod | **temperature data** (DS18B20, 4.7 kΩ to 3.3 V, GPIO5) | e → probe yellow |
+| 6 | – | not connected | spare | f → – |
+
+\* ST2 order (wire side, clip on top, left to right): 6 · 5 white · 4 brown · 3 green · 2 yellow · 1 grey.
+The assignment follows how the sensors are wired into the tank plug's sensor half (holes a–f,
+see the drawing); tank plug cable half, latch on top: top row white · brown · green, bottom row
+empty · grey · yellow (bottom row to confirm on the plug).
 
 \* Pin numbers as on the LT 100's ST2 (grey 1 … white 5); confirm the pin-1 mark.
 
@@ -105,7 +110,7 @@ wire (the LT 100's 12 V for the rods) now carries the sensor supply.
   in the tank plug's sensor half and shares the brown wire. Pin 6 on the board stays a spare.
 * At the tank, the round 6-way plug's **sensor half** is re-wired (the rod probe comes out); the
   cable half and its colours stay. Its layout is the mirror image of the cable half.
-* **5 V, not 12 V**, on the white wire: the 0–3.3 V version of the QDY30A runs on 5 V (see
+* **5 V, not 12 V**, on the brown wire: the 0–3.3 V version of the QDY30A runs on 5 V (see
   [wiring.md](wiring.md)). Do not plug this cable back into an LT 100 afterwards.
 * The pressure sensor's vent tube needs open air: make the joint at the tank in a small dry box
   (see the note on extending the sensor cable in [wiring.md](wiring.md)).
@@ -188,8 +193,8 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 
 | Function | GPIO |
 |---|---|
-| Pressure sensor (ST2 green) | 4 |
-| Temperature probe (water, ST2 yellow) | 5 |
+| Pressure sensor (ST2 yellow) | 4 |
+| Temperature probe (water, ST2 grey) | 5 |
 | Grey rods ST3: common / rods (lowest first) | 9 / 1, 2, 7, 8 |
 | Leisure battery voltage (ST1 blue, divider) | 10 |
 | I²C (tilt sensor, expansion) | 15, 16 |
