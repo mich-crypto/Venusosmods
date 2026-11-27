@@ -16,9 +16,12 @@ b = pcbnew.LoadBoard(path)
 fpname = {p[0]: p[3] for p in parts.P}
 for f in b.GetFootprints():
     r = f.GetReference()
-    lib, name = (fpname[r].split(':') if r in fpname else ('MountingHole', 'MountingHole_3.2mm_M3'))
+    lib, name = (fpname[r].split(':') if r in fpname else ('Fiducial', 'Fiducial_1mm_Mask2mm') if r.startswith('FID') else ('MountingHole', 'MountingHole_3.2mm_M3'))
     f.SetFPID(pcbnew.LIB_ID(lib, name))
 
+for f in b.GetFootprints():          # fiducials: copper only, nothing to place
+    if f.GetReference().startswith('FID'):
+        f.SetAttributes(f.GetAttributes() | pcbnew.FP_EXCLUDE_FROM_POS_FILES | pcbnew.FP_EXCLUDE_FROM_BOM | pcbnew.FP_BOARD_ONLY)
 for p in b.FindFootprintByReference('JP10').Pads():
     p.SetZoneConnection(pcbnew.ZONE_CONNECTION_NONE)
 

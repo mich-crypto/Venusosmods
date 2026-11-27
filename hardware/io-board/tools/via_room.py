@@ -1,5 +1,5 @@
 # Make room for a via cluster where a 5 A path changes layer in a crowded spot:
-#   python3 via_room.py ../io-board.kicad_pcb
+#   python3 via_room.py ../io-board.kicad_pcb NET:x:y [NET:x:y ...]   (x, y of an existing via, mm)
 # At each SPOT: thin tracks/vias of other nets within CLEAR mm are removed (finish_routes.py
 # routes them again around the cluster), then up to 12 vias 0.6/0.3 are set within 1.2 mm of the
 # layer change, each keeping 0.3 mm clearance, and copper squares join them on both layers
@@ -7,7 +7,7 @@
 # A via is kept only if copper of its net reaches it on both layers (otherwise it carries nothing).
 import sys, math, pcbnew
 mm = pcbnew.FromMM
-SPOTS = [('OUT1_C', 129.115, 130.17)]   # the only 5 A layer change with too few vias (JP1 -> K1 COM)
+SPOTS = [(a.split(':')[0], float(a.split(':')[1]), float(a.split(':')[2])) for a in sys.argv[2:]]   # net:x:y of a 5 A via
 CLEAR, VIA_D, VIA_DR, CL = 2.4, mm(0.6), mm(0.3), mm(0.3)
 HC = ('V12_AUX', 'SH1_P', 'SH1_N', 'OUT1_C', 'SH2_P', 'SH2_N', 'OUT2_C', 'PD_SUPPLY', 'PD_12V',
       'OUT1_NO', 'OUT1_NC', 'OUT2_NO', 'OUT2_NC', 'V12_AUX_IN')

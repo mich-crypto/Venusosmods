@@ -21,7 +21,7 @@ PAD1={'SW3':(87.4,137.2,180),'SW4':(97.9,137.2,180),'D9':(102.55,136.5,0)}
 NEAR={'C1':('U1','1'),'C9':('U1','3'),'C2':('U2','1'),'C3':('U2','3'),'C5':('U3','2'),'C6':('U3','2'),'C7':('U3','3'),'R3':('U3','3'),
       'C4':('U3','18'),'C60':('U60','7'),'C90':('U90','14'),'C91':('U91','3'),'C92':('U92','1'),'C93':('U92','10'),
       'C8':('D5','4'),'D6':('D5','4'),'R6':('D5','3'),'C94':('U11','5'),'C95':('U12','5'),'C96':('U21','5'),'C97':('U22','5'),
-      'R7':('Q3','1'),'D13':('Q3','1'),'U93':('J3','4')}
+      'R7':('Q3','1'),'D13':('Q3','1'),'U93':('J3','4'),'R108':('U12','4'),'R208':('U22','4')}
 # SHT40 thermal slot: 1 mm wide U-shaped cut-out around a 7 x 7 mm island, open to the left
 SLOT_C=(110,118); SLOT_IN=3.5; SLOT_W=1.0
 # remaining parts grouped near their circuit: region (x0,y0,x1) to pack into
@@ -94,7 +94,7 @@ def cbox(f):
     c=f.GetCourtyard(pcbnew.F_CrtYd)
     return c.BBox() if c.OutlineCount() else f.GetBoundingBox(False,False)
 def obstacles():      # same boxes as the overlap check below: module body for U3, full outline otherwise
-    obs=[pcbnew.BOX2I(pcbnew.VECTOR2I(mm(OX+51),mm(OY)),pcbnew.VECTOR2I(mm(18),mm(25.5))) if f.GetReference()=='U3'
+    obs=[pcbnew.BOX2I(pcbnew.VECTOR2I(mm(OX+50),mm(OY)),pcbnew.VECTOR2I(mm(20),mm(26.5))) if f.GetReference()=='U3'
          else f.GetBoundingBox(False,False) for f in b.GetFootprints()]+slot_boxes
     obs+=[pcbnew.BOX2I(pcbnew.VECTOR2I(mm(OX+x-3.6),mm(OY+y-3.6)),pcbnew.VECTOR2I(mm(7.2),mm(7.2))) for x,y in [(4,4),(116,4),(4,136),(116,136)]]  # M3 holes (added later)
     for f in b.GetFootprints():
@@ -185,7 +185,7 @@ pcbnew.SaveBoard('io-board.kicad_pcb',b)
 fps=list(b.GetFootprints())
 def box(f):
     if f.GetReference()=='U3':
-        r=pcbnew.BOX2I(pcbnew.VECTOR2I(mm(OX+51),mm(OY)),pcbnew.VECTOR2I(mm(18),mm(25.5))); return r
+        r=pcbnew.BOX2I(pcbnew.VECTOR2I(mm(OX+50),mm(OY)),pcbnew.VECTOR2I(mm(20),mm(26.5))); return r
     return f.GetBoundingBox(False,False)
 bbs=[(f.GetReference(),box(f)) for f in fps]
 ov=[]

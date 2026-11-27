@@ -68,6 +68,15 @@ def route(net, src_item, dst_item, margin=12):
             for L in LAYERS:
                 if g.GetLayer() == L:
                     mark(g, L, cl_own + half + mm(0.02), blocked[L]); mark(g, L, cl_own + VIA_D // 2 + mm(0.02), vblock)
+    for z in b.Zones():                             # board-level keep-outs (SHT40 slot)
+        if z.GetIsRuleArea() and z.GetDoNotAllowTracks():
+            for L in LAYERS:
+                if z.IsOnLayer(L): mark(z, L, half, blocked[L])
+            mark(z, pcbnew.F_Cu, VIA_D // 2, vblock)
+    for d in b.GetDrawings():                       # board outline and cut-outs: 0.5 mm edge clearance
+        if d.GetLayer() == pcbnew.Edge_Cuts:
+            for L in LAYERS: mark(d, L, EDGE + half, blocked[L])
+            mark(d, pcbnew.F_Cu, EDGE + VIA_D // 2, vblock)
     for f in b.GetFootprints():                      # keep-outs (tracks/vias not allowed)
         for z in f.Zones():
             if z.GetIsRuleArea() and z.GetDoNotAllowTracks():
@@ -213,14 +222,17 @@ def clone(t):
     c.SetLayer(t.GetLayer()); c.SetNet(t.GetNet()); return c
 # vias of one net closer than 0.6 mm (the router can flip layers twice in a row): drop one when
 # that opens nothing
-vs = [t for t in b.GetTracks() if t.Type() == pcbnew.PCB_VIA_T]
-for i, v in enumerate(vs):
-    for w in vs[i + 1:]:
-        if v.GetNetCode() == w.GetNetCode() and (v.GetPosition() - w.GetPosition()).EuclideanNorm() < mm(0.6):
-            before = n_open(); c = clone(w); b.Delete(w)
-            if n_open() > before: b.Add(c)
-            else: print('removed doubled via', w.GetNetname() if False else c.GetNetname())
-            break
+vs = [(t, t.GetNetCode(), t.GetPosition()) for t in b.GetTracks() if t.Type() == pcbnew.PCB_VIA_T]
+gone = set()
+for i, (v, vn, vp) in enumerate(vs):
+    if i in gone: continue
+    for j in range(i + 1, len(vs)):
+        w, wn, wp = vs[j]
+        if j in gone or vn != wn or (vp - wp).EuclideanNorm() >= mm(0.6): continue
+        before = n_open(); c = clone(w); b.Delete(w)
+        if n_open() > before: b.Add(c); vs[j] = (c, wn, wp)
+        else: gone.add(j); print('removed doubled via', c.GetNetname())
+        break
 kept = set()
 while True:
     rpt = tempfile.mktemp(suffix='.rpt')

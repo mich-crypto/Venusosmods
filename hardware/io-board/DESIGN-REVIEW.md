@@ -1,4 +1,48 @@
-# I/O board rev 0.2 – independent design audit
+# I/O board rev 0.2 / 0.3 – independent design audit
+
+## Rev 0.3 re-audit (after the fixes)
+
+All findings below were addressed in rev 0.3 and the measurements of this audit were repeated on
+the re-placed and re-routed board:
+
+| ID | Status in rev 0.3 | Evidence (measured on `io-board.kicad_pcb`) |
+|---|---|---|
+| H1 | **Fixed** | Decoupling cap → pin: U3 3.7 mm (C6), U2 IN 3.1 / OUT 2.5 mm, U1 IN 4.5 / OUT 3.9 mm (new C9), U90 2.2, U91 2.2, U92 2.4 / 2.1, U60 2.4, D5 2.9, U11/U12/U21/U22 2.1 mm (new C94–C97) |
+| H2 | **Fixed** | Q3 P-MOSFET (drain = fused input, source = V12_AUX, gate to GND via R7, D13 12 V clamp): off when AUX is reversed. D14 SMBJ15A on V12_AUX: 24.4 V max clamp < INA180 26 V, < 30 V of Q1/Q2/Q80 |
+| H3 | **Fixed** | SW3/SW4 right-angle (PTS645VL83), actuator 5.5 mm past the front edge; D9 right-angle, lens 1.6 mm past; D5 at the edge for a light pipe |
+| M1 | **Fixed** | U12/U22 VCC = +5 V: VICR −0.1…4.2 V covers IN+ ≤ 3.3 V; inputs ≤ VCC; open-drain output to 3.3 V |
+| M2 | **Fixed** | R71–R73 1206 (250 mW) vs 169 mW at 30 V; spec 9–30 V |
+| M3 | **Fixed (spec)** | io-board.md: 9–30 V = on, COM to GND by JP10, dry contacts from +12 V |
+| M4 | Accepted | USB-C must stay at the front, the antenna at the back; full speed only |
+| M5 | **Fixed** | U93 ESDA6V1-5SC6 on DSDA±, DSCL±, EXP_INT next to J3 |
+| M6 | **Fixed** | ENIG in the order spec |
+| L1 | **Fixed** | FID1–FID3, excluded from pick-and-place and BOM |
+| L2 | Accepted | same net |
+| L3 | Open check | Traco TSR 1-2450 back-feed from USB (datasheet not obtained) |
+| L4 | Documented | J5 GND must be wired |
+| L5 | **Fixed** | io-board.md, io-board-schematic.md, README match the board |
+| L6 | **Fixed** | 1 mm U-shaped routed slot around the SHT40 island |
+| 5 A vias | **Fixed** | every 5 A layer change has 4–8 vias (≈ 1.8 A each); the single via at NT12 is the sense branch |
+
+Re-verification of rev 0.3: DRC 0 errors, 0 unconnected, 11 accepted warnings (silkscreen past the
+edge at the overhanging front-edge parts and connectors, one silkscreen-over-pad, ESP32 footprint
+vias); 525 pads compared with `parts.py`, 0 mismatches; every footprint linked to its schematic
+symbol; BOM = pick-and-place = 163 parts; nothing inside the antenna keep-out or the SHT40 slot.
+
+New parts in rev 0.3 whose datasheets were **not** read (pinout from KiCad's library and footprint
+descriptions): IPD90P04P4L-04 (DPAK, 1 G, tab D, 3 S), BZT52C12, SMBJ15A, ESDA6V1-5SC6,
+C&K PTS645VL83-2 LFS.
+
+**Verdict rev 0.3: APPROVED WITH MINOR CHANGES – for a prototype run.** No known defect remains
+within the reviewed scope. Before ordering: read the datasheets of the parts listed as not
+verified (above and in section B) and confirm their pinouts against the footprints; check L3;
+measure the Truma RJ12 and van wiring; then build one prototype and bring it up step by step
+(README, "Before ordering" and bring-up).
+
+---
+
+*The sections below are the original audit of rev 0.2.*
+
 
 Scope: the whole project as committed at `2b359ed` (requirements in `docs/io-board.md`,
 `docs/io-board-schematic.md`, `docs/wiring.md`, KiCad files, BOM, fab outputs, scripts).
@@ -7,7 +51,7 @@ failure sweep). **No design file was changed during this audit.** Every finding 
 either measured on the KiCad files with the KiCad 7 Python API, read from a manufacturer
 datasheet (page/table given), or marked as an assumption.
 
-**Verdict: NOT APPROVED** – three HIGH findings must be resolved before ordering (section G).
+**Verdict on rev 0.2: NOT APPROVED** – three HIGH findings had to be resolved (section G); see the rev 0.3 re-audit above.
 
 ---
 

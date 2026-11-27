@@ -4,18 +4,21 @@ Qty,References,Value,Footprint,Symbol
 2,D1 D2,SS34,Diode_SMD:D_SMA,Diode:SS34
 1,J5,power push-in,"TerminalBlock_Phoenix:TerminalBlock_Phoenix_PT-1,5-10-5.0-H_1x10_P5.00mm_Horizontal",Connector:Screw_Terminal_01x10
 1,F2,10A mini blade,Fuse:Fuseholder_Blade_Mini_Keystone_3568,Device:Fuse
+1,Q3,IPD90P04P4L-04,Package_TO_SOT_SMD:TO-252-2,Device:Q_PMOS_GDS
+17,R7 R3 R15 R16 R21 R31 R32 R33 R34 R108 R208 R61 R62 R74 R75 R76 R93,10k,Resistor_SMD:R_0603_1608Metric,Device:R
+1,D13,BZT52C12,Diode_SMD:D_SOD-123,Device:D_Zener
+1,D14,SMBJ15A,Diode_SMD:D_SMB,Device:D_TVS
 1,D4,SMBJ18A,Diode_SMD:D_SMB,Device:D_TVS
 1,C1,47u/35V,Capacitor_SMD:C_1210_3225Metric,Device:C
 1,U1,TSR 1-2450,Converter_DCDC:Converter_DCDC_TRACO_TSR-1_THT,Regulator_Switching:TSR_1-2450
 2,C2 C3,22u,Capacitor_SMD:C_0805_2012Metric,Device:C
+2,C9 C5,10u,Capacitor_SMD:C_0805_2012Metric,Device:C
 1,U2,AP7361C-33E,Package_TO_SOT_SMD:SOT-223-3_TabPin2,Regulator_Linear:AP7361C-33E
 2,D3 D61,SS14,Diode_SMD:D_SMA,Diode:SS34
 12,R1 R41 R42 R43 R44 R59 R106 R206 R63 R80 R83 R82,100k,Resistor_SMD:R_0603_1608Metric,Device:R
 1,R2,22k,Resistor_SMD:R_0603_1608Metric,Device:R
-13,C4 C6 C8 C20 C31 C32 C33 C34 C60 C90 C91 C92 C93,100n,Capacitor_SMD:C_0603_1608Metric,Device:C
+17,C4 C6 C8 C20 C31 C32 C33 C34 C94 C95 C96 C97 C60 C90 C91 C92 C93,100n,Capacitor_SMD:C_0603_1608Metric,Device:C
 1,U3,ESP32-S3-WROOM-1-N8,RF_Module:ESP32-S3-WROOM-1,RF_Module:ESP32-S3-WROOM-1
-1,C5,10u,Capacitor_SMD:C_0805_2012Metric,Device:C
-16,R3 R15 R16 R21 R31 R32 R33 R34 R108 R208 R61 R62 R74 R75 R76 R93,10k,Resistor_SMD:R_0603_1608Metric,Device:R
 1,C7,1u,Capacitor_SMD:C_0603_1608Metric,Device:C
 1,SW1,RESET,Button_Switch_SMD:SW_SPST_TL3342,Switch:SW_Push
 1,SW2,BOOT,Button_Switch_SMD:SW_SPST_TL3342,Switch:SW_Push
@@ -26,14 +29,13 @@ Qty,References,Value,Footprint,Symbol
 6,D6 D11 D12 D71 D72 D73,1N4148W,Diode_SMD:D_SOD-123,Diode:1N4148W
 3,R6 R10 R11,330,Resistor_SMD:R_0603_1608Metric,Device:R
 2,U5 U6,AQY212EH,Package_SO:SO-4_4.4x3.6mm_P2.54mm,Relay_SolidState:TLP3123
-8,R12 R24 R58 R71 R72 R73 R90 R91,4.7k,Resistor_SMD:R_0603_1608Metric,Device:R
+5,R12 R24 R58 R90 R91,4.7k,Resistor_SMD:R_0603_1608Metric,Device:R
 1,D7,4V7,Diode_SMD:D_SOD-123,Device:D_Zener
 5,U7 U8 U71 U72 U73,PC817,Package_DIP:SMDIP-4_W9.53mm,Isolator:PC817
 4,R13 R14 R107 R207,2.2k,Resistor_SMD:R_0603_1608Metric,Device:R
 1,D8,2V4,Diode_SMD:D_SOD-123,Device:D_Zener
-1,D9,green 3mm,LED_THT:LED_D3.0mm,Device:LED
-1,SW3,12V ON,Button_Switch_THT:SW_PUSH-12mm,Switch:SW_Push
-1,SW4,12V OFF,Button_Switch_THT:SW_PUSH-12mm,Switch:SW_Push
+1,D9,green 3mm,LED_THT:LED_D3.0mm_Horizontal_O1.27mm_Z2.0mm,Device:LED
+2,SW3 SW4,PTS645VL83-2 LFS,Button_Switch_THT:SW_Tactile_SPST_Angled_PTS645Vx83-2LFS,Switch:SW_Push
 1,J6,ST2 FRESH,Connector_Molex:Molex_Micro-Fit_3.0_43650-0600_1x06_P3.00mm_Horizontal,Connector_Generic:Conn_01x06
 3,R20 R23 R92,100,Resistor_SMD:R_0603_1608Metric,Device:R
 1,F3,50mA 15V PTC,Fuse:Fuse_1206_3216Metric,Device:Polyfuse
@@ -55,6 +57,7 @@ Qty,References,Value,Footprint,Symbol
 1,U60,TJA1021T/20,Package_SO:SOIC-8_3.9x4.9mm_P1.27mm,Interface_CAN_LIN:TJA1021T
 2,F6 F8,1A 30V PTC,Fuse:Fuse_1812_4532Metric,Device:Polyfuse
 1,J10,inputs push-in,"TerminalBlock_Phoenix:TerminalBlock_Phoenix_PT-1,5-4-3.5-H_1x04_P3.50mm_Horizontal",Connector:Screw_Terminal_01x04
+3,R71 R72 R73,4.7k 0.25W,Resistor_SMD:R_1206_3216Metric,Device:R
 1,F7,4A 32V fast,Fuse:Fuse_1812_4532Metric,Device:Fuse
 1,Q80,AO3401A,Package_TO_SOT_SMD:SOT-23,Transistor_FET:AO3401A
 1,Q81,2N7002,Package_TO_SOT_SMD:SOT-23,Transistor_FET:2N7002
@@ -64,4 +67,5 @@ Qty,References,Value,Footprint,Symbol
 1,U92,PCA9615DP,Package_SO:TSSOP-10_3x3mm_P0.5mm,io_board:PCA9615
 4,R94 R96 R97 R99,620,Resistor_SMD:R_0603_1608Metric,Device:R
 2,R95 R98,120,Resistor_SMD:R_0603_1608Metric,Device:R
+1,U93,ESDA6V1-5SC6,Package_TO_SOT_SMD:SOT-23-6,Power_Protection:ESDA6V1-5SC6
 1,J3,RJ45 EXPANSION,Connector_RJ:RJ45_Amphenol_54602-x08_Horizontal,Connector:RJ45
