@@ -43,7 +43,7 @@ Qty,References,Value,Footprint,Symbol
 4,R30 R105 R205 R81,1k,Resistor_SMD:R_0603_1608Metric,Device:R
 2,F4 F5,5A,Fuse:Fuse_1812_4532Metric,Device:Fuse
 2,R50 R51,0.05 2W,Resistor_SMD:R_2512_6332Metric,Device:R
-2,JP1 JP2,JP C-feed,Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm,Jumper:SolderJumper_2_Bridged
+2,JP1 JP2,0R 2512 (C-feed link),Resistor_SMD:R_2512_6332Metric,Jumper:SolderJumper_2_Bridged
 2,K1 K2,G5LE-1 12VDC,Relay_THT:Relay_SPDT_Omron-G5LE-1,Relay:G5LE-1
 2,Q1 Q2,AO3400A,Package_TO_SOT_SMD:SOT-23,Transistor_FET:AO3400A
 2,D41 D42,red,LED_SMD:LED_0603_1608Metric,Device:LED

@@ -15,7 +15,7 @@ FIX={'U3':(60,12.75,0),'K1':(24,52,0),'K2':(24,76,0),'U1':(30,97,0),'U2':(42,97,
  'U5':(56,48,0),'U6':(56,56,0),'U7':(69,48,0),'U8':(69,56,0),'U71':(97,27,0),'U72':(97,35,0),'U73':(97,43,0),
  'R50':(42,58,90),'R51':(42,82,90),'F4':(42,48,90),'F5':(42,72,90),'U11':(49,62,0),'U12':(49,67,0),'U21':(49,84,0),'U22':(49,89,0),
  'Q1':(36,60,0),'Q2':(36,84,0),'Q80':(20,120,0),'Q81':(28,120,0),'F7':(13,120,90),'D4':(16,104,0),'D1':(16,96,0),'D2':(16,110,0),'F1':(20,90,0),
- 'SW1':(80,7,0),'SW2':(91,7,0),'U4':(16,127,0)}
+ 'SW1':(92,7,0),'SW2':(103,7,0),'NT11':(45.5,54.5,90),'NT12':(45.5,61.5,90),'NT21':(45.5,78.5,90),'NT22':(45.5,85.5,90),'U4':(16,127,0)}
 # remaining parts grouped near their circuit: region (x0,y0,x1) to pack into
 REG=[('^(R1|R2|C2|C3|C4|D3)$',(52,94,64)),('^(C5|C6|C7|R3|R4|R5|R6|C8|D6)$',(76,16,104)),
      ('^(R1[0-6]|D7|D8)$',(50,32,80)),('^(J6|R2[0-4]|F3|D2[01]|C20)$',(66,94,84)),('^(R30|R3[1-4]|C3[1-4]|R4[1-4]|D3[1-4])$',(84,92,101)),
@@ -44,6 +44,8 @@ for ref,sym,val,fpname,conn,note in parts.P:
     for pad in fp.Pads():
         n=bynum.get(pad.GetNumber())
         if n and n!='NC': pad.SetNet(net(n))
+        if ref=='U3' and pad.GetDrillSize().x==mm(0.2): pad.SetDrillSize(pcbnew.VECTOR2I(mm(0.3),mm(0.3)))  # thermal vias: 0.3 mm min drill
+    if ref in ('U5','U6'): fp.SetLocalClearance(0)  # library 0.2 mm override; 12 V parts, board rule applies
     if ref in FIX:
         x,y,r=FIX[ref]
     else:

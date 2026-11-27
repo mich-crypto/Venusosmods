@@ -74,13 +74,15 @@ R('R59','100k','+3V3','VREF'); R('R58','4.7k','VREF',G)
 for n in (1,2):
     add(f'F{3+n}','Device:Fuse','5A','Fuse:Fuse_1812_4532Metric',{'1':'V12_AUX','2':f'SH{n}_P'})
     R(f'R5{n-1}','0.05 2W','SH'+str(n)+'_P',f'SH{n}_N','Resistor_SMD:R_2512_6332Metric')  # 5 A: 1.25 W
-    add(f'JP{n}','Jumper:SolderJumper_2_Bridged','JP C-feed','Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm',{'1':f'SH{n}_N','2':f'OUT{n}_C'})
+    add(f'JP{n}','Jumper:SolderJumper_2_Bridged','0R 2512 (C-feed link)','Resistor_SMD:R_2512_6332Metric',{'1':f'SH{n}_N','2':f'OUT{n}_C'},'5 A path: 0 ohm 2512 jumper rated >= 6 A, or a wire link; remove for external C feed')
     add(f'K{n}','Relay:G5LE-1','G5LE-1 12VDC',"Relay_THT:Relay_SPDT_Omron-G5LE-1",{'5':'V12_AUX','2':f'K{n}_COIL','1':f'OUT{n}_C','3':f'OUT{n}_NO','4':f'OUT{n}_NC'},f'Output {n}')
     add(f'Q{n}','Transistor_FET:AO3400A','AO3400A','Package_TO_SOT_SMD:SOT-23',{'1':f'Q{n}_G','2':G,'3':f'K{n}_COIL'})
     R(f'R{n}05','1k',f'OUT{n}_DRV',f'Q{n}_G'); R(f'R{n}06','100k',f'Q{n}_G',G)
     D(f'D1{n}','Diode:1N4148W','1N4148W','Diode_SMD:D_SOD-123',f'K{n}_COIL','V12_AUX')
     R(f'R{n}07','2.2k','V12_AUX',f'K{n}_LED'); D(f'D2{n+1}' if False else f'D4{n}','Device:LED','red','LED_SMD:LED_0603_1608Metric',f'K{n}_LED',f'K{n}_COIL')
-    add(f'U{n}1','Amplifier_Current:INA180A3','INA180A3','Package_TO_SOT_SMD:SOT-23-5',{'3':f'SH{n}_P','4':f'SH{n}_N','1':f'ISENSE{n}','2':G,'5':'+3V3'})
+    add(f'U{n}1','Amplifier_Current:INA180A3','INA180A3','Package_TO_SOT_SMD:SOT-23-5',{'3':f'SH{n}_SP','4':f'SH{n}_SN','1':f'ISENSE{n}','2':G,'5':'+3V3'})
+    add(f'NT{n}1','Device:NetTie_2','NetTie','NetTie:NetTie-2_SMD_Pad0.5mm',{'1':f'SH{n}_P','2':f'SH{n}_SP'},'Kelvin tap at the shunt')
+    add(f'NT{n}2','Device:NetTie_2','NetTie','NetTie:NetTie-2_SMD_Pad0.5mm',{'1':f'SH{n}_N','2':f'SH{n}_SN'},'Kelvin tap at the shunt')
     add(f'U{n}2','Comparator:LMV331','LMV331','Package_TO_SOT_SMD:SOT-23-5',{'1':f'ISENSE{n}','3':'VREF','4':f'OUT{n}_SENSE','2':G,'5':'+3V3'})
     R(f'R{n}08','10k','+3V3',f'OUT{n}_SENSE')
 # ---------------- 6 Truma + inputs
