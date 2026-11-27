@@ -273,7 +273,7 @@ class TrumaHeater(object):
                 log.info('heater code cleared (%s)', self._last_code)
             self._last_code = text
         # A warning that comes and goes (low voltage, a window opened) would raise a new Venus OS alarm -
-        # and a VRM e-mail - every time: keep showing it until the heater has been clear for CODE_CLEAR_S.
+        # and a VRM e-mail - every time: keep showing it until the heater has been clear for CODE_CLEAR_S (5 min).
         now = monotonic_s()
         if text:
             self._gone_since = None
@@ -286,7 +286,7 @@ class TrumaHeater(object):
         level, text = self._shown
         self.alarm.publish(level, ('%s: %s' % (self.name, text)) if text else self.name)
 
-    CODE_CLEAR_S = 600
+    CODE_CLEAR_S = 300
 
     def _frost(self, d):
         """Frost guard: room too cold with the heating off -> switch it on, once per cold spell."""

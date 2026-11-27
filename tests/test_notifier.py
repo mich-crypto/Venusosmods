@@ -58,6 +58,11 @@ class BatteryTests(unittest.TestCase):
         self.assertEqual(len(s.sent), 3)
         n.check(bat(40))
         n.check(bat(15))
+        self.assertEqual(len(s.sent), 3)                       # charged for a moment only: the same dip
+        n.check(bat(40))
+        s.t += 300
+        n.check(bat(40))                                       # charged for 5 min: over
+        n.check(bat(15))
         self.assertEqual(len(s.sent), 4)                       # and a new dip is reported again
 
     def test_custom_thresholds_and_switch(self):
@@ -87,22 +92,40 @@ class AlarmTests(unittest.TestCase):
         n.check(self.alarm(2))
         self.assertEqual(s.sent[-1], '🔴 JK BMS: Low voltage (alarm)')
         n.check(self.alarm(None))
+        self.assertEqual(len(s.sent), 2)                       # not over until normal for 5 min
+        s.t += 300
+        n.check(self.alarm(None))
         self.assertIn('back to normal', s.sent[-1])
         self.assertEqual(n.view()['active_alarms'], [])
 
-    def test_a_flapping_alarm_or_warning_is_sent_once_an_hour(self):
+    def test_flapping_is_one_alarm_and_it_returns_after_5_min_normal(self):
         for value, word in ((2, '(alarm)'), (1, '(warning)')):
             s = Sink(cooldowns=True)
             n = s.make()
-            times = []
-            for step in range(36):                             # on and off every 5 min, for 3 hours
-                s.t = step * 300
+            for step in range(30):                             # on and off every 2 min, for an hour
+                s.t = step * 120
                 for _ in range(3):
-                    before = len(s.sent)
                     n.check(self.alarm(value) if step % 2 == 0 else self.alarm(None))
-                    times += [s.t] * (len(s.sent) > before and word in s.sent[-1])
-            self.assertEqual(times, [0, 3600, 7200])
-            self.assertEqual(sum('back to normal' in m for m in s.sent), 3)
+            self.assertEqual(s.sent, ['%s JK BMS: Low voltage %s' % ('🔴' if value == 2 else '🟠', word)])
+            s.t += 300
+            n.check(self.alarm(None))                          # normal for 5 min: over
+            self.assertIn('back to normal', s.sent[-1])
+            s.t += 60
+            n.check(self.alarm(value))
+            n.check(self.alarm(value))
+            self.assertIn(word, s.sent[-1])                    # and it may come back at once
+            self.assertEqual(len(s.sent), 3)
+
+    def test_after_a_restart_a_still_active_alarm_waits_for_the_hour(self):
+        s = Sink(cooldowns=True)
+        n = s.make()
+        n.check(self.alarm(2))
+        n.check(self.alarm(2))
+        s.t += 600
+        n = s.make()                                           # restarted
+        n.check(self.alarm(2))
+        n.check(self.alarm(2))
+        self.assertEqual(len(s.sent), 1)
 
     def test_a_blip_is_never_reported(self):
         s = Sink()

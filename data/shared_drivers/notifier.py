@@ -34,6 +34,8 @@ FENCE_REPEAT_S = HOUR_S              # "left the area" again (a restart outside 
 FENCE_STILL_S = HOUR_S               # away: a position update this often
 ORION_REPEAT_S = 0                   # charging switched on: every time
 FROST_REPEAT_S = HOUR_S              # frost forecast / below 0 C for 2 h
+NORMAL_S = 300                       # an alarm is over once it has been normal this long; then it may come
+                                     # back at once (not only after the hour). Shorter dips are the same alarm.
 MOVED_UPDATE_S = HOUR_S             # while outside the fence: a new position this often
 COLD_HOURS = 2                      # below freezing this long: a warning
 FREEZE_C = 0.0
@@ -107,7 +109,9 @@ class Notifier(object):
         self.record = record                     # called with the text of every message that was handed on
         self.configure(cfg)
         self.battery = {}                        # name -> [level, time of the last message]
-        self.alarms = {}                         # (device, path) -> {'sent': severity, 'seen': n}
+        self.battery_ok_since = {}               # name -> since when it is charged again
+        self.alarms = {}                         # (device, path) -> {'sent': severity, 'seen': n, 'normal_since': t}
+        self.cleared = set()                     # alarms (and batteries) that were over: may come back at once
         self.fence = {'state': 'unknown', 'out_seen': 0, 'in_seen': 0, 'last': 0}
         self.orion = {}                          # name -> (state, mode)
         self.cold = {'since': None, 'sent': False}
@@ -166,11 +170,20 @@ class Notifier(object):
             self.last['battery'] = soc
             level = 'alarm' if soc <= self.alarm_pct else ('warn' if soc <= self.warn_pct else 'ok')
             old, sent_at = self.battery.get(name, ['ok', 0])
+            ok_since = self.battery_ok_since.get(name)
             if level == 'ok' and old != 'ok' and soc < self.warn_pct + 5:
+                self.battery_ok_since.pop(name, None)
                 continue                                         # not clear of the limit yet: no flapping
             if level == 'ok':
+                if old != 'ok':                                  # recharged: over once it stays so for 5 min
+                    ok_since = self.battery_ok_since.setdefault(name, now)
+                    if now - ok_since < NORMAL_S:
+                        continue
+                    self.cleared.add('battery-' + name)
                 self.battery[name] = ['ok', 0]
+                self.battery_ok_since.pop(name, None)
                 continue
+            self.battery_ok_since.pop(name, None)
             worse = old == 'ok' or (level == 'alarm' and old == 'warn')
             repeat = REPEAT_ALARM_S if level == 'alarm' else REPEAT_WARN_S
             if worse or now - sent_at >= repeat:
@@ -178,7 +191,9 @@ class Notifier(object):
                     text = '🔴 %s is almost empty: %d %%. Charge it now.' % (name, round(soc))
                 else:
                     text = '🟠 %s is getting low: %d %%.' % (name, round(soc))
-                self._say('battery-%s-%s' % (name, level), text, cooldown=repeat)    # also not again after a restart
+                fresh = worse and 'battery-' + name in self.cleared
+                self._say('battery-%s-%s' % (name, level), text,     # the hour holds also across a restart
+                          cooldown=NORMAL_S if fresh else repeat)
                 self.battery[name] = [level, now]
             else:
                 self.battery[name] = [level, sent_at]
@@ -192,21 +207,34 @@ class Notifier(object):
                 continue
             if value > 0:
                 active[(a.get('device') or 'Device', a.get('path') or '')] = value
+        now = self.clock()
         for key, value in active.items():
             st = self.alarms.setdefault(key, {'sent': 0, 'seen': 0})
             st['seen'] += 1
+            st['normal_since'] = None                    # back within 5 min: still the same alarm
             if st['seen'] >= CONFIRM and value > st['sent']:
                 st['sent'] = value
                 text = '%s %s: %s' % ('🔴' if value >= 2 else '🟠', key[0], pretty(key[1]) + (' (alarm)' if value >= 2 else ' (warning)'))
+                # after a real end (5 min normal) it is a new alarm: at once; else (a restart) once an hour
+                hourly = DEVICE_ALARM_REPEAT_S if value >= 2 else DEVICE_WARN_REPEAT_S
                 if self._say('alarm-%s-%s-%d' % (key[0], key[1], min(value, 2)), text,
-                             cooldown=DEVICE_ALARM_REPEAT_S if value >= 2 else DEVICE_WARN_REPEAT_S) is not False:
+                             cooldown=NORMAL_S if key in self.cleared else hourly) is not False:
                     st['told'] = True
         for key in list(self.alarms):
-            if key not in active:
-                st = self.alarms.pop(key)
+            if key in active:
+                continue
+            st = self.alarms[key]
+            if not st['sent']:                           # a blip that was never confirmed
+                del self.alarms[key]
+                continue
+            if st.get('normal_since') is None:
+                st['normal_since'] = now
+            if now - st['normal_since'] >= NORMAL_S:     # normal for 5 min: the alarm is over
+                del self.alarms[key]
+                self.cleared.add(key)
                 if st.get('told'):                       # only the all-clear of an alarm that was reported
                     self._say('alarm-%s-%s-clear' % key, '✅ %s: %s is back to normal' % (key[0], pretty(key[1])),
-                              cooldown=DEVICE_WARN_REPEAT_S)
+                              cooldown=NORMAL_S)
 
     def _geofence(self, gps):
         f = self.fence

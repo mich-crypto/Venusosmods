@@ -775,13 +775,17 @@ if you forget it. Open the address in Safari and add it to the home screen.
   **How often each message may come** (kept across restarts): every message
   (battery, device alarms and warnings and their all-clear, parking spot and its
   position updates, frost, Starlink) at most **once an hour** each. The Orion XS
-  message comes every time charging is switched on.
+  message comes every time charging is switched on. An alarm (a device alarm or
+  warning, a low battery) is over only once it has been back to normal for
+  **5 minutes**: then you get *back to normal*, and if it comes back after that you
+  are told at once, not only after the hour. If it returns within those
+  5 minutes it is still the same alarm and nothing new is sent.
 
   The Venus OS alarms of the I/O extension (which VRM e-mails on every new
   alarm) are held so they don't flap: the **frost alarm** stays on for 24 h once
   raised, the **grey tank full** alarm rises after 2 minutes full (not from
   splashing while driving) and clears only once the tank is emptied to half, and a
-  **Truma** code stays shown until the heater has been clear for 10 minutes.
+  **Truma** code stays shown until the heater has been clear for 5 minutes.
 * **Water → Live reading** – the real sensor voltage at GPIO4 and the height
   from it, without smoothing, about twice a second for 15 minutes (*Stop live
   reading* ends it earlier). The Pi stays connected over Bluetooth and switches

@@ -881,14 +881,14 @@ class AlarmTests(unittest.TestCase):
         truma_heater.monotonic_s = lambda: clock[0]
         try:
             h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
-            self.assertEqual(h.alarm.service['/Alarm'], 2)                  # gone: held 10 min, no flapping
+            self.assertEqual(h.alarm.service['/Alarm'], 2)                  # gone: held 5 min, no flapping
             clock[0] += 300
             h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 112, 'ecls': 'E'})
             clock[0] += 300
             h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
-            clock[0] += 599
+            clock[0] += 299
             h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
-            self.assertEqual(h.alarm.service['/Alarm'], 2)                  # came back: the 10 min start again
+            self.assertEqual(h.alarm.service['/Alarm'], 2)                  # came back: the 5 min start again
             clock[0] += 1
             h.apply({'lin': 'ok', 'room': 18, 'set': 20, 'heat': 0, 'water': 'eco', 'err': 0, 'ecls': 'W'})
             self.assertEqual(h.alarm.service['/Alarm'], 0)
