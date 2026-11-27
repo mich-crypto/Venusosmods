@@ -24,16 +24,17 @@ try:
 except ImportError:         # not verified on every Venus OS image: then there is no forecast
     json = None
 
-REPEAT_ALARM_S = 3 * 3600           # a battery that stays at "alarm" is repeated this often
-REPEAT_WARN_S = 12 * 3600
-# How often the same message may come again (kept across restarts by the sender):
-DEVICE_ALARM_REPEAT_S = 3 * 3600    # a device in alarm (red): again after 3 h at the earliest - it may matter
-DEVICE_WARN_REPEAT_S = 24 * 3600    # a device warning (orange) and an all-clear: at most once a day
-FENCE_REPEAT_S = 3600               # "left the area" again (a restart outside it, GPS jumps at the edge)
-FENCE_STILL_S = 3600                # away but not moving: a position update this often
-ORION_REPEAT_S = 3600               # charging switched on (smart alternators switch it on and off a lot)
-FROST_REPEAT_S = 24 * 3600          # frost / cold messages: at most one a day (also across restarts)
-MOVED_UPDATE_S = 600                # while outside the fence: a new position this often
+# How often the same message may come again: at most once an hour each (kept across restarts by the sender)
+HOUR_S = 3600
+REPEAT_ALARM_S = HOUR_S              # a battery that stays at "alarm" is repeated this often
+REPEAT_WARN_S = HOUR_S
+DEVICE_ALARM_REPEAT_S = HOUR_S       # the same device alarm (red)
+DEVICE_WARN_REPEAT_S = HOUR_S        # the same device warning (orange), and an all-clear
+FENCE_REPEAT_S = HOUR_S              # "left the area" again (a restart outside it, GPS jumps at the edge)
+FENCE_STILL_S = HOUR_S               # away: a position update this often
+ORION_REPEAT_S = 0                   # charging switched on: every time
+FROST_REPEAT_S = HOUR_S              # frost forecast / below 0 C for 2 h
+MOVED_UPDATE_S = HOUR_S             # while outside the fence: a new position this often
 COLD_HOURS = 2                      # below freezing this long: a warning
 FREEZE_C = 0.0
 CONFIRM = 2                         # a reading must hold for this many looks (a few seconds each)
@@ -220,14 +221,10 @@ class Notifier(object):
             f['in_seen'] = 0
             if f['state'] != 'out' and f['out_seen'] >= CONFIRM:
                 f['state'], f['last'] = 'out', now
-                f['at'] = (gps['lat'], gps['lon'])
                 self._say('fence-out', '🚨 The camper left its %d m area: now %d m from home.\n%s' % (
                     self.fence_m, round(d), map_link(gps['lat'], gps['lon'])), cooldown=FENCE_REPEAT_S)
-            elif f['state'] == 'out' and now - f['last'] >= MOVED_UPDATE_S and (
-                    now - f['last'] >= FENCE_STILL_S
-                    or distance_m(f['at'][0], f['at'][1], gps['lat'], gps['lon']) >= self.fence_m):
-                # moving (it may be stolen): every 10 min; parked somewhere else: once an hour
-                f['last'], f['at'] = now, (gps['lat'], gps['lon'])
+            elif f['state'] == 'out' and now - f['last'] >= MOVED_UPDATE_S:
+                f['last'] = now
                 self._say('fence-update', '📍 Still away: %d m from home.\n%s' % (round(d), map_link(gps['lat'], gps['lon'])))
         else:
             f['in_seen'] += 1

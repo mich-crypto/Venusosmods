@@ -347,7 +347,7 @@ SCHEMA = {
             F('alert_battery', 'bool', 'Battery low', 'A warning and an alarm for the lithium battery.', options=YES_NO, default='yes'),
             F('battery_warn_pct', 'int', 'Battery warning at', '', unit='%', min=2, max=99, default='20'),
             F('battery_alarm_pct', 'int', 'Battery alarm at', '', unit='%', min=1, max=98, default='10'),
-            F('alert_alarms', 'bool', 'Any alarm', 'Every alarm or warning that any Victron device shows; the same one (and its all-clear) at most once a day.', options=YES_NO, default='yes'),
+            F('alert_alarms', 'bool', 'Any alarm', 'Every alarm or warning that any Victron device shows; the same one (and its all-clear) at most once an hour.', options=YES_NO, default='yes'),
             F('alert_sensor', 'bool', 'Gas sensor battery low', '', options=YES_NO, default='yes'),
             F('sensor_pct', 'int', 'Gas sensor battery alert at', '', unit='%', min=1, max=100, default='20'),
             F('alert_geofence', 'bool', 'Leaves the parking spot', 'Needs the GPS. Set the spot with "Use the current position".',

@@ -47,10 +47,10 @@ class BatteryTests(unittest.TestCase):
         n.check(bat(9))
         self.assertEqual(len(s.sent), 2)
         self.assertIn('almost empty', s.sent[1])
-        s.t += 3600
+        s.t += 1800
         n.check(bat(8))
         self.assertEqual(len(s.sent), 2)
-        s.t += 3 * 3600
+        s.t += 1800
         n.check(bat(8))
         self.assertEqual(len(s.sent), 3)                       # a battery that stays empty is repeated
         n.check(bat(22))                                       # within 5 % of the limit: not recovered yet
@@ -90,28 +90,19 @@ class AlarmTests(unittest.TestCase):
         self.assertIn('back to normal', s.sent[-1])
         self.assertEqual(n.view()['active_alarms'], [])
 
-    def test_a_flapping_red_alarm_is_sent_every_3_h_at_most(self):
-        s = Sink(cooldowns=True)
-        n = s.make()
-        times = []
-        for hour in range(48):                                 # on and off again every hour, for two days
-            s.t = hour * 3600
-            for _ in range(3):
-                before = len(s.sent)
-                n.check(self.alarm(2, path='/Alarm') if hour % 2 == 0 else self.alarm(None, path='/Alarm'))
-                times += [s.t] * (len(s.sent) > before and '(alarm)' in s.sent[-1])
-        self.assertTrue(all(b - a >= 3 * 3600 for a, b in zip(times, times[1:])), times)   # red: every 3 h at most
-        self.assertLessEqual(len(times), 16)
-        self.assertEqual(sum('back to normal' in m for m in s.sent), 2)                    # all-clear: once a day
-
-    def test_a_flapping_warning_is_sent_once_a_day(self):
-        s = Sink(cooldowns=True)
-        n = s.make()
-        for hour in range(48):
-            s.t = hour * 3600
-            for _ in range(3):
-                n.check(self.alarm(1) if hour % 2 == 0 else self.alarm(None))
-        self.assertEqual(sum('(warning)' in m for m in s.sent), 2)
+    def test_a_flapping_alarm_or_warning_is_sent_once_an_hour(self):
+        for value, word in ((2, '(alarm)'), (1, '(warning)')):
+            s = Sink(cooldowns=True)
+            n = s.make()
+            times = []
+            for step in range(36):                             # on and off every 5 min, for 3 hours
+                s.t = step * 300
+                for _ in range(3):
+                    before = len(s.sent)
+                    n.check(self.alarm(value) if step % 2 == 0 else self.alarm(None))
+                    times += [s.t] * (len(s.sent) > before and word in s.sent[-1])
+            self.assertEqual(times, [0, 3600, 7200])
+            self.assertEqual(sum('back to normal' in m for m in s.sent), 3)
 
     def test_a_blip_is_never_reported(self):
         s = Sink()
@@ -155,9 +146,12 @@ class FenceTests(unittest.TestCase):
         self.assertIn('maps.google.com/?q=52.00', s.sent[0])
         n.check(self.at(400))
         self.assertEqual(len(s.sent), 1)
-        s.t += 700
+        s.t += 1800
         n.check(self.at(800))
-        self.assertIn('Still away', s.sent[-1])                # an update every ten minutes while it is away
+        self.assertEqual(len(s.sent), 1)
+        s.t += 1800
+        n.check(self.at(800))
+        self.assertIn('Still away', s.sent[-1])                # an update every hour while it is away
         n.check(self.at(20))
         n.check(self.at(20))
         self.assertIn('back inside', s.sent[-1])
@@ -221,7 +215,7 @@ class FrostTests(unittest.TestCase):
     def snap(self, outdoor=None, low=None, now=5.0, at='2026-10-31T04:00'):
         return {'outdoor': outdoor, 'forecast': None if low is None else {'now': now, 'min': low, 'at': at}}
 
-    def test_frost_forecast_at_most_once_a_day(self):
+    def test_frost_forecast_at_most_once_an_hour(self):
         s = Sink()
         n = s.make()
         n.check(self.snap(low=4))
@@ -229,11 +223,11 @@ class FrostTests(unittest.TestCase):
         n.check(self.snap(low=-3))
         self.assertEqual(len(s.sent), 1)
         self.assertIn('down to -3 °C around 04:00', s.sent[0])
-        for hour, low in enumerate((-4, 0.5, 6, -1, 2, -2, 3, -1) * 2):    # the forecast minimum swings every hour
-            s.t += 3600
+        for low in (-4, 0.5, 6, -1, 2):                         # the forecast swings every 10 min
+            s.t += 600
             n.check(self.snap(low=low))
-        self.assertEqual(len(s.sent), 1)                         # 16 hours of swinging: still one message
-        s.t += 9 * 3600                                          # a day after the first
+        self.assertEqual(len(s.sent), 1)                         # within the hour: still one message
+        s.t += 600                                               # an hour after the first
         n.check(self.snap(low=-2))
         self.assertEqual(len(s.sent), 2)
 

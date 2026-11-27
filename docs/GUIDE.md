@@ -767,26 +767,15 @@ if you forget it. Open the address in Safari and add it to the home screen.
   when the forecast for the camper's position says it will freeze within 24 hours,
   and one when it has been below 0 °C for 2 hours; the temperature comes from a
   sensor set to *outdoor*, the gas sensor by default, else from the forecast
-  service open-meteo.com; each of the two at most once a day, also across
+  service open-meteo.com; each of the two at most once an hour, also across
   restarts of the page), and the Starlink
   messages (dish offline, packet loss, hardware alerts, new public IP, failed
   speed test). The page shows what is live now and the last messages sent.
 
-  **How often each message may come** (kept across restarts, so nothing floods
-  your phone or the VRM e-mails):
-
-  | Message | Limit | Why |
-  |---|---|---|
-  | Battery almost empty (red) | again every 3 h while it stays low | you must act |
-  | Battery low (orange) | again every 12 h | |
-  | Device **alarm** (red) | the same alarm at most every 3 h | BMS, inverter: may matter |
-  | Device **warning** (orange), and *back to normal* | at most once a day | information |
-  | Left the parking spot | at once (again after 1 h at the earliest); position every 10 min while it moves, hourly while it stands | theft |
-  | Orion XS charging on | at most once an hour | smart alternators switch it often |
-  | Frost forecast, below 0 °C for 2 h | at most once a day | |
-  | Starlink offline | at most every 6 h; *reachable again* only after a sent *offline* | |
-  | Starlink packet loss | at most every 6 h | |
-  | Starlink hardware alert, new public IP, failed speed test | at most once a day | |
+  **How often each message may come** (kept across restarts): every message
+  (battery, device alarms and warnings and their all-clear, parking spot and its
+  position updates, frost, Starlink) at most **once an hour** each. The Orion XS
+  message comes every time charging is switched on.
 
   The Venus OS alarms of the I/O extension (which VRM e-mails on every new
   alarm) are held so they don't flap: the **frost alarm** stays on for 24 h once

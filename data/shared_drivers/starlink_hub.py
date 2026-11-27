@@ -196,9 +196,9 @@ class Hub(object):
             return
         offline_for = now - self.unreachable_since
         if offline_for >= self.tg['offline_min'] * 60:
-            self.offline_sent = True       # one look per outage; the message itself at most every 6 h
+            self.offline_sent = True       # one look per outage; the message itself at most once an hour
             self.offline_told = self.alert('offline', 'Starlink dish not reachable for %d min (%s).' % (
-                offline_for // 60, self.error), cooldown=6 * 3600)
+                offline_for // 60, self.error), cooldown=3600)
 
     def poll_status(self):
         if not self.enabled:
@@ -419,7 +419,7 @@ class Hub(object):
         self.store.save(force=True)
         self.test = {'running': False, 'step': '', 'started': None}
         if error and self.tg['kinds']['test']:
-            self.alert('test', 'Speed test failed: %s' % error, cooldown=24 * 3600)
+            self.alert('test', 'Speed test failed: %s' % error, cooldown=3600)
 
     # ----------------------------------------------------------------- WAN
     def poll_wan(self):
@@ -434,7 +434,7 @@ class Hub(object):
             self.wan.update(ip=trace['ip'], colo=trace.get('colo'), loc=trace.get('loc'), time=int(self.clock()), error=None)
             previous = self.store.add_wan(trace['ip'], {'colo': trace.get('colo'), 'loc': trace.get('loc')})
             if previous and self.tg['kinds']['wan']:
-                self.alert('wan', 'Public IP changed: %s -> %s' % (previous, trace['ip']), cooldown=24 * 3600)
+                self.alert('wan', 'Public IP changed: %s -> %s' % (previous, trace['ip']), cooldown=3600)
             self.store.save()
         run_async(['curl', '-s', '-m', '8', self.wan_url], got, timeout=10)
         return True
@@ -445,13 +445,13 @@ class Hub(object):
             bad = set(a for a in (st.get('alerts') or []) if a not in INFO_ALERTS)
             if self.known_alerts is not None:
                 for a in sorted(bad - self.known_alerts):
-                    self.alert('hw-' + a, 'Starlink alert: %s' % a, cooldown=24 * 3600)
+                    self.alert('hw-' + a, 'Starlink alert: %s' % a, cooldown=3600)
             self.known_alerts = bad
         if self.tg['kinds']['drop']:
             drop = (st.get('drop_rate') or 0) * 100
             self.drop_run = self.drop_run + 1 if drop >= self.tg['drop_pct'] else 0
             if self.drop_run >= 3:
-                self.alert('drop', 'Starlink packet loss is %.1f %%.' % drop, cooldown=6 * 3600)
+                self.alert('drop', 'Starlink packet loss is %.1f %%.' % drop, cooldown=3600)
 
     def alert(self, key, text, cooldown=1800):
         now = self.clock()
