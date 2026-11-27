@@ -69,9 +69,9 @@ button and LED, the USB-C tablet socket and the status LED.
 | 4 | pink | mains (230 V) indicator | 0 V | ≈ 8 V | input, threshold ≈ 4 V |
 
 Pin numbers from the LT 100 wiring diagram (Fig. 3: 1 OFF, 2 ON, 3 indicator, 4 mains,
-5 − sensor, 6 + sensor); colours and functions measured in the van. Plug position confirmed:
-looking at the wire side with the clip on top, the clip row is **pink · brown · blue** (pins 4, 5, 6)
-and the other row holds yellow, green and white (pins 1, 2, 3).
+5 − sensor, 6 + sensor); colours and functions measured in the van. Plug position confirmed in the van:
+looking at the wire side with the clip on top, the clip row is **blue · brown · pink** (pins 6, 5, 4)
+and the other row **white · green · yellow** (pins 3, 2, 1), left to right.
 
 * The EBL needs a panel on ST1 to work; that is now the board.
 * ON/OFF: optocoupler outputs to ground, pulse about 300 ms; the white wire confirms.
@@ -229,5 +229,6 @@ I²C addresses: LIS2DW12 0x18, SHT40 0x44; expansion boards use other addresses.
 
 ## Still open
 
-* ST1 bottom row order (yellow, green, white expected; check left to right with the clip on top).
+* ST2 plug order: check once on the unplugged plug (wire side, clip on top); ST1 turned out mirrored
+  compared with the first guess, so ST2 may be too.
 * Schematic, parts list with order numbers, layout (KiCad), then one prototype before more.
