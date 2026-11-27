@@ -1,4 +1,4 @@
-# I/O board – KiCad project (rev 0.1, routed, ready to order)
+# I/O board – KiCad project (rev 0.2, routed, reviewed, ready to order)
 
 KiCad 7 project for the board described in [docs/io-board.md](../../docs/io-board.md) and
 [docs/io-board-schematic.md](../../docs/io-board-schematic.md). Open `io-board.kicad_pro` in
@@ -7,10 +7,10 @@ KiCad 7 or newer.
 | File | What |
 |---|---|
 | `fab/io-board-gerbers.zip` | **Send this to the board maker:** Gerbers (2 layers, mask, paste, silkscreen, outline) and Excellon drill files (PTH and NPTH separate) |
-| `fab/io-board-pos.csv` | Pick-and-place file (147 parts, all on top) for assembly |
-| `fab/io-board-bom.csv`, `io-board-bom.csv` | Parts list grouped by value and footprint (147 parts; net ties and the JP10 solder jumper are copper only) |
+| `fab/io-board-pos.csv` | Pick-and-place file (153 parts, all on top) for assembly |
+| `fab/io-board-bom.csv`, `io-board-bom.csv` | Parts list grouped by value and footprint (153 parts; net ties and the JP10 solder jumper are copper only) |
 | `io-board.kicad_pcb` | Board 120 × 140 mm, 2 layers, **fully routed**: 0 unconnected, 0 DRC errors (see Checked) |
-| `io-board.kicad_sch` | Schematic: 152 symbols (148 parts + 4 net ties), grouped in 7 sections (power, ESP32, EBL, tanks, outputs, Truma + inputs, USB PD + sensors + expansion) |
+| `io-board.kicad_sch` | Schematic: 158 symbols (153 parts, the JP10 solder jumper, 4 net ties), grouped in 7 sections (power, ESP32, EBL, tanks, outputs, Truma + inputs, USB PD + sensors + expansion) |
 | `io-board-schematic.pdf` | The schematic as PDF |
 | `io-board.net` | Netlist exported by KiCad |
 | `io-board.dsn` | The unrouted board for Freerouting (with the net classes) |
@@ -33,7 +33,7 @@ any solder mask colour, HASL or ENIG.
   which subtract the solder mask), 5 × silkscreen of J3/J8/J9 and the ESP32 antenna past the
   board edge (these parts overhang on purpose), 1 × ESP32 footprint differs from the library
   (its thermal vias are 0.3 mm instead of 0.2 mm, the 2-layer fab minimum).
-* KiCad reads the schematic and exports the netlist: 152 components, 117 named nets; the only
+* KiCad reads the schematic and exports the netlist: 158 components, 118 named nets; the only
   one-pin nets are pins left open on purpose (spare ESP32 pins, sensor pins not used, SBU, LED DOUT).
 * Electrical rules checked on KiCad's netlist: no two outputs on one net, every power input fed
   (power flags on GND, V12_SYS, V12_AUX, LIN_VBAT and the supplies).
@@ -76,7 +76,7 @@ TI INA180 SBOS741H, Omron G5LE, SK6812MINI-E Rev. 02) and from KiCad's library s
 | U2 AP7361C-33E | "-33E" is the SOT223 package; the board had a SOT-89-3 footprint (the SOT89 version has 5 pins) | Footprint SOT-223-3 (tab = GND) |
 | Q80 AO3401A | Gate rated ±12 V, but Q81 pulled it to GND: VGS = −12…−14.6 V | R83 100 k in series: VGS = −V/2 (≈ −7 V), RDS(on) < 60 mΩ at −4.5 V |
 | D5 status LED | Value SK6812MINI-E (3.2 × 2.8, pin 1 VDD, 4 DIN) on the SK6812MINI footprint and pinout (3.5 × 3.5, pin 4 VDD) | Value SK6812MINI, to match footprint and pinout |
-| D5 data level | VIH = 0.7 × VDD = 3.5 V at 5 V; the ESP32 drives 3.3 V | LED fed through D6 (1N4148W): VDD ≈ 4.3 V, VIH ≈ 3.0 V |
+| D5 data level | SK6812MINI: VIH 3.4 V at VDD 5 V (datasheet); the ESP32 drives 3.3 V | LED fed through D6 (1N4148W): VDD ≈ 4.3 V, VIH ≈ 2.9 V (scales with VDD) |
 | D4 TVS | SMBJ24CA clamps at 38.9 V, above C1 (35 V) and the TSR-1 input (36 V) | SMBJ18A (stand-off 18 V, clamps 29.2 V), band to V12_SYS |
 | R50/R51 shunts | 0.05 Ω at 5 A = 1.25 W; a standard 2512 is 1 W | Value "0.05 2W" (2 W or 3 W metal strip 2512) |
 | U90 | BOM said LIS2DH12, which does not fit (see 6.) | Value LIS3DH |
@@ -92,6 +92,55 @@ wire is an ≈ 8 V indicator, so no high-voltage clearances are needed.
 * **Pressure sensor:** the ADC input has no divider, so it is for the 0–3.3 V sensor (QDY30A). A
   0.5–4.5 V sensor needs a divider at R21/R22.
 * **AO3401A turn-off:** R80/R83 make Q80 switch slowly (100 k); fine for the PD module, not for PWM.
+
+## Engineering review (rev 0.2)
+
+Second full check: every pin against the manufacturer's datasheet, every net name, every
+current path against its track, pour and vias. Datasheets read: NXP PCA9615 Rev. 2, NXP TJA1021
+Rev. 9, ST LIS3DH Rev. 1, SK6812MINI Rev. 01, SK6812MINI-E Rev. 02, Diodes AP7361C, AOS AO3401A,
+TI INA180 (SBOS741H), Omron G5LE.
+
+**Found and fixed in rev 0.2:**
+
+| # | Problem | Consequence | Fix |
+|---|---|---|---|
+| 1 | No termination / idle bias on the dI2C pairs (PCA9615 datasheet Fig. 5/7: R1-R2-R1 at each cable end) | The PCA9615 hot-swap logic only connects to a bus with valid termination: the expansion port would never work | R94–R99: 620 Ω to +5 V, 120 Ω across, 620 Ω to GND on DSCL and DSDA (100 Ω termination, D+ above D−). The expansion module needs the same network at its end |
+| 2 | LIS3DH INT1 is push-pull only (CTRL_REG6 has polarity, no open-drain bit) and shared I2C_INT with the expansion INT line | An expansion module pulling INT low fights the sensor driving it high | Split: TILT_INT (LIS3DH → GPIO47), EXP_INT_MCU (RJ45 pin 7 via R92 100 Ω, 10 k pull-up R93 → GPIO40, open drain) |
+| 3 | OUT1_C (JP1 → relay K1 COM, 5 A) changed layer through 2 vias of 0.3 mm (≈ 1.8 A each) | Via overheating at full load | 7 vias with copper squares on both layers; the other 5 A layer changes have 5–8 vias; V12_AUX 6–9 |
+| 4 | TRUMA_12V and EXP_12V (1 A PTC, trips at ≈ 2 A) only as 0.3 mm tracks | Warm tracks before the PTC trips | Pours along both nets (up to 1.5 mm each side) |
+| 5 | Fuse values without voltage rating | Wrong parts could be ordered | F1 0.5 A 30 V PTC, F3 50 mA 15 V PTC, F4/F5 5 A 32 V fast, F6/F8 1 A 30 V PTC, F7 4 A 32 V fast, F2 10 A mini blade |
+| 6 | ESP32 module variant not pinned down | The -N8R8/-N16R8 use GPIO35–37 for octal PSRAM (EBL ON/OFF/12 V sense here) | Value note: ESP32-S3-WROOM-1-**N8** only |
+
+**Checked, correct:**
+
+* **Pinouts against the datasheets:** PCA9615 (Table 3), TJA1021 (1 RXD open drain with 10 k
+  pull-up, 2 SLP_N with 100 k pull-down, 3 WAKE_N to VBAT through 10 k, 4 TXD, 5 GND, 6 LIN, 7 VBAT,
+  8 INH open), LIS3DH (1 VDD_IO, 4 SCL, 6 SDA, 7 SA0 → GND = 0x18, 8 CS → 3.3 V = I2C, 10 RES → GND,
+  11 INT1, 14 VDD), SK6812MINI (1 DOUT, 2 VSS, 3 DIN, 4 VDD), AP7361C-33E SOT223 (1 IN, 2/tab GND,
+  3 OUT), INA180A3 pinout A, AO3400A/AO3401A (1 G, 2 S, 3 D), G5LE (coil 2–5, COM 1, NO 3, NC 4),
+  USBLC6-2SC6, SHT40, TSR 1-2450, ESP32-S3-WROOM-1 (by pin name through KiCad's symbol; strapping
+  GPIO0/3/45/46 not driven, USB D−/D+ on GPIO19/20, battery divider on ADC1).
+* **Diode and LED polarity** (KiCad pin 1 = cathode = band/pad 1): D1/D2/D3/D61 series diodes,
+  D4 SMBJ18A band to V12_SYS, flyback D11/D12 cathode to +12 V, input diodes D71–D73, zeners
+  D7/D8 reverse biased, LEDs D9/D41/D42 anode to the resistor.
+* **Operating points:** relay drive 3.3 V on AO3400A (VGS(th) ≤ 1.45 V); photoMOS LED 6 mA
+  (AQY212EH needs ≤ 3 mA); EBL "12 V on" opto 1.3 mA at 12 V, "mains" opto 2 mA at 8 V;
+  inputs 2.1 mA; battery divider 15 V → 2.7 V; Output "on" threshold 0.148 V / (100 × 0.05 Ω)
+  = 30 mA; Q80 VGS ≈ −7 V with R80/R83; USB-C CC 5.1 k on both.
+* **Net names** say what the net is (OUT1_C/NO/NC, SH1_P/N + Kelvin SH1_SP/SN, EBL_ON/OFF,
+  TILT_INT, EXP_INT_MCU, …); no net is left with a name that does not match its function.
+* **Every pad on the board carries the net parts.py gives it** (500 pads compared), every
+  footprint is linked to its schematic symbol.
+* **Current paths:** all 5–10 A nets are 2 mm tracks (only short neck-downs at small pads), with
+  pours where there is room; R50 → JP1 runs on one layer; GND is connected by tracks alone and
+  additionally poured on both layers.
+
+**Not changed, worth knowing:**
+
+* USB D+/D− are long (≈ 160–175 mm, 2–4 vias): fine for 12 Mbit/s full speed, keep the
+  programming cable short.
+* SK6812MINI data at 3.3 V against VIH ≈ 2.9 V (VDD 4.3 V): about 0.4 V margin.
+* The expansion module must carry the same 620/120/620 Ω network at its PCA9615.
 
 ## Layout and routing
 
@@ -123,7 +172,10 @@ Freerouting needs a display, e.g. `xvfb-run`):
 2. `java -jar freerouting-1.9.0.jar -de io-board.dsn -do io-board.ses -mp 100`
 3. `python3 tools/import_ses.py io-board.kicad_pcb io-board.ses drc.rpt` (KiCad 7 imports .ses only
    in the GUI; this does it with the API).
-4. `python3 tools/stubs.py io-board.kicad_pcb` (exit tracks for the SHT40 pads past its keep-out),
+4. Netlist changes after routing: edit `tools/parts.py`, then `python3 tools/apply_netlist.py`
+   (regenerates the schematic, links footprints, sets pad nets, places new parts on free area).
+   `python3 tools/via_room.py io-board.kicad_pcb` clears room for a via cluster at a crowded 5 A
+   layer change. `python3 tools/stubs.py io-board.kicad_pcb` (exit tracks for the SHT40 pads past its keep-out),
    then `python3 tools/finish_routes.py io-board.kicad_pcb` routes whatever Freerouting left
    (grid A* with the net-class clearances) and removes dangling stubs.
 5. `python3 tools/finish.py io-board.kicad_pcb`: V12_AUX pours, JP10 off the plane, footprint library

@@ -48,9 +48,9 @@ humidity sensor. The programming USB-C sits behind the plate.
 | F6 | 1 A PTC | 12 V for the CP plus |
 | U80 | SW3516H (+ reference parts) | USB-C PD 30 W |
 | Q80, Q81 | AO3401A, 2N7002 | USB PD on/off (R80/R83 halve the gate voltage, VGS max ±12 V) |
-| U90 | LIS3DH | tilt (LGA-16 3 × 3) |
+| U90 | LIS3DH | tilt (LGA-16 3 × 3), INT1 push-pull on its own GPIO47 |
 | U91 | SHT40 | humidity + temperature |
-| U92 | PCA9615 | differential I²C to the RJ45 |
+| U92 | PCA9615 | differential I²C to the RJ45; R94–R99 620/120/620 Ω termination + idle bias on both pairs (needed at each cable end) |
 | U4 | USBLC6-2SC6 | USB ESD |
 | J | Molex Micro-Fit 3.0: 43045-0600 (ST1, 2 rows), 43650-0600 (ST2), 43650-0500 (ST3); 2 × RJ12 6P6C; RJ45; 2 × USB-C; push-in terminals 5.08 mm (power) and 3.5 mm (inputs) | connectors |
 

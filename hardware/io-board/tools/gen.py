@@ -82,7 +82,7 @@ sections=[('1 · Power',lambda r:r in ('J4','F1','D1','J5','F2','D2','D4','C1','
           ('4 · Tanks: ST2 fresh water, ST3 grey water',lambda r:r in ('J6','R20','F3','D20','R21','C20','R22','D21','R23','R24','J7','R30') or re.match(r'^(R3[1-4]|C3[1-4]|R4[1-4]|D3[1-4])$',r)),
           ('5 · Output 1 and Output 2 (relays with current sense)',lambda r:r in ('R58','R59','F4','F5','R50','R51','JP1','JP2','K1','K2','Q1','Q2','D11','D12','D41','D42','U11','U12','U21','U22','NT11','NT12','NT21','NT22') or re.match(r'^R[12]0[5-8]$',r)),
           ('6 · Truma LIN, CP plus 12 V, inputs',lambda r:r in ('J8','J9','D60','D61','C60','U60','R61','R62','R63','F6','J10','JP10') or re.match(r'^(D7[1-3]|R7[1-6]|U7[1-3])$',r)),
-          ('7 · USB PD module, tilt + humidity sensors, RJ45 expansion',lambda r:r in ('F7','Q80','R80','Q81','R81','R82','R83','J2','R90','R91','R93','U90','C90','U91','C91','U92','C92','C93','F8','R92','J3'))]
+          ('7 · USB PD module, tilt + humidity sensors, RJ45 expansion',lambda r:r in ('F7','Q80','R80','Q81','R81','R82','R83','J2','R90','R91','R93','U90','C90','U91','C91','U92','C92','C93','F8','R92','J3','R94','R95','R96','R97','R98','R99'))]
 used=set(); PAGEW=760
 y=30
 allnets={}

@@ -214,20 +214,20 @@ All functions fit on the ESP32's own pins; no I/O expander or ADC chip.
 | Grey rods ST3: common / rods (lowest first) | 9 / 1, 2, 7, 8 |
 | Leisure battery voltage (ST1 blue, divider) | 10 |
 | I²C (tilt sensor, expansion) | 15, 16 |
-| Interrupt (tilt sensor, expansion) | 47 |
+| Tilt sensor interrupt (LIS3DH INT1, push-pull) | 47 |
+| Expansion interrupt (RJ45 pin 7, open drain, 10 k pull-up) | 40 |
 | Truma LIN RX / TX / SLP | 17 / 18 / 21 |
 | Output 1 / Output 2 relay | 38 / 39 |
 | Output 1 / 2 on (current sense) | 14 / 6 |
 | Inputs 1 / 2 / 3 | 11 / 12 / 13 |
 | EBL ON / OFF pulse | 35 / 36 |
 | EBL "12 V on" / mains | 37 / 42 |
-| Free (was the 12 V button) | 40 |
 | USB tablet socket on/off | 41 |
 | RGB status LED | 48 |
 | USB-C programming | 19, 20 |
 | Kept free | 0, 3, 45, 46 (strapping) |
 
-I²C addresses: LIS2DW12 0x18, SHT40 0x44; expansion boards use other addresses.
+I²C addresses: LIS3DH 0x18, SHT40 0x44; expansion boards use other addresses.
 
 ## Protection
 

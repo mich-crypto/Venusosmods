@@ -29,12 +29,12 @@ def copper_items():
             yield p
 
 
-def route(net, src_item, dst_item):
+def route(net, src_item, dst_item, margin=12):
     w, cl_own = nc(net)
     half = w // 2
     pts = [src_item.GetPosition(), dst_item.GetPosition() if dst_item.Type() != pcbnew.PCB_TRACE_T else dst_item.GetStart()]
-    x0 = min(p.x for p in pts) - mm(12); x1 = max(p.x for p in pts) + mm(12)
-    y0 = min(p.y for p in pts) - mm(12); y1 = max(p.y for p in pts) + mm(12)
+    x0 = min(p.x for p in pts) - mm(margin); x1 = max(p.x for p in pts) + mm(margin)
+    y0 = min(p.y for p in pts) - mm(margin); y1 = max(p.y for p in pts) + mm(margin)
     bb = b.GetBoardEdgesBoundingBox()
     x0 = max(x0, bb.GetX() + EDGE + half); y0 = max(y0, bb.GetY() + EDGE + half)
     x1 = min(x1, bb.GetRight() - EDGE - half); y1 = min(y1, bb.GetBottom() - EDGE - half)
@@ -63,6 +63,11 @@ def route(net, src_item, dst_item):
                 mark(it, L, cl + VIA_D // 2, vblock)
         if it.Type() == pcbnew.PCB_PAD_T and it.GetDrillSize().x > 0:        # holes block both layers
             for L in LAYERS: mark(it, L, mm(0.25) + half, blocked[L])
+    for f in b.GetFootprints():                      # footprint copper drawings (net-tie bridges)
+        for g in f.GraphicalItems():
+            for L in LAYERS:
+                if g.GetLayer() == L:
+                    mark(g, L, cl_own + half + mm(0.02), blocked[L]); mark(g, L, cl_own + VIA_D // 2 + mm(0.02), vblock)
     for f in b.GetFootprints():                      # keep-outs (tracks/vias not allowed)
         for z in f.Zones():
             if z.GetIsRuleArea() and z.GetDoNotAllowTracks():
@@ -165,6 +170,10 @@ def route(net, src_item, dst_item):
             t.SetLayer(cell[2]); t.SetNet(net); b.Add(t)
     return len(cells)
 
+# GND must be connected by its tracks alone: empty the GND pours so DRC shows any GND split that
+# only the pour bridged (filled again at the end)
+for z in b.Zones():
+    if z.GetNetname() == 'GND': z.UnFill()
 # open connections from KiCad's DRC: pairs of items
 import re, tempfile, os
 rpt = tempfile.mktemp(suffix='.rpt')
@@ -181,11 +190,16 @@ def find(desc, x, y):
     netname = re.search(r'\[([^\]]*)\]', desc).group(1)
     for t in b.GetTracks():
         if t.Type() == pcbnew.PCB_TRACE_T and t.GetNetname() == netname and (t.GetStart() == pt or t.GetEnd() == pt or t.HitTest(pt, 0)): return t
+def span(blk):      # route short connections first: they have the fewest ways around
+    its = re.findall(r'@\(([\d.]+) mm, ([\d.]+) mm\)', blk)
+    return math.hypot(float(its[0][0]) - float(its[1][0]), float(its[0][1]) - float(its[1][1])) if len(its) > 1 else 0
+blocks.sort(key=span)
 for blk in blocks:
     its = re.findall(r'@\(([\d.]+) mm, ([\d.]+) mm\): (.*)', blk)
     a = find(its[0][2], float(its[0][0]), float(its[0][1])); c = find(its[1][2], float(its[1][0]), float(its[1][1]))
+    if a is None or c is None: continue          # zone-to-zone items (fill islands) are not routed here
     net = a.GetNet()
-    n = route(net, a, c)
+    n = route(net, a, c) or route(net, a, c, 25) or route(net, a, c, 40)
     print(f'{net.GetNetname():10} {"routed, %d cells" % n if n else "NO PATH"}')
 # remove tracks/vias left dangling (stubs the router went around), but only when that does not
 # open a connection; repeat until nothing changes
@@ -197,6 +211,16 @@ def clone(t):
         v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetNet(t.GetNet()); return v
     c = pcbnew.PCB_TRACK(b); c.SetStart(t.GetStart()); c.SetEnd(t.GetEnd()); c.SetWidth(t.GetWidth())
     c.SetLayer(t.GetLayer()); c.SetNet(t.GetNet()); return c
+# vias of one net closer than 0.6 mm (the router can flip layers twice in a row): drop one when
+# that opens nothing
+vs = [t for t in b.GetTracks() if t.Type() == pcbnew.PCB_VIA_T]
+for i, v in enumerate(vs):
+    for w in vs[i + 1:]:
+        if v.GetNetCode() == w.GetNetCode() and (v.GetPosition() - w.GetPosition()).EuclideanNorm() < mm(0.6):
+            before = n_open(); c = clone(w); b.Delete(w)
+            if n_open() > before: b.Add(c)
+            else: print('removed doubled via', w.GetNetname() if False else c.GetNetname())
+            break
 kept = set()
 while True:
     rpt = tempfile.mktemp(suffix='.rpt')
