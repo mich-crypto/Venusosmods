@@ -27,6 +27,12 @@ measured, the schematic is next.
 | Status | RGB status LED (front plate) | – |
 | Removed (simplified) | CAN, MOSFET outputs, analog inputs, 8 inputs → 3, display power out, spare header, I/O expander and ADC chips, separate PRESSURE socket, temperature probe 2 | – |
 
+## All connectors
+
+Every plug seen from the wire side, clip on top:
+
+![Pin layout of all connectors](io-board/pinout-all.png)
+
 ## Size and casing
 
 The board sits **in place of the LT 100**: its casing slides in flat through the LT 100 opening
