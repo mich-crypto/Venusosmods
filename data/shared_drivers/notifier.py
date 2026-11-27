@@ -26,6 +26,7 @@ except ImportError:         # not verified on every Venus OS image: then there i
 
 REPEAT_ALARM_S = 3 * 3600           # a battery that stays at "alarm" is repeated this often
 REPEAT_WARN_S = 12 * 3600
+DEVICE_ALARM_REPEAT_S = 24 * 3600   # the same device alarm (and its all-clear): at most one a day (also across restarts)
 FROST_REPEAT_S = 24 * 3600          # frost / cold messages: at most one a day (also across restarts)
 MOVED_UPDATE_S = 600                # while outside the fence: a new position this often
 COLD_HOURS = 2                      # below freezing this long: a warning
@@ -191,12 +192,13 @@ class Notifier(object):
             if st['seen'] >= CONFIRM and value > st['sent']:
                 st['sent'] = value
                 text = '%s %s: %s' % ('🔴' if value >= 2 else '🟠', key[0], pretty(key[1]) + (' (alarm)' if value >= 2 else ' (warning)'))
-                self._say('alarm-%s-%s' % key, text)
+                self._say('alarm-%s-%s-%d' % (key[0], key[1], min(value, 2)), text, cooldown=DEVICE_ALARM_REPEAT_S)
         for key in list(self.alarms):
             if key not in active:
                 st = self.alarms.pop(key)
                 if st['sent']:
-                    self._say('alarm-%s-%s-clear' % key, '✅ %s: %s is back to normal' % (key[0], pretty(key[1])))
+                    self._say('alarm-%s-%s-clear' % key, '✅ %s: %s is back to normal' % (key[0], pretty(key[1])),
+                              cooldown=DEVICE_ALARM_REPEAT_S)
 
     def _geofence(self, gps):
         f = self.fence

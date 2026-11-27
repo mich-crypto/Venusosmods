@@ -8,14 +8,19 @@ import notifier  # noqa: E402
 
 
 class Sink(object):
-    def __init__(self):
+    def __init__(self, cooldowns=False):
         self.t = 0
         self.sent = []
+        self.last = {}
+        self.cooldowns = cooldowns
 
     def clock(self):
         return self.t
 
-    def send(self, key, text, cooldown):
+    def send(self, key, text, cooldown):                      # like the hub's alert(): a cooldown per key
+        if self.cooldowns and cooldown and key in self.last and self.t - self.last[key] < cooldown:
+            return False
+        self.last[key] = self.t
         self.sent.append(text)
         return True
 
@@ -84,6 +89,16 @@ class AlarmTests(unittest.TestCase):
         n.check(self.alarm(None))
         self.assertIn('back to normal', s.sent[-1])
         self.assertEqual(n.view()['active_alarms'], [])
+
+    def test_a_flapping_alarm_is_sent_once_a_day(self):
+        s = Sink(cooldowns=True)
+        n = s.make()
+        for hour in range(48):                                 # on and off again every hour, for two days
+            s.t = hour * 3600
+            for _ in range(3):
+                n.check(self.alarm(2, path='/Alarm') if hour % 2 == 0 else self.alarm(None, path='/Alarm'))
+        self.assertEqual(sum('(alarm)' in m for m in s.sent), 2)
+        self.assertEqual(sum('back to normal' in m for m in s.sent), 2)
 
     def test_a_blip_is_never_reported(self):
         s = Sink()
