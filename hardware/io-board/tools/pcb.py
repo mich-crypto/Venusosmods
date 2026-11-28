@@ -1,4 +1,4 @@
-import pcbnew,re,parts,gen
+import pcbnew,re,os,parts,gen
 FPDIR='/usr/share/kicad/footprints'
 OX,OY=100,100   # board top-left (mm); front edge = OY+140
 mm=pcbnew.FromMM
@@ -8,15 +8,15 @@ def edge(x1,y1,x2,y2):
 edge(OX,OY,OX+120,OY+140)
 # fixed placement (placement-plan coords: x 0..120 left->right, y 0..140 back->front), rotation
 FIX={'U3':(60,12.75,0),'K1':(24,52,0),'K2':(24,76,0),'U1':(30,97,0),'U2':(42,97,0),'F2':(30,110,0),'Q3':(47,113,0),'D14':(57,113,0),
- 'J5':(5,66,270),'J10':(115,37,90),'J8':(112,67,90),'J9':(112,84,90),'J3':(111,103,90),
- 'J4':(27.3,131,180),'J6':(46.8,131,180),'J7':(69.0,131,180),'J1':(13.8,134,0),'J2':(8,125.5,0),'D5':(109.6,137.3,0),
+ 'J11':(5,52,270),'J12':(5,76,270),'J5':(5,99,270),'J10':(115,37,90),'J8':(112,54.5,270),'J9':(112,71.5,270),'J3':(111,92,270),
+ 'J4':(27.3,131,180),'J6':(46.8,131,180),'J7':(69.0,131,180),'J1':(13.8,134,0),'J2':(8,125.5,0),'D5':(109.6,137.3,0),'D9':(103.8,138.9,0),
  'U60':(85,40,0),'U92':(92,80,0),'U90':(64,74,0),'U91':(110,118,0),
  'U5':(56,48,0),'U6':(56,56,0),'U7':(69,48,0),'U8':(69,56,0),'U71':(97,27,0),'U72':(97,35,0),'U73':(97,43,0),
  'R50':(42,58,90),'R51':(42,82,90),'F4':(42,48,90),'F5':(42,72,90),'U11':(49,62,0),'U12':(49,67,0),'U21':(49,84,0),'U22':(49,89,0),
  'Q1':(36,60,0),'Q2':(36,84,0),'Q80':(20,120,0),'Q81':(28,120,0),'F7':(13,120,90),'D4':(16,104,0),'D1':(16,96,0),'D2':(16,110,0),'F1':(20,90,0),
  'SW1':(92,7,0),'SW2':(103,7,0),'NT11':(45.5,54.5,90),'NT12':(45.5,61.5,90),'NT21':(45.5,78.5,90),'NT22':(45.5,85.5,90),'U4':(14,127,0)}
 # front-plate parts on the front edge, placed by pad 1 (x, y, rotation): actuators / LED lens past the edge
-PAD1={'SW3':(87.4,137.2,180),'SW4':(97.9,137.2,180),'D9':(102.55,136.5,0)}
+PAD1={'SW3':(87.4,137.2,180),'SW4':(97.9,137.2,180)}
 # decoupling and support parts: placed after everything else, as close as possible to (IC, pin)
 NEAR={'C1':('U1','1'),'C9':('U1','3'),'C2':('U2','1'),'C3':('U2','3'),'C5':('U3','2'),'C6':('U3','2'),'C7':('U3','3'),'R3':('U3','3'),
       'C4':('U3','18'),'C60':('U60','7'),'C90':('U90','14'),'C91':('U91','3'),'C92':('U92','1'),'C93':('U92','10'),
@@ -40,7 +40,7 @@ placed=0
 deferred=[]
 for ref,sym,val,fpname,conn,note in parts.P:
     lib,name=lib_of(fpname)
-    fp=pcbnew.FootprintLoad(f'{FPDIR}/{lib}.pretty',name)
+    fp=pcbnew.FootprintLoad(os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','io_board.pretty') if lib=='io_board' else f'{FPDIR}/{lib}.pretty',name)
     assert fp,(ref,fpname)
     fp.SetReference(ref); fp.SetValue(val); fp.SetPath(pcbnew.KIID_PATH('/'+gen.SYMUUID[ref]))
     # pin number map (resolve @names through the symbol)
@@ -120,7 +120,7 @@ for ref,fp in sorted(deferred,key=lambda t:list(NEAR).index(t[0])):
     near_dist[ref]=round(d,1) if done else 'NO SPOT'
 print('near placement (pad to pin, mm):',near_dist)
 # fiducials for assembly
-for i,(x,y) in enumerate([(3,22),(117,22),(3,104)]):
+for i,(x,y) in enumerate([(3,22),(117,22),(3,114)]):
     fd=pcbnew.FootprintLoad(f'{FPDIR}/Fiducial.pretty','Fiducial_1mm_Mask2mm'); fd.SetReference(f'FID{i+1}'); fd.SetValue('Fiducial')
     fd.SetPosition(pcbnew.VECTOR2I(mm(OX+x),mm(OY+y))); b.Add(fd)
 # mounting holes M3
@@ -143,7 +143,7 @@ def boxes_of(f):
 obst=[]
 for f in b.GetFootprints(): obst+=boxes_of(f)
 # ---- pin names next to the push-in terminals
-PINLBL={'J5':{'1':'AUX+','2':'GND','3':'O1 C','4':'O1 NO','5':'O1 NC','6':'O2 C','7':'O2 NO','8':'O2 NC','9':'CP+','10':'GND'},
+PINLBL={'J5':{'1':'AUX+','2':'GND','3':'CP+','4':'GND'},'J11':{'1':'O1 C','2':'O1 NO','3':'O1 NC'},'J12':{'1':'O2 C','2':'O2 NO','3':'O2 NC'},
         'J10':{'1':'COM','2':'IN1','3':'IN2','4':'IN3'}}
 for f in b.GetFootprints():
     lab=PINLBL.get(f.GetReference())
