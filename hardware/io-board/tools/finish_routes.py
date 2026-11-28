@@ -29,8 +29,9 @@ def copper_items():
             yield p
 
 
-def route(net, src_item, dst_item, margin=12):
+def route(net, src_item, dst_item, margin=12, width=None):
     w, cl_own = nc(net)
+    if width: w = width
     half = w // 2
     pts = [src_item.GetPosition(), dst_item.GetPosition() if dst_item.Type() != pcbnew.PCB_TRACE_T else dst_item.GetStart()]
     x0 = min(p.x for p in pts) - mm(margin); x1 = max(p.x for p in pts) + mm(margin)
@@ -56,6 +57,7 @@ def route(net, src_item, dst_item, margin=12):
         if it.GetNetCode() == net.GetNetCode() and it.GetNetCode() != 0:
             continue
         other_cl = nc(it.GetNet())[1] if it.GetNetCode() else cl_own
+        if it.Type() == pcbnew.PCB_PAD_T and it.GetLocalClearance() > other_cl: other_cl = it.GetLocalClearance()   # e.g. fiducials 0.5 mm
         cl = max(cl_own, other_cl) + mm(0.02)
         for L in LAYERS:
             if it.IsOnLayer(L):
@@ -175,7 +177,7 @@ def route(net, src_item, dst_item, margin=12):
     # tie grid ends to the item centres (pad centres are off-grid)
     for item, cell in ((src_item, cells[0]), (dst_item, cells[-1])):
         if item.Type() == pcbnew.PCB_PAD_T and P(cell) != item.GetPosition():
-            t = pcbnew.PCB_TRACK(b); t.SetStart(item.GetPosition()); t.SetEnd(P(cell)); t.SetWidth(min(w, mm(0.25)))
+            t = pcbnew.PCB_TRACK(b); t.SetStart(item.GetPosition()); t.SetEnd(P(cell)); t.SetWidth(min(w, min(item.GetSize().x, item.GetSize().y)))   # as wide as the pad allows, up to the class width
             t.SetLayer(cell[2]); t.SetNet(net); b.Add(t)
     return len(cells)
 
@@ -202,13 +204,20 @@ def find(desc, x, y):
 def span(blk):      # route short connections first: they have the fewest ways around
     its = re.findall(r'@\(([\d.]+) mm, ([\d.]+) mm\)', blk)
     return math.hypot(float(its[0][0]) - float(its[1][0]), float(its[0][1]) - float(its[1][1])) if len(its) > 1 else 0
-blocks.sort(key=span)
+def width_of(blk):   # wide (high-current) nets first: they need the room
+    m = re.search(r'\[([^\]]*)\]', blk)
+    ni = b.FindNet(m.group(1)) if m else None
+    return -nc(ni)[0] if ni else 0
+blocks.sort(key=lambda blk: (width_of(blk), span(blk)))
 for blk in blocks:
     its = re.findall(r'@\(([\d.]+) mm, ([\d.]+) mm\): (.*)', blk)
     a = find(its[0][2], float(its[0][0]), float(its[0][1])); c = find(its[1][2], float(its[1][0]), float(its[1][1]))
     if a is None or c is None: continue          # zone-to-zone items (fill islands) are not routed here
     net = a.GetNet()
     n = route(net, a, c) or route(net, a, c, 25) or route(net, a, c, 40)
+    if not n and nc(net)[0] > mm(1.2):   # high-current net boxed in: 1.2 mm (finish.py pours widen it)
+        n = route(net, a, c, 40, mm(1.2))
+        if n: print(f'{net.GetNetname():10} routed at 1.2 mm (narrower than its class)')
     print(f'{net.GetNetname():10} {"routed, %d cells" % n if n else "NO PATH"}')
 # remove tracks/vias left dangling (stubs the router went around), but only when that does not
 # open a connection; repeat until nothing changes

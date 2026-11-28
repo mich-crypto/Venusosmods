@@ -1,4 +1,4 @@
-# I/O board – KiCad project (rev 0.3, routed, audited – prototype)
+# I/O board – KiCad project (rev 0.4, routed, audited, JLCPCB parts – prototype)
 
 KiCad 7 project for the board described in [docs/io-board.md](../../docs/io-board.md) and
 [docs/io-board-schematic.md](../../docs/io-board-schematic.md). Open `io-board.kicad_pro` in
@@ -7,16 +7,18 @@ KiCad 7 or newer.
 | File | What |
 |---|---|
 | `fab/io-board-gerbers.zip` | **Send this to the board maker:** Gerbers (2 layers, mask, paste, silkscreen, outline) and Excellon drill files (PTH and NPTH separate) |
-| `fab/io-board-pos.csv` | Pick-and-place file (163 parts, all on top; fiducials excluded) for assembly |
-| `fab/io-board-bom.csv`, `io-board-bom.csv` | Parts list grouped by value and footprint (163 parts; net ties, fiducials and the JP10 solder jumper are copper only) |
+| `fab/jlc/io-board-bom-jlc.csv`, `fab/jlc/io-board-cpl-jlc.csv` | **JLCPCB assembly files:** BOM with LCSC part numbers and placement list (164 parts; U92 not fitted), see "Ordering at JLCPCB" |
+| `fab/io-board-pos.csv` | KiCad pick-and-place file (165 parts incl. U92, all on top; fiducials excluded) |
+| `fab/io-board-bom.csv`, `io-board-bom.csv` | Parts list grouped by value and footprint (165 parts incl. U92; net ties, fiducials and the JP10 solder jumper are copper only) |
 | `io-board.kicad_pcb` | Board 120 × 140 mm, 2 layers, **fully routed**: 0 unconnected, 0 DRC errors (see Checked) |
-| `io-board.kicad_sch` | Schematic: 168 symbols (163 parts, the JP10 solder jumper, 4 net ties), grouped in 7 sections (power, ESP32, EBL, tanks, outputs, Truma + inputs, USB PD + sensors + expansion) |
+| `io-board.kicad_sch` | Schematic: 170 symbols (165 parts, the JP10 solder jumper, 4 net ties), grouped in 7 sections (power, ESP32, EBL, tanks, outputs, Truma + inputs, USB PD + sensors + expansion) |
 | `io-board-schematic.pdf` | The schematic as PDF |
 | `io-board.net` | Netlist exported by KiCad |
 | `io-board.dsn` | The unrouted board for Freerouting (with the net classes) |
 | `pcb-render-top.png`, `pcb-render-bottom.png` | Renders of the bare board as it comes from the fab (`sh tools/render.sh`) |
 | `DESIGN-REVIEW.md` | Independent design audit: findings, calculations, what is and is not verified |
 | `io_board.kicad_sym`, `sym-lib-table` | Project library with the PCA9615 symbol (not in the KiCad library) |
+| `io_board.pretty`, `fp-lib-table` | Project footprints: RJ12 Connfly DS1133-S60 (6P6C), SK6812MINI-HS |
 | `tools/` | Scripts: generate schematic and board from `parts.py`, rules, routing import, finishing, BOM, fab files |
 
 **Order:** 2 layers, 1.6 mm FR-4, 1 oz (35 µm) copper, min. track/gap 0.15 mm, min. drill 0.3 mm,
@@ -28,22 +30,22 @@ one internal routed slot (1 mm, around the SHT40).
 
 ## Checked
 
-* **DRC (KiCad 7, with the KiCad libraries): 0 errors, 0 unconnected pads.** 11 warnings remain,
-  all accepted: 9 × silkscreen past the board edge (front-edge buttons and LED, J3/J8/J9 and the
-  ESP32 antenna overhang on purpose), 1 × silkscreen over a pad (removed in the Gerbers, which
-  subtract the solder mask), 1 × ESP32 footprint differs from the library (its thermal vias are
-  0.3 mm instead of 0.2 mm, the 2-layer fab minimum).
+* **DRC (KiCad 7, with the KiCad libraries): 0 errors, 0 unconnected pads.** 38 warnings remain,
+  all accepted: 31 × silkscreen past the board edge (the pluggable terminal blocks, RJ sockets,
+  front-edge buttons and the ESP32 antenna overhang on purpose), 5 × the small J5 pin names touch
+  the D1/D4 outline, 1 × silkscreen over a pad (removed in the Gerbers), 1 × ESP32 footprint
+  differs from the library (thermal vias 0.3 mm, the 2-layer fab minimum).
 * **Every pad carries the net `tools/parts.py` gives it** (525 pads compared), every footprint is
-  linked to its schematic symbol, BOM and pick-and-place agree (163 parts).
-* KiCad reads the schematic and exports the netlist: 168 components, 120 named nets; the only
+  linked to its schematic symbol, JLCPCB BOM and placement list agree (164 parts).
+* KiCad reads the schematic and exports the netlist: 170 components, 120 named nets; the only
   one-pin nets are pins left open on purpose (spare ESP32 pins, sensor pins not used, SBU, LED DOUT).
 * Electrical rules checked on KiCad's netlist: no two outputs on one net, every power input fed
   (power flags on GND, V12_SYS, V12_AUX, LIN_VBAT and the supplies).
 * All footprints are linked to their symbols (Tools → Update PCB from Schematic works).
 * No footprints overlap; all inside the outline (the ESP32 antenna keep-out sits at the back edge).
 * Silkscreen: only small reference designators (placed so none overlaps a pad or another text),
-  pin names next to every push-in terminal (J5: AUX+, GND, O1 C/NO/NC, O2 C/NO/NC, CP+, GND;
-  J10: COM, IN1–IN3); part values are on the Fab layer only.
+  pin names next to every terminal block (J5: AUX+, GND, CP+, GND; J11: O1 C/NO/NC;
+  J12: O2 C/NO/NC; J10: COM, IN1–IN3); part values are on the Fab layer only.
 * KiCad 7's command line has no ERC: run **Inspect → Electrical Rules Checker** once in the GUI
   if you change the schematic.
 
@@ -51,20 +53,37 @@ one internal routed slot (1 mm, around the SHT40).
 
 1. **Truma RJ12:** confirm pin 3 = LIN, pin 5 = GND with a meter; use a 1:1 cable.
 2. **PCA9615 pinout:** checked against the NXP datasheet (Rev. 2, Table 3) and corrected (see below).
-3. **Connector orientation:** checked on the board: all nine connectors open towards the edge they
-   sit on (J5 left; J8, J9, J3, J10 right; J1, J4, J6, J7 front). Hold the real parts against a
-   1:1 print before ordering.
-4. **Front plate parts:** the 12 V ON/OFF buttons (C&K PTS645VL83-2 LFS, right-angle, actuator
-   5.5 mm past the board edge) and the green "12 V on" LED (3 mm, right-angle) reach through
-   holes in the front plate; the RGB status LED sits 0.7 mm behind the edge and needs a 3 mm
-   light pipe in the plate.
+3. **Connector orientation:** all connectors open towards the edge they sit on (J5, J11, J12
+   left; J8, J9, J3, J10 right; J1, J4, J6, J7 front). **J8/J9 (RJ12) use a footprint derived from
+   KiCad's RJ14 Connfly DS1133** (6 contacts instead of 4): compare it with the Connfly drawing
+   (LCSC C77859) – if the contact stagger were mirrored, LIN would arrive on pin 4.
+4. **Front plate parts:** the 12 V ON/OFF buttons (Alps SKHHLQA010, right-angle, 8.35 mm stem,
+   about 3 mm past the board edge) reach through holes in the front plate; the green "12 V on"
+   LED (0603) and the RGB status LED sit at the edge and need light pipes in the plate.
 5. **USB-C tablet charging:** a ready-made 12 V → USB-C PD 30 W module on J2 (its socket in the
    front plate), switched by Q80; no PD chip on this board.
 6. **Tilt sensor:** order the **LIS3DH** (LGA-16 3 × 3, as on the board). The LIS2DH12 is LGA-12
    2 × 2 and does not fit this footprint.
-7. **Stock:** check every BOM line at the distributor, especially PCA9615DP, LIS3DH, AQY212EH,
-   TSR 1-2450, the 2 W shunts and the 0 Ω 2512 links (JP1/JP2, rated ≥ 6 A).
-8. Order one prototype first.
+7. **Stock:** JLCPCB stock was checked on 2026-11-28 (numbers in `tools/lcsc.py`); the BOM upload
+   shows any line that ran out. U92 (PCA9615) is not fitted – solder it later for expansion boards.
+8. **Plugs:** the pluggable terminal blocks need their plugs (not assembled): 1 × KF2EDGK-5.0-4P
+   (C440871), 2 × KF2EDGK-5.0-3P (C440870), 1 × KF2EDGK-3.5-4P (C440849) – order from LCSC.
+9. Order one prototype first.
+
+## Ordering at JLCPCB
+
+1. **PCB:** upload `fab/io-board-gerbers.zip`. 2 layers, 1.6 mm, 1 oz, **ENIG**, any colour; the
+   board has one internal routed slot (SHT40) – JLCPCB detects it from the outline.
+2. **Assembly:** "PCB Assembly", top side, **Standard** PCBA (the board has through-hole parts:
+   relays, terminal blocks, RJ sockets, Micro-Fit, TSR-1, buttons). Upload
+   `fab/jlc/io-board-bom-jlc.csv` and `fab/jlc/io-board-cpl-jlc.csv`.
+3. **Check the placement preview** part by part, especially the rotation and pin 1 of: U3
+   (ESP32), U90 (LIS3DH), U91 (SHT40), U60, U5–U8/U71–U73 (opto/photoMOS), D1–D4,
+   D13, D14, D61, the LEDs and the RJ/USB connectors. The CPL uses KiCad's rotations; JLCPCB
+   corrects them in the preview where their library differs.
+4. Confirm the parts JLCPCB marks as "extended" (one-off fee per part type) and the through-hole
+   parts (soldering fee).
+
 
 ## Checked against datasheets
 
@@ -95,6 +114,33 @@ wire is an ≈ 8 V indicator, so no high-voltage clearances are needed.
 * **Pressure sensor:** the ADC input has no divider, so it is for the 0–3.3 V sensor (QDY30A). A
   0.5–4.5 V sensor needs a divider at R21/R22.
 * **AO3401A turn-off:** R80/R83 make Q80 switch slowly (100 k); fine for the PD module, not for PWM.
+
+## Rev 0.4: parts JLCPCB stocks
+
+Every part is now one JLCPCB/LCSC stocks (2026-11-28); the substitutes and the fixes found
+while reading their datasheets:
+
+| Ref | Rev 0.3 | Rev 0.4 (LCSC) | Notes |
+|---|---|---|---|
+| K1, K2 | Omron G5LE-1 12 V (no stock) | Songle SRD-12VDC-SL-C (C30431) | 10 A 250 VAC / 28 VDC; same pin functions (1 COM, 2–5 coil, 3 NO, 4 NC), SRD footprint |
+| J5 (10-way push-in) | Phoenix PT 1,5 | J5 4-way (AUX+, GND, CP+, GND), J11 / J12 3-way (output 1 / 2 C, NO, NC): pluggable KF2EDGR-5.0 (C441195, C441194) | 15 A; plugs ordered separately |
+| J10 | Phoenix PT 1,5 3.5 mm | KF2EDGR-3.5-4P (C441173) | pluggable |
+| J8, J9 | Amphenol RJ12 | Connfly DS1133-S60BPX (C77859) | footprint derived from KiCad's DS1133 RJ14 – check (Before ordering 3) |
+| J3 | Amphenol RJ45 | Connfly DS1128-09-S8B8S (C77851) | shielded, shield to GND |
+| F2, F4, F5, F7 | blade holder / 1812 fuses | Littelfuse Nano2 0451010/005/004 (C44479, C48467, C27515) | soldered SMD fuses, 125 V |
+| SW1, SW2 | TL3342 | XKB TS-1187A-B-A-B (C318884, basic) | |
+| SW3, SW4 | PTS645VL83 | Alps SKHHLQA010 (C125034) | right-angle, 8.35 mm stem |
+| D9 | 3 mm right-angle LED | green 0603 (C12624) at the front edge | light pipe |
+| D5 | SK6812MINI (no stock) | SK6812MINI-HS (C2922787) | **different pin positions** – own footprint from the OPSCO pad drawing |
+| JP1, JP2 | 0 Ω 2512 | 1 mΩ 2 W 2512 (C2904226) | 44 A rated |
+| C1 | 47 µF 35 V 1210 | 10 µF 50 V X7R 1210 (C138687) | |
+| Q3 | IPD90P04P4L-04 (no stock) | AOS AOD4185 (C400894) | −40 V, 15 mΩ: 0.4 W at 5 A, 1.5 W at 10 A (RθJA 50 °C/W) |
+| U92 | PCA9615 (no stock) | **not fitted** | termination and ESD stay; fit for expansion boards |
+| **U5, U6** | AQY212EH on SO-4 footprint | **SMDIP-4** footprint | **error since rev 0.1:** the AQY212EH is a DIP4 part; its SMD version (EHAX, C29276) has gull-wing leads |
+
+Also: pin names of the left terminal blocks turned 90° between the blocks and the relays;
+`finish_routes.py` now routes wide nets first, never makes a pad stub narrower than the pad
+allows, and respects pads' own clearances (fiducials).
 
 ## Rev 0.3: audit findings fixed
 

@@ -36,17 +36,17 @@ humidity sensor. The programming USB-C sits behind the plate.
 | U1 | Traco TSR 1-2450 | 12 → 5 V, 1 A |
 | U2 | AP7361C-33E (SOT223) | 5 → 3.3 V, 1 A |
 | D1, D2 | SS34 | supply OR-ing, reverse polarity of the electronics supply |
-| Q3, D13, R7 | IPD90P04P4L-04 P-MOSFET, BZT52C12, 10 k | reverse-polarity protection of 12 V AUX (0.4 W at 10 A) |
+| Q3, D13, R7 | AOD4185 P-MOSFET, BZT52C12, 10 k | reverse-polarity protection of 12 V AUX (0.4 W at 5 A) |
 | D14 | SMBJ15A | 12 V AUX transient clamp (24.4 V, below the INA180's 26 V) |
 | D4 | SMBJ18A | 12 V transient clamp (clamps 29.2 V, below the 35 V parts) |
-| F1 / F2 | 0.5 A 30 V PTC / 10 A mini blade fuse | ST1 supply / 12 V AUX |
+| F1 / F2 | 0.5 A 30 V PTC / 10 A Littelfuse Nano2 SMD fuse | ST1 supply / 12 V AUX |
 | U5, U6 | AQY212EH photoMOS | EBL ON / OFF pulses from the ESP32 |
-| SW3, SW4 | C&K PTS645VL83-2 LFS right-angle buttons on the front edge | EBL ON / OFF by hand (direct) |
+| SW3, SW4 | Alps SKHHLQA010 right-angle buttons on the front edge | EBL ON / OFF by hand (direct) |
 | U7, U8, U71–U73 | PC817 | "12 V on", mains, inputs 1–3 (input resistors 4.7 k 1206 for 30 V) |
-| K1, K2 | Omron G5LE-1 12 VDC, changeover | Output 1, Output 2 (5 A fuse each) |
+| K1, K2 | Songle SRD-12VDC-SL-C, changeover, 10 A | Output 1, Output 2 (5 A fuse each) |
 | Q1, Q2 | AO3400 | relay drivers |
 | U11, U21 / U12, U22 | INA180A3 / LMV331 (LMV331 on 5 V) | output current sense ("output on"), Kelvin taps NT11–NT22 |
-| F4, F5 | 5 A 32 V fast SMD fuse | Output 1, Output 2 |
+| F4, F5 | 5 A Littelfuse Nano2 SMD fuse | Output 1, Output 2 |
 | U60 | TJA1021T/20 | Truma LIN bus |
 | D60 | PESD1LIN | LIN ESD protection |
 | F6 | 1 A PTC | 12 V for the CP plus |
@@ -57,7 +57,7 @@ humidity sensor. The programming USB-C sits behind the plate.
 | U92 | PCA9615 | differential I²C to the RJ45; R94–R99 620/120/620 Ω termination + idle bias on both pairs (needed at each cable end) |
 | U4 | USBLC6-2SC6 | USB ESD |
 | U93 | ESDA6V1-5SC6 | ESD on the RJ45 expansion lines |
-| J | Molex Micro-Fit 3.0: 43045-0600 (ST1, 2 rows), 43650-0600 (ST2), 43650-0500 (ST3); 2 × RJ12 6P6C; RJ45; 1 × USB-C (programming; the tablet socket is on the PD module); push-in terminals 5.08 mm (power) and 3.5 mm (inputs) | connectors |
+| J | Molex Micro-Fit 3.0: 43045-0600 (ST1, 2 rows), 43650-0600 (ST2), 43650-0500 (ST3); 2 × RJ12 6P6C Connfly DS1133; RJ45 Connfly DS1128; pluggable terminal blocks KF2EDGR (J5 power 4-way, J11/J12 outputs 3-way, J10 inputs 3.5 mm 4-way); 1 × USB-C (programming; the tablet socket is on the PD module) | connectors |
 
 ## Design review
 

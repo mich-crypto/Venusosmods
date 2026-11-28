@@ -13,7 +13,7 @@ reviewed** – KiCad project, fab files and design audit in [hardware/io-board](
 | Block | What | Connection |
 |---|---|---|
 | ESP32-S3 | Module **ESP32-S3-WROOM-1-N8** (antenna on the module; plastic casing in the living area) | – |
-| Power | From the EBL cable (ST1 blue + / brown −) for the electronics; **12 V AUX** for the outputs and the USB charging socket (10 A fuse, reverse-polarity MOSFET, TVS); two diodes pick the input with power | ST1 + push-in |
+| Power | From the EBL cable (ST1 blue + / brown −) for the electronics; **12 V AUX** for the outputs and the USB charging socket (10 A fuse, reverse-polarity MOSFET, TVS); two diodes pick the input with power | ST1 + J5 (pluggable) |
 | **LT 100: EBL 119 on/off** | Short pulse to ground on ON (green) or OFF (yellow); reads "12 V on" (white) and mains (pink); battery voltage from the blue wire | **ST1**: Micro-Fit 6-pin, 2 rows |
 | **LT 100: fresh water** | The existing fresh water cable, now connected to the **pressure sensor** (QDY30A 0–3.3 V) and the water temperature probe at the tank | **ST2**: Micro-Fit 6-pin, 1 row |
 | **LT 100: grey water** | Rod sender, common + 4 rods | **ST3**: Micro-Fit 5-pin, 1 row |
@@ -21,13 +21,13 @@ reviewed** – KiCad project, fab files and design audit in [hardware/io-board](
 | Truma CP plus | LIN bus (TJA1021), **in and out**: two RJ12 sockets in parallel, so the board sits in the Truma cable chain | 2 × RJ12 |
 | USB-C programming | Flashing and serial log (ESP32 native USB), Boot and Reset buttons | USB-C |
 | USB-C tablet | Charging socket on the front plate, **USB PD up to 30 W**: a ready-made 12 V → USB-C PD module on J2 (2-pin header), fed from 12 V AUX through F7 and switched by Q80; the board can switch it off | J2 → module in the front plate |
-| 3 inputs | Optocoupler, **9–30 V = on**; the common (COM) is tied to GND by solder jumper JP10 (open it for a floating common). A dry contact is wired between +12 V (e.g. the CP+ terminal) and the input. What each input means is set later in the settings | push-in |
-| Output 1, Output 2 | Relays with changeover contact, 5 A, C fed from 12 V AUX (5 A fuse each, solder jumper for a dry contact); both two-way capable with a wall switch and with an "output on" current sense. Use decided per output (e.g. a light) | push-in |
-| CP plus 12 V | Fused 12 V out (1 A PTC, from 12 V AUX) for the Truma CP plus panel's own supply wires (red, red/black) | push-in |
+| 3 inputs | Optocoupler, **9–30 V = on**; the common (COM) is tied to GND by solder jumper JP10 (open it for a floating common). A dry contact is wired between +12 V (e.g. the CP+ terminal) and the input. What each input means is set later in the settings | J10 (pluggable) |
+| Output 1, Output 2 | Relays with changeover contact, 5 A, C fed from 12 V AUX (5 A fuse each, a removable 2512 link JP1/JP2 for a dry contact); both two-way capable with a wall switch and with an "output on" current sense. Use decided per output (e.g. a light) | J11, J12 (pluggable) |
+| CP plus 12 V | Fused 12 V out (1 A PTC, from 12 V AUX) for the Truma CP plus panel's own supply wires (red, red/black) | J5 (pluggable) |
 | Tilt | Accelerometer LIS3DH: levelling, water tank slope correction, movement | on the board |
 | Humidity + temperature | **SHT40** on the board (I²C), in the front plate area behind a vent slot, cut off from the warm parts by a slot in the board; replaces temperature probe 2 | on the board |
 | **Expansion (RJ45)** | 12 V, ground and I²C for expansion boards (more inputs/outputs later), I²C as a differential pair (PCA9615) so the cable can be several metres | RJ45 |
-| Status | RGB status LED SK6812MINI at the front edge, seen through a 3 mm light pipe in the front plate | – |
+| Status | RGB status LED SK6812MINI-HS at the front edge, seen through a 3 mm light pipe in the front plate | – |
 | Removed (simplified) | CAN, MOSFET outputs, analog inputs, 8 inputs → 3, display power out, spare header, I/O expander and ADC chips, separate PRESSURE socket, temperature probe 2 | – |
 
 ## All connectors
@@ -56,7 +56,7 @@ ON/OFF buttons and LED, the USB-C tablet socket and the status LED.
 * Fixed with two screws at the back or a flat bracket, so it can't move (the tilt sensor needs it).
 * The LT 100 plugs (ST1, ST2, ST3), the programming USB-C, the 12 V ON/OFF buttons and the two
   LEDs are on the front edge, right behind the front plate (buttons and the green LED reach
-  through holes in the plate, the status LED through a light pipe). Truma, expansion and the push-in terminals are on the side edges: slide the
+  through holes in the plate, the status LED through a light pipe). Truma, expansion and the pluggable terminal blocks are on the side edges: slide the
   casing out to reach them, so leave about 20 cm of slack in those cables.
 
 ## ST1: EBL 119 cable (was to the LT 100) – measured
@@ -149,7 +149,7 @@ transceiver listens and answers like an iNet box (see [truma.md](truma.md)).
 
 Both relay commons are fed on the board from **12 V AUX**, each through its own 5 A fuse
 (blade or polyfuse), so the NO and NC terminals carry switched +12 V and only the load's wire
-goes to the board; the load's minus goes to ground. A solder jumper per relay separates C from
+goes to the board; the load's minus goes to ground. A removable 2512 link per relay (JP1/JP2, 1 mΩ) separates C from
 the 12 V again, for a dry (potential-free) contact; C is still on a terminal for that.
 
 **Output 1 and Output 2** are identical. Example with a light and its wall switch: the wall switch keeps
@@ -237,7 +237,7 @@ I²C addresses: LIS3DH 0x18, SHT40 0x44; expansion boards use other addresses.
 ## Protection
 
 * ST1 supply: 0.5 A PTC, series diode, TVS SMBJ18A on the 12 V system rail.
-* 12 V AUX: 10 A blade fuse, reverse-polarity P-MOSFET (IPD90P04P4L-04), TVS SMBJ15A (clamps
+* 12 V AUX: 10 A Nano2 fuse, reverse-polarity P-MOSFET (AOD4185), TVS SMBJ15A (clamps
   below the 26 V of the current-sense amplifiers).
 * Expansion RJ45: ESD array on the I²C pairs and the interrupt; USB-C: USBLC6; LIN: PESD1LIN.
 * Sensor, rod and probe lines: series resistors and ESD protection.

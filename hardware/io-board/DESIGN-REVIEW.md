@@ -1,5 +1,25 @@
 # I/O board rev 0.2 / 0.3 – independent design audit
 
+## Rev 0.4: JLCPCB parts – additional datasheet checks
+
+Rev 0.4 replaces every part JLCPCB does not stock (list in README, "Rev 0.4"). The datasheets of
+the new and some old parts could now be read from LCSC; findings:
+
+| ID | Sev. | Finding | Resolution |
+|---|---|---|---|
+| N1 | **HIGH** | AQY212EH (U5, U6) is a DIP4 part (Panasonic GU-E datasheet: 6.4 × 4.78 mm, SMD = gull-wing "EHA/EHAX"); the footprint since rev 0.1 was SO-4 4.4 × 3.6 mm – it would not have fitted | Footprint SMDIP-4_W9.53mm (pads ±4.765 mm, like the PC817 whose lead span is 10.16 mm) |
+| N2 | HIGH | SK6812MINI-HS (the stocked variant) has its pins in other positions than the SK6812MINI (OPSCO datasheet p. 4–5: 1 GND bottom right, 2 DIN top right, 3 VDD top left, 4 DOUT bottom left) | Own footprint `io_board:LED_SK6812MINI-HS_3.7x3.5mm` from the recommended pad drawing, pads numbered like the symbol |
+| N3 | MEDIUM | RJ12 6P6C Connfly DS1133-S60: no KiCad footprint | Derived from KiCad's RJ14 DS1133 (same housing, 1.02 mm pitch, rows 2.54 mm, pegs Ø2.3 12 mm apart – matches the Connfly drawing); the drawing shows the stagger mirrored (bottom view assumed). **Check before ordering** |
+| N4 | LOW | AOD4185 instead of IPD90P04P4L-04 (no stock) | AOS datasheet: DPAK 1 G / tab D / 3 S, VGS ±20 V, 15 mΩ; 1.5 W at a full 10 A (RθJA 50 °C/W ≈ +75 °C), 0.4 W at 5 A |
+| N5 | INFO | SRD-12VDC-SL-C instead of G5LE (no stock) | Songle datasheet: 10 A 250 VAC / 28 VDC contacts; KiCad SANYOU SRD symbol: 1 COM, 2/5 coil, 3 NO, 4 NC (same functions as before) |
+| N6 | INFO | OUT1_NO (relay K1 NO → J11) changes layer through 3 vias | ≈ 5.4 A at ≈ 10 °C rise vs the 5 A fuse – accepted; no room for more next to the relay pin |
+
+Rev 0.4 re-verification: DRC 0 errors, 0 unconnected (38 warnings: silkscreen of overhanging
+connectors, J5 pin names touching D1/D4 outlines, ESP32 vias); 525 pads = `parts.py`; all
+footprints linked to the schematic; decoupling 2.1–4.5 mm; every 5–10 A net 2 mm except the
+neck into Q80's SOT-23 pin (0.6 mm, 1.6 mm long) and 1 A branches; JLCPCB BOM = CPL = 164 parts.
+Verdict unchanged: **approved with minor changes for a prototype**, with N3 to be checked.
+
 ## Rev 0.3 re-audit (after the fixes)
 
 All findings below were addressed in rev 0.3 and the measurements of this audit were repeated on

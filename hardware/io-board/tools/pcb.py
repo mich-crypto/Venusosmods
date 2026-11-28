@@ -153,8 +153,9 @@ for f in b.GetFootprints():
         t=pcbnew.PCB_TEXT(b); t.SetText(lab[p.GetNumber()]); t.SetLayer(pcbnew.F_SilkS)
         t.SetTextSize(pcbnew.VECTOR2I(mm(0.9),mm(0.9))); t.SetTextThickness(mm(0.14))
         y=p.GetPosition().y
-        if f.GetReference()=='J5':
-            t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT); t.SetPosition(pcbnew.VECTOR2I(fb.GetRight()+mm(0.8),y))
+        if f.GetReference() in ('J5','J11','J12'):      # left edge: small names, turned 90 deg, in the gap to the relays
+            t.SetTextSize(pcbnew.VECTOR2I(mm(0.8),mm(0.8))); t.SetTextThickness(mm(0.12)); t.SetTextAngleDegrees(90)
+            t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_CENTER); t.SetPosition(pcbnew.VECTOR2I(mm(OX+12.85),y))
         else:
             t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_RIGHT); t.SetPosition(pcbnew.VECTOR2I(fb.GetLeft()-mm(0.8),y))
         b.Add(t); obst.append(t.GetBoundingBox())
