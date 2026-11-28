@@ -16,6 +16,7 @@ KiCad 7 or newer.
 | `io-board.net` | Netlist exported by KiCad |
 | `io-board.dsn` | The unrouted board for Freerouting (with the net classes) |
 | `pcb-render-top.png`, `pcb-render-bottom.png` | Renders of the bare board as it comes from the fab (`sh tools/render.sh`) |
+| `HANDOVER.md` | State, open items, tool chain and pitfalls for the next working session |
 | `DESIGN-REVIEW.md` | Independent design audit: findings, calculations, what is and is not verified |
 | `io_board.kicad_sym`, `sym-lib-table` | Project library with the PCA9615 symbol (not in the KiCad library) |
 | `io_board.pretty`, `fp-lib-table` | Project footprints: RJ12 Connfly DS1133-S60 (6P6C), SK6812MINI-HS |
